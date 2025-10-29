@@ -1,74 +1,59 @@
-# docker-compose.yml
-version: '3.8'
-
+version: "3.8"
 services:
-  postgres:
+  db:
     image: postgres:15
-    container_name: shopping-postgres
+    container_name: db
+    restart: always
     environment:
-      POSTGRES_DB: shoppingDB
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password123
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
     networks:
-      - shopping-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - app-network
 
   redis:
-    image: redis:7-alpine
-    container_name: shopping-redis
+    image: redis:latest
+    container_name: redis
+    restart: always
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
     networks:
-      - shopping-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - app-network
 
-  backend:
+  frontend:
+    container_name: frontend
     build:
-      context: ./backend
+      context: ./frontend
       dockerfile: Dockerfile
-    container_name: shopping-backend
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      # PostgreSQL 설정
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/shoppingDB
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: password123
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      # Redis 설정 (최신 방식)
-      SPRING_REDIS_HOST: redis
-      SPRING_REDIS_PORT: 6379
-      SPRING_REDIS_TIMEOUT: 60000ms
-      SPRING_REDIS_CONNECT_TIMEOUT: 10000ms
-      # 기타 설정
-      SPRING_PROFILES_ACTIVE: docker
     ports:
-      - "8080:8080"
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+    depends_on:
+      - db
+      - redis
     networks:
-      - shopping-network
-    restart: unless-stopped
+      - app-network
+
+  nginx:
+    container_name: nginx
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+    networks:
+      - app-network
 
 volumes:
-  postgres_data:
-  redis_data:
+  db_data:
 
 networks:
-  shopping-network:
+  app-network:
     driver: bridge
