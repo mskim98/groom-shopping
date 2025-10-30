@@ -4,14 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="0ba59154-2283-4cde-830e-7a5fbd4848c0" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/611eccca-5f54-4205-a21c-b64c3f76bced.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/611eccca-5f54-4205-a21c-b64c3f76bced/storage_v2/_src_/database/postgres.edMnLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/611eccca-5f54-4205-a21c-b64c3f76bced/storage_v2/_src_/database/postgres.edMnLQ/schema/information_schema.FNRwLQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/611eccca-5f54-4205-a21c-b64c3f76bced/storage_v2/_src_/database/postgres.edMnLQ/schema/pg_catalog.0S1ZNQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/dataSources/611eccca-5f54-4205-a21c-b64c3f76bced/storage_v2/_src_/database/postgres.edMnLQ/schema/public.abK9xQ.meta" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-    </list>
+    <list default="true" id="0ba59154-2283-4cde-830e-7a5fbd4848c0" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -187,6 +180,7 @@
       <workItem from="1761712175487" duration="10806000" />
       <workItem from="1761788338070" duration="2589000" />
       <workItem from="1761791054621" duration="445000" />
+      <workItem from="1761814143475" duration="332000" />
     </task>
     <servers />
   </component>
@@ -197,7 +191,7 @@
     <breakpoint-manager>
       <breakpoints>
         <line-breakpoint enabled="true" type="java-line">
-          <url>file://$PROJECT_DIR$/backend/src/main/java/groom/backend/config/WebConfig.java</url>
+          <url>file://$PROJECT_DIR$/backend/src/main/java/groom/backend/global/config/WebConfig.java</url>
           <line>17</line>
           <option name="timeStamp" value="2" />
         </line-breakpoint>
