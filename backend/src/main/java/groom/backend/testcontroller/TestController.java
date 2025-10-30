@@ -1,4 +1,4 @@
-package groom.backend.controller;
+package groom.backend.testcontroller;
 
 import java.util.Arrays;
 import java.util.List;
