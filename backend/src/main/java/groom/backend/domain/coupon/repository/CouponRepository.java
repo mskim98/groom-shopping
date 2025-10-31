@@ -1,6 +1,6 @@
-package groom.backend.application.coupon.repository;
+package groom.backend.domain.coupon.repository;
 
-import groom.backend.application.coupon.entity.Coupon;
+import groom.backend.domain.coupon.entity.Coupon;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
