@@ -1,5 +1,6 @@
 package groom.backend.domain.coupon.entity;
 
+import groom.backend.domain.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.domain.coupon.enums.CouponType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -36,4 +37,18 @@ public class Coupon {
 
   private LocalDate expireDate;
 
+  public void update(CouponUpdateRequest request) {
+    if (request.getName() != null) {
+      this.name = request.getName();
+    }
+    if (request.getDescription() != null) {
+      this.description = request.getDescription();
+    }
+    if (request.getQuantity() != null) {
+      this.quantity = request.getQuantity();
+    }
+    if (request.getExpireDate() != null) {
+      this.expireDate = request.getExpireDate();
+    }
+  }
 }
