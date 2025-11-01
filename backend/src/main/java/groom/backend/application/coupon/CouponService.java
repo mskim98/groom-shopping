@@ -43,17 +43,23 @@ public class CouponService {
     // 결과 반환
   }
 
-  public void createCoupon(CouponCreateRequest couponCreateRequest) {
+  public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest) {
     // dto를 entity로 변환
     Coupon coupon = couponCreateRequest.toEntity();
 
     // 쿠폰 생성
-    couponRepository.save(coupon);
+    Coupon savedCoupon = couponRepository.save(coupon);
+    return CouponResponse.from(savedCoupon);
   }
 
-  public void findCoupon(Long couponId) {
+  public CouponResponse findCoupon(Long couponId) {
     // 단일 쿠폰 검색
-    couponRepository.findById(couponId).orElse(null);
+    Coupon coupon = couponRepository.findById(couponId).orElse(null);
+
+    // TODO : null 검증, null일 시 Not Found Exception 발생
+
+    // 검색 결과 반환
+    return CouponResponse.from(coupon);
   }
 
   public Page<CouponResponse> searchCoupon(CouponSearchCondition condition, Pageable pageable) {
@@ -63,19 +69,28 @@ public class CouponService {
             .map(CouponResponse::from);
   }
 
-  public void updateCoupon(Long couponId, CouponUpdateRequest couponUpdateRequest) {
+  public CouponResponse updateCoupon(Long couponId, CouponUpdateRequest couponUpdateRequest) {
     // coupon id 기반 조회
     Coupon currentCoupon = couponRepository.findById(couponId).orElse(null);
 
+    // TODO : null 검증, null일 시 Not Found Exception 발생
+
     // 쿠폰 수정
+    currentCoupon.update(couponUpdateRequest);
 
     // 정책 고정, 이름과 설명, 수량과 만료 기간만 바꿀 수 있음. -> 정책에 따라 변경 가능할 것으로 보임.
     // 결제 관련된 내용이라 생성 후에는 고정되도록 하는 것이 맞는 것 같습니다.
     couponRepository.save(currentCoupon);
+
+    // 수정 결과 반환
+    return CouponResponse.from(currentCoupon);
   }
 
-  public void deleteCoupon(Long couponId) {
+  public Boolean deleteCoupon(Long couponId) {
     // 쿠폰 삭제
-    couponIssueRepository.deleteById(couponId);
+    couponRepository.deleteById(couponId);
+
+    // 정상 삭제 확인 및 결과 반환
+    return couponRepository.existsById(couponId);
   }
 }
