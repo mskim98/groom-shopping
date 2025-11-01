@@ -14,6 +14,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class CouponService {
@@ -44,12 +47,10 @@ public class CouponService {
     return CouponIssueResponse.from(couponIssue);
   }
 
-  public void searchMyCoupon(Long userId) {
+  public List<CouponIssue> searchMyCoupon(Long userId) {
     // 유저 id로 쿠폰 조회
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
-    couponIssueRepository.findCouponIssueByUserId(userId);
-
-    // 결과 반환
+    return couponIssueRepository.findByUserIdAndIsActiveTrueAndExpireDateAfter(userId, LocalDateTime.now());
   }
 
   public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest) {
