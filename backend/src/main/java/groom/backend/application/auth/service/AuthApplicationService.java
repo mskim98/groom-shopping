@@ -42,7 +42,8 @@ public class AuthApplicationService {
         User saved = userRepo.findByEmail(email)
                 .orElseThrow(() -> new IllegalStateException("Failed to load saved user"));
 
-        return new SignUpResponse(saved.getId(), saved.getEmail(), saved.getName());
+        return new SignUpResponse(saved.getId(), saved.getEmail(), saved.getName(),
+                 saved.getGrade(), saved.getCreatedAt());
 
     }
 }
