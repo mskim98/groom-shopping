@@ -13,7 +13,7 @@ import lombok.RequiredArgsConstructor;
 public enum Grade {
     BRONZE("BR", "Bronze"),
     SILVER("SI", "Silver"),
-    GOLD("GD", "Bronze"),
+    GOLD("GD", "Gold"),
     PLATINUM("PL", "Platinum"),
     VIP("VP", "VIP");
 
