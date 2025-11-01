@@ -3,13 +3,16 @@ package groom.backend.application.auth.service;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Grade;
 import groom.backend.domain.auth.enums.Role;
+import groom.backend.domain.auth.repository.RefreshTokenRepository;
 import groom.backend.domain.auth.repository.UserRepository;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.infrastructure.security.JwtTokenProvider;
 import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
+import groom.backend.interfaces.auth.dto.request.TokenRefreshRequest;
 import groom.backend.interfaces.auth.dto.response.LoginResponse;
 import groom.backend.interfaces.auth.dto.response.SignUpResponse;
+import groom.backend.interfaces.auth.dto.response.TokenRefreshResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -30,6 +33,7 @@ public class AuthApplicationService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider jwtTokenProvider;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     @Transactional
     public SignUpResponse register(SignUpRequest req) {
@@ -85,7 +89,7 @@ public class AuthApplicationService {
         // Refresh Token 생성 및 Redis 저장
         String refreshToken = jwtTokenProvider.createRefreshToken(user.getEmail(), user.getRole());
 
-        //refreshTokenRepository.save(user.getEmail(), refreshToken, jwtTokenProvider.getRefreshTokenValidityInMilliseconds());
+        refreshTokenRepository.save(user.getEmail(), refreshToken, jwtTokenProvider.getRefreshTokenValidityInMilliseconds());
 
         // TODO :: refreshToken cookie 처리
         // reponse로 refreshToken같이보내면 보안상 이슈
@@ -95,5 +99,31 @@ public class AuthApplicationService {
         log.info("로그인 성공: {}", user.getEmail());
 
         return new LoginResponse(accessToken, refreshToken, user.getName(), user.getRole());
+    }
+
+    @Transactional
+    public TokenRefreshResponse refreshToken(TokenRefreshRequest request) {
+        String refreshToken = request.getRefreshToken();
+
+        if (!jwtTokenProvider.validateToken(refreshToken)) {
+            throw new IllegalArgumentException("유효하지 않은 리프레시 토큰입니다.");
+        }
+
+        String email = jwtTokenProvider.getEmail(refreshToken);
+        String storedRefreshToken = refreshTokenRepository.findByEmail(email)
+                                            .orElseThrow(() -> new IllegalArgumentException("저장된 리프레시 토큰을 찾을 수 없습니다."));
+
+        if (!storedRefreshToken.equals(refreshToken)) {
+            throw new IllegalArgumentException("리프레시 토큰이 일치하지 않습니다.");
+        }
+
+        User user = userRepo.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        String newAccessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
+
+        log.info("액세스 토큰 재발급: {}", email);
+
+        return new TokenRefreshResponse(newAccessToken);
     }
 }
