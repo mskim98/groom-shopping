@@ -3,45 +3,31 @@ package groom.backend.domain.auth.entity;
 
 import groom.backend.domain.auth.enums.Grade;
 import groom.backend.domain.auth.enums.Role;
-import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
 
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "users")
 @Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class User {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(unique = true, nullable = false, length = 50)
-    private String email;
-
-    @Column(nullable = false)
+    private final Long id;
+    private final String email;
     private String password;
-
-    @Column(nullable = false, length = 30)
     private String name;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
     private Role role;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
     private Grade grade;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    public User(Long id, String email, String password, String name, Role role, Grade grade, LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.id = id;
+        this.email = email;
+        this.password = password;
+        this.name = name;
+        this.role = role;
+        this.grade = grade;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
 
 }
