@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.service;
+package groom.backend.application.coupon;
 
 import groom.backend.domain.coupon.dto.request.CouponCreateRequest;
 import groom.backend.domain.coupon.dto.request.CouponSearchCondition;

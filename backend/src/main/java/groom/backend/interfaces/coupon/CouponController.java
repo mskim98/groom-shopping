@@ -1,6 +1,6 @@
 package groom.backend.interfaces.coupon;
 
-import groom.backend.domain.coupon.service.CouponService;
+import groom.backend.application.coupon.CouponService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
