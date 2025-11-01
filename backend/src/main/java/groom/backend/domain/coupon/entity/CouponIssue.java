@@ -25,7 +25,7 @@ public class CouponIssue {
 
   private LocalDateTime createdAt;
 
-  private LocalDateTime updatedAt;
+  private LocalDateTime deletedAt;
 
 
   // coupon 1 : coupon issue N
