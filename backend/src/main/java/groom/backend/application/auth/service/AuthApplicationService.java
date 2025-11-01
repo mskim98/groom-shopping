@@ -126,4 +126,12 @@ public class AuthApplicationService {
 
         return new TokenRefreshResponse(newAccessToken);
     }
+
+    @Transactional
+    public void logout(String email) {
+        refreshTokenRepository.deleteByEmail(email);
+        // TODO :: refreshToken cookie 처리
+        // cookieUtil.deleteRefreshTokenCookie(response);
+        log.info("로그아웃 성공: {}", email);
+    }
 }
