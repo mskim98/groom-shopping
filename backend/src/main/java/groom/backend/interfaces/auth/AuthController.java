@@ -51,7 +51,7 @@ public class AuthController {
         return ResponseEntity.ok().build();
     }
 
-    @PutMapping("/update")
+    @PutMapping("/users")
     public ResponseEntity<UserUpdateResponse> update(@AuthenticationPrincipal CustomUserDetails user, @RequestBody UserUpdateRequest userUpdateRequest) {
         if (user == null || user.getUser() == null || user.getUser().getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
