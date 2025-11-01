@@ -48,6 +48,6 @@ public class JpaUserRepository implements UserRepository {
     }
 
     private UserJpaEntity toEntity(User u) {
-        return new UserJpaEntity(u.getId(), u.getEmail(), u.getPassword(), u.getName(),u.getRole(), u.getGrade(), u.getCreatedAt(), u.getUpdatedAt());
+        return new UserJpaEntity(u.getId(), u.getEmail(), u.getPassword(), u.getName(), u.getRole(), u.getGrade(), u.getCreatedAt(), u.getUpdatedAt());
     }
 }
