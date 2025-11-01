@@ -1,6 +1,6 @@
 package groom.backend.domain.coupon.repository;
 
-import groom.backend.domain.coupon.dto.request.CouponSearchCondition;
+import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.domain.coupon.entity.Coupon;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

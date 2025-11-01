@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.dto.request;
+package groom.backend.interfaces.coupon.dto.request;
 
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.enums.CouponType;

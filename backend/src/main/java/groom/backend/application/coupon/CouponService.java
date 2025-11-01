@@ -1,9 +1,9 @@
 package groom.backend.application.coupon;
 
-import groom.backend.domain.coupon.dto.request.CouponCreateRequest;
-import groom.backend.domain.coupon.dto.request.CouponSearchCondition;
-import groom.backend.domain.coupon.dto.request.CouponUpdateRequest;
-import groom.backend.domain.coupon.dto.response.CouponResponse;
+import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
+import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
+import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
+import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;

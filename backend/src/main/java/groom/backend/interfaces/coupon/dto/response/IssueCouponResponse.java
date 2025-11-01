@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.dto.response;
+package groom.backend.interfaces.coupon.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

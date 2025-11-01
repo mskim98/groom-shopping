@@ -1,10 +1,7 @@
-package groom.backend.domain.coupon.dto.response;
+package groom.backend.interfaces.coupon.dto.response;
 
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.enums.CouponType;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.NoArgsConstructor;
