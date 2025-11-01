@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.controller;
+package groom.backend.interfaces.coupon;
 
 import groom.backend.domain.coupon.service.CouponService;
 import lombok.RequiredArgsConstructor;
