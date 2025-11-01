@@ -11,7 +11,7 @@ import java.time.LocalDate;
 @AllArgsConstructor
 @ToString
 @Builder
-public class IssueCouponResponse {
+public class CouponIssueResponse {
   private Long couponIssueId;
   private Long couponId;
   private LocalDate createdAt;
