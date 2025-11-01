@@ -10,9 +10,11 @@ import groom.backend.infrastructure.security.JwtTokenProvider;
 import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
 import groom.backend.interfaces.auth.dto.request.TokenRefreshRequest;
+import groom.backend.interfaces.auth.dto.request.UserUpdateRequest;
 import groom.backend.interfaces.auth.dto.response.LoginResponse;
 import groom.backend.interfaces.auth.dto.response.SignUpResponse;
 import groom.backend.interfaces.auth.dto.response.TokenRefreshResponse;
+import groom.backend.interfaces.auth.dto.response.UserUpdateResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -126,6 +128,20 @@ public class AuthApplicationService {
 
         return new TokenRefreshResponse(newAccessToken);
     }
+
+    @Transactional
+    public UserUpdateResponse updateUser(Long id, UserUpdateRequest request) {
+        User user = userRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        user.updateUser(request.getName(), request.getRole(), request.getGrade());
+
+        User saved = userRepo.save(user);
+
+        return new UserUpdateResponse(saved.getId(), saved.getEmail(), saved.getName(),
+                 saved.getRole(), saved.getGrade(), saved.getCreatedAt());
+    }
+
 
     @Transactional
     public void logout(String email) {
