@@ -51,4 +51,8 @@ public class Coupon {
       this.expireDate = request.getExpireDate();
     }
   }
+
+  public void decreaseQuantity() {
+    this.quantity--;
+  }
 }

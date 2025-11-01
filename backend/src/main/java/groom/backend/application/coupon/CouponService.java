@@ -1,8 +1,10 @@
 package groom.backend.application.coupon;
 
+import groom.backend.domain.coupon.entity.CouponIssue;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
+import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
@@ -18,21 +20,28 @@ public class CouponService {
   private final CouponRepository couponRepository;
   private final CouponIssueRepository couponIssueRepository;
 
-  public void issueCoupon(Long couponId) {
+  public CouponIssueResponse issueCoupon(Long couponId) {
     // 쿠폰 조회
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
 
-    // 조회되지 않을 시 Exception 발생
+    // TODO : 조회되지 않을 시 404 Not Found Exception 발생
 
     // 활성화 여부 확인
+    // TODO : 비활성화 상태일 시 404 Not Found Exception 발생
 
-    // 수량 매진 여부 확인
+    // 수량 확인
+    // TODO : 수량이 0보다 낮거나 같은 경우 409 Conflict 발생 및 재고 소진 메시지 반환
 
     // 쿠폰 확보
+    coupon.decreaseQuantity();
 
-    // 쿠폰 등록
+    // 쿠폰 등록 및 DB 적용
+    CouponIssue couponIssue = couponIssueRepository.save(CouponIssue.builder().build());
+    couponRepository.save(coupon);
+
 
     // 확보된 쿠폰 반환
+    return CouponIssueResponse.from(couponIssue);
   }
 
   public void searchMyCoupon(Long userId) {
@@ -56,7 +65,7 @@ public class CouponService {
     // 단일 쿠폰 검색
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
 
-    // TODO : null 검증, null일 시 Not Found Exception 발생
+    // TODO : null 검증, null일 시 404 Not Found Exception 발생
 
     // 검색 결과 반환
     return CouponResponse.from(coupon);
@@ -73,7 +82,7 @@ public class CouponService {
     // coupon id 기반 조회
     Coupon currentCoupon = couponRepository.findById(couponId).orElse(null);
 
-    // TODO : null 검증, null일 시 Not Found Exception 발생
+    // TODO : null 검증, null일 시 404 Not Found Exception 발생
 
     // 쿠폰 수정
     currentCoupon.update(couponUpdateRequest);
