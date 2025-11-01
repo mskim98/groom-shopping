@@ -22,7 +22,7 @@ public class AuthApplicationService {
     public SignUpResponse register(SignUpRequest req) {
         String email = req.getEmail().toLowerCase().trim();
 
-        if(userRepo.existsByEmail(email)) {
+        if (userRepo.existsByEmail(email)) {
             throw new IllegalArgumentException("Email already registered");
         }
 
