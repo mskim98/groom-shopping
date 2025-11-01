@@ -1,7 +1,9 @@
 package groom.backend.interfaces.auth;
 
 import groom.backend.application.auth.service.AuthApplicationService;
+import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
+import groom.backend.interfaces.auth.dto.response.LoginResponse;
 import groom.backend.interfaces.auth.dto.response.SignUpResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,5 +23,11 @@ public class AuthController {
     public ResponseEntity<SignUpResponse> signUp(@RequestBody @Valid SignUpRequest request) {
         SignUpResponse response = authService.register(request);
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+        LoginResponse loginResponse = authService.login(request);
+        return ResponseEntity.ok(loginResponse);
     }
 }
