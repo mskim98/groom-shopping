@@ -33,7 +33,7 @@ public class JpaUserRepository implements UserRepository {
 
     @Override
     public boolean existsByEmail(String email) {
-        return springRepo.existsByEmail(email);
+        return springRepo.existsByEmail(email.toLowerCase());
     }
 
     private User toDomain(UserJpaEntity e) {
