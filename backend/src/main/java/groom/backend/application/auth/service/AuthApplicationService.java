@@ -1,8 +1,6 @@
 package groom.backend.application.auth.service;
 
 import groom.backend.domain.auth.entity.User;
-import groom.backend.domain.auth.enums.Grade;
-import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.auth.repository.RefreshTokenRepository;
 import groom.backend.domain.auth.repository.UserRepository;
 import groom.backend.infrastructure.security.CustomUserDetails;
@@ -37,21 +35,22 @@ public class AuthApplicationService {
     private final RefreshTokenRepository refreshTokenRepository;
 
     @Transactional
-    public SignUpResponse register(SignUpRequest req) {
-        String email = req.getEmail().toLowerCase().trim();
+    public SignUpResponse register(SignUpRequest request) {
+        String email = request.getEmail().toLowerCase().trim();
 
         if (userRepo.existsByEmail(email)) {
             throw new IllegalArgumentException("Email already registered");
         }
 
         // TODO 객체 생성 팩토리 메서드로 변경 고려
+        // TODO : 개발 편의를 위해 ROLE, GRADE 요청대로 적용 (추후 삭제 예정)
         User user = new User(
                 null,
                 email,
-                passwordEncoder.encode(req.getPassword()),
-                req.getName(),
-                Role.ROLE_USER,
-                Grade.BRONZE,
+                passwordEncoder.encode(request.getPassword()),
+                request.getName(),
+                request.getRole(),
+                request.getGrade(),
                 null,
                 null
         );
@@ -59,7 +58,7 @@ public class AuthApplicationService {
         User saved = userRepo.save(user);
 
         return new SignUpResponse(saved.getId(), saved.getEmail(), saved.getName(),
-                 saved.getGrade(), saved.getCreatedAt());
+                 saved.getRole(), saved.getGrade(), saved.getCreatedAt());
 
     }
 
