@@ -39,15 +39,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
                 Authentication authentication = jwtTokenProvider.getAuthentication(token);
 
-                // AbstractAuthenticationToken으로 캐스트해서 details 설정
-                if (authentication instanceof AbstractAuthenticationToken) {
-                    ((AbstractAuthenticationToken) authentication)
-                            .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                } else {
-                    // 안전하게 SecurityContext에 저장 (대부분 경우 위로 처리됨)
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                }
+                ((AbstractAuthenticationToken) authentication)
+                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+
             }
         } catch (Exception e) {
             log.error("인증 설정 중 오류 발생", e);
