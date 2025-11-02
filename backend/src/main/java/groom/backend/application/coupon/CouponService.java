@@ -27,7 +27,9 @@ public class CouponService {
     // 쿠폰 조회
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
 
-    // TODO : 조회되지 않을 시 404 Not Found Exception 발생
+    if (coupon == null) {
+      return null;
+    }
 
     // 활성화 여부 확인
     // TODO : 비활성화 상태일 시 404 Not Found Exception 발생
@@ -66,7 +68,9 @@ public class CouponService {
     // 단일 쿠폰 검색
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
 
-    // TODO : null 검증, null일 시 404 Not Found Exception 발생
+    if (coupon == null) {
+      return null;
+    }
 
     // 검색 결과 반환
     return CouponResponse.from(coupon);
@@ -83,7 +87,9 @@ public class CouponService {
     // coupon id 기반 조회
     Coupon currentCoupon = couponRepository.findById(couponId).orElse(null);
 
-    // TODO : null 검증, null일 시 404 Not Found Exception 발생
+    if (currentCoupon == null) {
+      return null;
+    }
 
     // 쿠폰 수정
     currentCoupon.update(couponUpdateRequest);
