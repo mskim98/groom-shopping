@@ -139,7 +139,7 @@ public class AuthApplicationService {
         User saved = userRepo.save(user);
 
         return new UserUpdateResponse(saved.getId(), saved.getEmail(), saved.getName(),
-                 saved.getRole(), saved.getGrade(), saved.getCreatedAt());
+                 saved.getRole(), saved.getGrade(), saved.getUpdatedAt());
     }
 
 
