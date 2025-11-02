@@ -43,6 +43,7 @@ public class AuthApplicationService {
         }
 
         // TODO 객체 생성 팩토리 메서드로 변경 고려
+        // TODO : 개발 편의를 위해 ROLE, GRADE 요청대로 적용 (추후 삭제 예정)
         User user = new User(
                 null,
                 email,

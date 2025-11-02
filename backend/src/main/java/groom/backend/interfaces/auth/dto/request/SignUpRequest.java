@@ -18,6 +18,8 @@ public class SignUpRequest {
     private String password;
     @NotBlank
     private String name;
+
+    // TODO : 개발 편의를 위해 임시 추가 (추후 삭제 예정)
     private Role role = Role.ROLE_USER;
     private Grade grade  = Grade.BRONZE;
 
