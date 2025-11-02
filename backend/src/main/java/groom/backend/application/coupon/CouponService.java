@@ -107,6 +107,6 @@ public class CouponService {
     couponRepository.deleteById(couponId);
 
     // 정상 삭제 확인 및 결과 반환
-    return couponRepository.existsById(couponId);
+    return !couponRepository.existsById(couponId);
   }
 }
