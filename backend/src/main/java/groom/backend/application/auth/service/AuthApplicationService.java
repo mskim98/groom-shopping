@@ -1,8 +1,6 @@
 package groom.backend.application.auth.service;
 
 import groom.backend.domain.auth.entity.User;
-import groom.backend.domain.auth.enums.Grade;
-import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.auth.repository.RefreshTokenRepository;
 import groom.backend.domain.auth.repository.UserRepository;
 import groom.backend.infrastructure.security.CustomUserDetails;
@@ -37,8 +35,8 @@ public class AuthApplicationService {
     private final RefreshTokenRepository refreshTokenRepository;
 
     @Transactional
-    public SignUpResponse register(SignUpRequest req) {
-        String email = req.getEmail().toLowerCase().trim();
+    public SignUpResponse register(SignUpRequest request) {
+        String email = request.getEmail().toLowerCase().trim();
 
         if (userRepo.existsByEmail(email)) {
             throw new IllegalArgumentException("Email already registered");
@@ -48,10 +46,10 @@ public class AuthApplicationService {
         User user = new User(
                 null,
                 email,
-                passwordEncoder.encode(req.getPassword()),
-                req.getName(),
-                Role.ROLE_USER,
-                Grade.BRONZE,
+                passwordEncoder.encode(request.getPassword()),
+                request.getName(),
+                request.getRole(),
+                request.getGrade(),
                 null,
                 null
         );
@@ -59,7 +57,7 @@ public class AuthApplicationService {
         User saved = userRepo.save(user);
 
         return new SignUpResponse(saved.getId(), saved.getEmail(), saved.getName(),
-                 saved.getGrade(), saved.getCreatedAt());
+                 saved.getRole(), saved.getGrade(), saved.getCreatedAt());
 
     }
 
