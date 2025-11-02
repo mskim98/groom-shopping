@@ -4,6 +4,7 @@ import groom.backend.application.coupon.CouponService;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
+import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -85,17 +86,24 @@ public class CouponController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * 쿠폰 발급
+   * POST /coupon/issue/{coupon_id}
+   */
   @PostMapping("/issue/{coupon_id}")
-  public String issueCoupon(@PathVariable("coupon_id") Long couponId) {
-    // 헤더의 날짜 및 credential 추출
-
-    // credential 유효성 검사
-
-    // 날짜 검증
+  public ResponseEntity<CouponIssueResponse> issueCoupon(@PathVariable("coupon_id") Long couponId) {
+    // TODO: credential 유효성 검사
+    // TODO: 날짜 검증
 
     // 쿠폰 발급
-    couponService.issueCoupon(couponId);
-    return "coupon issue";
+    CouponIssueResponse response = couponService.issueCoupon(couponId);
+
+    // 쿠폰이 존재하지 않을 시
+    if (response == null) {
+      return ResponseEntity.notFound().build();
+    }
+
+    return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
   @GetMapping("/me")
