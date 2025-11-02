@@ -20,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,19 +70,7 @@ public class AuthApplicationService {
         );
 
         Object principal = authentication.getPrincipal();
-        User user;
-
-        if (principal instanceof CustomUserDetails) {
-            user = ((CustomUserDetails) principal).getUser();
-        } else if (principal instanceof User) {
-            user = (User) principal;
-        } else if (principal instanceof UserDetails) {
-            String email = ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername();
-            user = userRepo.findByEmail(email)
-                    .orElseThrow(() -> new IllegalStateException("User not found for email: " + email));
-        } else {
-            throw new IllegalStateException("Unsupported principal type: " + (principal == null ? "null" : principal.getClass()));
-        }
+        User user = ((CustomUserDetails) principal).getUser();
 
         // Access Token 생성
         String accessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
