@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/coupon")
 public class CouponController {
-  public final CouponService couponService;
+  private final CouponService couponService;
 
   @PostMapping("/issue/{coupon_id}")
   public String issueCoupon(@PathVariable("coupon_id") Long couponId) {
