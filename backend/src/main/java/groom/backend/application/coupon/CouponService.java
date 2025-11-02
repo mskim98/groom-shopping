@@ -50,7 +50,7 @@ public class CouponService {
   public List<CouponIssue> searchMyCoupon(Long userId) {
     // 유저 id로 쿠폰 조회
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
-    return couponIssueRepository.findByUserIdAndIsActiveTrueAndExpireDateAfter(userId, LocalDateTime.now());
+    return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now());
   }
 
   public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest) {
