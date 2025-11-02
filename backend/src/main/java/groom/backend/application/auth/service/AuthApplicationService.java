@@ -81,7 +81,7 @@ public class AuthApplicationService {
         refreshTokenRepository.save(user.getEmail(), refreshToken, jwtTokenProvider.getRefreshTokenValidityInMilliseconds());
 
         // TODO :: refreshToken cookie 처리
-        // reponse로 refreshToken같이보내면 보안상 이슈
+        // response로 refreshToken같이보내면 보안상 이슈
         // 따라서 refreshToken은 HttpOnly Cookie에 저장
         //cookieUtil.addRefreshTokenCookie(response, refreshToken);
 
