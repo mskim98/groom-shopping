@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -22,10 +23,12 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class CouponService {
   private final CouponRepository couponRepository;
   private final CouponIssueRepository couponIssueRepository;
 
+  @Transactional
   public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
@@ -65,6 +68,7 @@ public class CouponService {
     return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now()).stream().map(CouponIssueResponse::from).collect(Collectors.toList());
   }
 
+  @Transactional
   public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest) {
     // dto를 entity로 변환
     Coupon coupon = couponCreateRequest.toEntity();
@@ -93,6 +97,7 @@ public class CouponService {
             .map(CouponResponse::from);
   }
 
+  @Transactional
   public CouponResponse updateCoupon(Long couponId, CouponUpdateRequest couponUpdateRequest) {
     // coupon id 기반 조회
     Coupon currentCoupon = couponRepository.findById(couponId).orElse(null);
@@ -112,6 +117,7 @@ public class CouponService {
     return CouponResponse.from(currentCoupon);
   }
 
+  @Transactional
   public Boolean deleteCoupon(Long couponId) {
     // 쿠폰 삭제
     couponRepository.deleteById(couponId);
