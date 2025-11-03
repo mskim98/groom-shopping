@@ -19,4 +19,6 @@ public class CouponUpdateRequest {
   private Long quantity;
 
   private LocalDate expireDate;
+
+  private Boolean isActive;
 }

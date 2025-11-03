@@ -28,7 +28,8 @@ public class Coupon {
 
   private Integer amount;
 
-  private Boolean isActive;
+  @Builder.Default
+  private Boolean isActive = true;
 
   @Enumerated(EnumType.STRING)
   private CouponType type;
@@ -47,6 +48,9 @@ public class Coupon {
     }
     if (request.getExpireDate() != null) {
       this.expireDate = request.getExpireDate();
+    }
+    if (request.getIsActive() != null) {
+      this.isActive = request.getIsActive();
     }
   }
 
