@@ -93,6 +93,12 @@ public class JpaRaffleRepository implements RaffleRepository {
         return new PageImpl<>(domainList, pageable, page.getTotalElements());
     }
 
+    // 추첨용 상품 Id 로 추첨 정보 받아오기
+    @Override
+    public Optional<Raffle> findByRaffleProductId(String raffleProductId) {
+        return raffleRepository.findByRaffleProductId(raffleProductId);
+    }
+
     // 도메인 기준을 Specification으로 변환 (인터페이스 레이어에 위치하므로 엔티티 참조 가능)
     private Specification<RaffleJpaEntity> toSpecification(RaffleSearchCriteria cond) {
         return (root, query, cb) -> {
