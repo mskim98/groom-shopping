@@ -2,7 +2,6 @@ package groom.backend.interfaces.raffle.dto.request;
 
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
