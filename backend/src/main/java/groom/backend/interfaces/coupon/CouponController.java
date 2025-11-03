@@ -59,7 +59,7 @@ public class CouponController {
    */
   @GetMapping
   public ResponseEntity<Page<CouponResponse>> searchCoupon(
-          CouponSearchCondition condition,
+          @ModelAttribute CouponSearchCondition condition,
           @PageableDefault(size = 10) Pageable pageable) {
     Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
     return ResponseEntity.ok(response);

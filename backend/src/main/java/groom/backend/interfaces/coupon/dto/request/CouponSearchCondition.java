@@ -6,10 +6,9 @@ import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDate;
 
-@Getter
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString
 @Builder
 public class CouponSearchCondition {
 
