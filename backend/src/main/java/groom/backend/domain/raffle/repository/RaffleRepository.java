@@ -1,7 +1,7 @@
 package groom.backend.domain.raffle.repository;
 
+import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
-import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -13,5 +13,6 @@ public interface RaffleRepository {
     boolean existsByRaffleProductId(String raffleProductId);
     void deleteById(Long id);
 
-    Page<Raffle> search(RaffleSearchRequest cond, Pageable pageable);
+    // 도메인 수준의 검색 기준을 사용하도록 변경
+    Page<Raffle> search(RaffleSearchCriteria cond, Pageable pageable);
 }
