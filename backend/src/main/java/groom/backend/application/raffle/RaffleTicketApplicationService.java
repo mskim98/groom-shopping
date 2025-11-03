@@ -21,14 +21,16 @@ public class RaffleTicketApplicationService {
 
 
     // 현재 응모된 수량 구하기
-    public int getEntriedCount(Raffle raffle, User user) {
-        return raffleTicketRepo.findCountByRaffleIdAndUserId(raffle.getRaffleId(), user.getId());
+    public int getEntryCount(Raffle raffle, User user) {
+        return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), user.getId());
     }
 
-    // 응모 가능 한지 확인
-    public boolean isPossibleToEntry(Raffle raffle, User user, int additionalCount) {
-        int currentCount = getEntriedCount(raffle, user);
-        return (currentCount + additionalCount)  <= raffle.getMaxEntriesPerUser();
+    // 응모 한도 검증
+    public void validateUserEntryLimit(Raffle raffle, User user, int additionalCount) {
+        int currentCount = getEntryCount(raffle, user);
+        if((currentCount + additionalCount) > raffle.getMaxEntriesPerUser()) {
+            throw new IllegalArgumentException("응모 한도를 초과하였습니다.");
+        }
     }
 
     // 결제 완료 후 호출 - 티켓 생성
