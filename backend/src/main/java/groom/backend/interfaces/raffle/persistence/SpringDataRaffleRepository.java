@@ -1,0 +1,8 @@
+package groom.backend.interfaces.raffle.persistence;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+
+public interface SpringDataRaffleRepository extends JpaRepository<RaffleJpaEntity, Long>, JpaSpecificationExecutor<RaffleJpaEntity> {
+    boolean existsByRaffleProductId(String raffleProductId);
+}
