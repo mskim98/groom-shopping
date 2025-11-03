@@ -27,7 +27,8 @@ public class CouponIssueService {
   @Transactional
   public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회
-    Coupon coupon = couponRepository.findById(couponId).orElseThrow(
+    // 비관적 락을 이용해 리소스 점유, 자원 충돌 ( quantity <= 0 ) 케이스 방지
+    Coupon coupon = couponRepository.findByIdForUpdate(couponId).orElseThrow(
             ()-> new BusinessException(ErrorCode.NOT_FOUND)
     );
 
@@ -42,7 +43,7 @@ public class CouponIssueService {
     }
 
     // 쿠폰 확보
-    // TODO : 동시성 이슈 발생 가능
+    // 분산 아키텍처에서는 여전히 동시성 문제 발생 가능
     coupon.decreaseQuantity();
 
     // 쿠폰 등록 및 DB 적용
