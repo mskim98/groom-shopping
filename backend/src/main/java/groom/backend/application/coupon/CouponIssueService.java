@@ -44,7 +44,7 @@ public class CouponIssueService {
     // TODO : 쿠폰 만료일은 정책 관련 사항
     // coupon 만료일은 00:00을 기준으로 함. LocalDate는 시간이 존재하지 않으므로 생성 시 시간을 추가하여 생성
     CouponIssue couponIssue = couponIssueRepository.save(CouponIssue.builder()
-            .couponId(couponId)
+            .coupon(coupon)
             .userId(user.getId())
             .createdAt(LocalDateTime.now())
             .deletedAt(LocalDateTime.of(coupon.getExpireDate(), LocalTime.MIN))

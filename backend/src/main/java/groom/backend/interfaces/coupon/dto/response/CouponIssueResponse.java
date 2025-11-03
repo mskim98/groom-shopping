@@ -18,7 +18,7 @@ public class CouponIssueResponse {
 
   public static CouponIssueResponse from(CouponIssue couponIssue) {
     return CouponIssueResponse.builder()
-            .couponId(couponIssue.getCouponId())
+            .couponId(couponIssue.getCoupon().getId())
             .couponIssueId(couponIssue.getId())
             .createdAt(couponIssue.getCreatedAt())
             .deletedAt(couponIssue.getDeletedAt())
