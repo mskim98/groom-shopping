@@ -87,7 +87,7 @@ public class CouponController {
   @DeleteMapping("/{coupon_id}")
   public ResponseEntity<Void> deleteCoupon(@PathVariable("coupon_id") Long couponId) {
     Boolean result = couponService.deleteCoupon(couponId);
-    if (result) {
+    if (!result) {
       // 삭제 실패 (존재하지 않음)
       return ResponseEntity.notFound().build();
     }
