@@ -45,7 +45,7 @@ public class CouponController {
    * GET /coupon/{coupon_id}
    */
   @GetMapping("/{coupon_id}")
-  public ResponseEntity<CouponResponse> findCoupon(@PathVariable("id") Long couponId) {
+  public ResponseEntity<CouponResponse> findCoupon(@PathVariable("coupon_id") Long couponId) {
     CouponResponse response = couponService.findCoupon(couponId);
     if (response == null) {
       return ResponseEntity.notFound().build();
@@ -67,11 +67,11 @@ public class CouponController {
 
   /**
    * 쿠폰 수정
-   * PUT /coupon/{id}
+   * PUT /coupon/{coupon_id}
    */
-  @PutMapping("/{id}")
+  @PutMapping("/{coupon_id}")
   public ResponseEntity<CouponResponse> updateCoupon(
-          @PathVariable("id") Long couponId,
+          @PathVariable("coupon_id") Long couponId,
           @RequestBody CouponUpdateRequest request) {
     CouponResponse response = couponService.updateCoupon(couponId, request);
     if (response == null) {
@@ -82,10 +82,10 @@ public class CouponController {
 
   /**
    * 쿠폰 삭제
-   * DELETE /coupon/{id}
+   * DELETE /coupon/{coupon_id}
    */
-  @DeleteMapping("/{id}")
-  public ResponseEntity<Void> deleteCoupon(@PathVariable("id") Long couponId) {
+  @DeleteMapping("/{coupon_id}")
+  public ResponseEntity<Void> deleteCoupon(@PathVariable("coupon_id") Long couponId) {
     Boolean result = couponService.deleteCoupon(couponId);
     if (result) {
       // 삭제 실패 (존재하지 않음)
