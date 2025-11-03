@@ -3,6 +3,7 @@ package groom.backend.interfaces.coupon.dto.request;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.enums.CouponType;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
 import java.time.LocalDate;
