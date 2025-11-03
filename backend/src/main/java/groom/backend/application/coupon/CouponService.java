@@ -1,5 +1,7 @@
 package groom.backend.application.coupon;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
@@ -31,11 +33,9 @@ public class CouponService {
 
   public CouponResponse findCoupon(Long couponId) {
     // 단일 쿠폰 검색
-    Coupon coupon = couponRepository.findById(couponId).orElse(null);
-
-    if (coupon == null) {
-      return null;
-    }
+    Coupon coupon = couponRepository.findById(couponId).orElseThrow(
+            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+    );
 
     // 검색 결과 반환
     return CouponResponse.from(coupon);
@@ -51,11 +51,9 @@ public class CouponService {
   @Transactional
   public CouponResponse updateCoupon(Long couponId, CouponUpdateRequest couponUpdateRequest) {
     // coupon id 기반 조회
-    Coupon currentCoupon = couponRepository.findById(couponId).orElse(null);
-
-    if (currentCoupon == null) {
-      return null;
-    }
+    Coupon currentCoupon = couponRepository.findById(couponId).orElseThrow(
+            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+    );
 
     // 쿠폰 수정
     currentCoupon.update(couponUpdateRequest);

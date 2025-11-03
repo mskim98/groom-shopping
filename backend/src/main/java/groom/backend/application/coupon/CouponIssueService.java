@@ -1,5 +1,7 @@
 package groom.backend.application.coupon;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.entity.CouponIssue;
@@ -25,19 +27,22 @@ public class CouponIssueService {
   @Transactional
   public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회
-    Coupon coupon = couponRepository.findById(couponId).orElse(null);
-
-    if (coupon == null) {
-      return null;
-    }
+    Coupon coupon = couponRepository.findById(couponId).orElseThrow(
+            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+    );
 
     // 활성화 여부 확인
-    // TODO : 비활성화 상태일 시 404 Not Found Exception 발생
+    if (!coupon.getIsActive()) {
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
 
     // 수량 확인
-    // TODO : 수량이 0보다 낮거나 같은 경우 409 Conflict 발생 및 재고 소진 메시지 반환
+    if (coupon.getQuantity() <= 0) {
+      throw new BusinessException(ErrorCode.CONFLICT, "수량이 소진되었습니다.");
+    }
 
     // 쿠폰 확보
+    // TODO : 동시성 이슈 발생 가능
     coupon.decreaseQuantity();
 
     // 쿠폰 등록 및 DB 적용
