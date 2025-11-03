@@ -28,7 +28,7 @@ public class RaffleApplicationService {
         return page.map(RaffleResponse::from);
     }
 
-    public RaffleResponse getRaffleDetails(User user, Long raffleId) {
+    public RaffleResponse getRaffleDetails(Long raffleId) {
         Raffle raffle = raffleRepository.findById(raffleId)
                 .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
         return RaffleResponse.from(raffle);
