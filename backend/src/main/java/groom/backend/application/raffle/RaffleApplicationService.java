@@ -124,6 +124,13 @@ public class RaffleApplicationService {
         // TODO : request 검증 로직 추가 필요
         // RaffleProductId, WinnerProductId 존재하는지 등
 
+        if (request == null) {
+            throw new IllegalStateException("요청이 null입니다.");
+        }
+
+        if (request.getEntryStartAt() == null || request.getEntryEndAt() == null || request.getRaffleDrawAt() == null) {
+            throw new IllegalStateException("응모 시작일, 응모 종료일, 추첨일은 반드시 입력해야 합니다.");
+        }
 
         if(request.getEntryEndAt().isBefore(request.getEntryStartAt())) {
             throw new IllegalStateException("응모 종료일은 응모 시작일 이후여야 합니다.");
