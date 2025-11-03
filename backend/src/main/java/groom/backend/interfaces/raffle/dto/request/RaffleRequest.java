@@ -2,6 +2,7 @@ package groom.backend.interfaces.raffle.dto.request;
 
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -20,7 +21,6 @@ public class RaffleRequest {
     private String winnerProductId;
     @NotBlank
     private String title;
-    @NotBlank
     private String description;
     private RaffleStatus status = RaffleStatus.DRAFT;
     private int winnersCount;
