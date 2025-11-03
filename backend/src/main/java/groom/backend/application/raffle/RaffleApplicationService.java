@@ -2,11 +2,11 @@ package groom.backend.application.raffle;
 
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
+import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
-import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +23,7 @@ public class RaffleApplicationService {
 
     private final RaffleRepository raffleRepository;
 
-    public Page<RaffleResponse> searchRaffles(User user, RaffleSearchRequest cond, Pageable pageable) {
+    public Page<RaffleResponse> searchRaffles(User user, RaffleSearchCriteria cond, Pageable pageable) {
         Page<Raffle> page = raffleRepository.search(cond, pageable);
         return page.map(RaffleResponse::from);
     }
