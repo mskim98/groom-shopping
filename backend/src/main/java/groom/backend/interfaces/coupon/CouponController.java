@@ -16,6 +16,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -118,13 +119,12 @@ public class CouponController {
    * GET /coupon/me
    */
   @GetMapping("/me")
-  public ResponseEntity<List<CouponIssueResponse>> myCoupon(Authentication authentication) {
+  public ResponseEntity<List<CouponIssueResponse>> myCoupon(@AuthenticationPrincipal(expression = "user") User user) {
     // 사용자 정보 추출
     // 토큰 유효성 검사는 security 측에서 한다.
-    CustomUserDetails user = (CustomUserDetails) authentication.getPrincipal();
-    log.info("login identified : {}", user.getUser().getName());
+    log.info("login identified : {}", user.getName());
 
-    Long userId = user.getUser().getId();
+    Long userId = user.getId();
 
     // 내 미사용 쿠폰 조회
     List<CouponIssueResponse> response = couponService.searchMyCoupon(userId);
