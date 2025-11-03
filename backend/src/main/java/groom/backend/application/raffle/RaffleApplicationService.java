@@ -46,6 +46,7 @@ public class RaffleApplicationService {
         if(raffleRepository.existsByRaffleProductId(request.getRaffleProductId())) {
             throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
         }
+        normalizeStatus(request);
 
         Raffle raffle = new Raffle(
                 null,
@@ -58,7 +59,7 @@ public class RaffleApplicationService {
                 request.getEntryStartAt(),
                 request.getEntryEndAt(),
                 request.getRaffleDrawAt(),
-                RaffleStatus.DRAFT,
+                request.getStatus(),
                 null,
                 null
         );
@@ -138,6 +139,13 @@ public class RaffleApplicationService {
 
         if(request.getRaffleDrawAt().isBefore(request.getEntryEndAt())) {
             throw new IllegalStateException("추첨일은 응모 종료일 이후여야 합니다.");
+        }
+    }
+
+    // 요청의 status가 누락된 경우 서비스에서 명시적으로 기본값을 적용
+    private void normalizeStatus(RaffleRequest request) {
+        if (request != null && request.getStatus() == null) {
+            request.setStatus(RaffleStatus.DRAFT);
         }
     }
 
