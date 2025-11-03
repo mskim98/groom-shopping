@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 @Repository
 public class JpaRaffleRepository implements RaffleRepository {
 
-    SpringDataRaffleRepository raffleRepository;
+    private final SpringDataRaffleRepository raffleRepository;
 
     public JpaRaffleRepository(SpringDataRaffleRepository raffleRepository) {
         this.raffleRepository = raffleRepository;
