@@ -3,7 +3,6 @@ package groom.backend.interfaces.raffle.persistence;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -26,9 +25,7 @@ public class RaffleJpaEntity {
     @NotBlank
     private String title;
     private String description;
-    @NotNull
     private int winnersCount;
-    @NotNull
     private int maxEntriesPerUser;
     private LocalDateTime entryStartAt;
     private LocalDateTime entryEndAt;
