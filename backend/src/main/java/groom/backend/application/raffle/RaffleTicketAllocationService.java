@@ -13,7 +13,7 @@ public class RaffleTicketAllocationService {
 
     @Transactional
     public Long allocateNextTicketNumber(Long raffleId) {
-        RaffleTicketCounterJpaEntity counter = counterRepo.findByRaffleIdForUpdate(raffleId)
+        RaffleTicketCounterJpaEntity counter = counterRepo.findFirstByRaffleIdForUpdate(raffleId)
                 .orElseGet(() -> new RaffleTicketCounterJpaEntity(raffleId, 0L));
         long next = counter.getCurrentValue() + 1;
         counter.setCurrentValue(next);

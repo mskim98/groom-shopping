@@ -13,7 +13,7 @@ import java.util.Optional;
 @Repository
 public interface SpringDataRaffleTicketCounterRepository extends JpaRepository<RaffleTicketCounterJpaEntity, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select c from RaffleTicketCounterJpaEntity c where c.raffleId = :raffleId")
-    Optional<RaffleTicketCounterJpaEntity> findByRaffleIdForUpdate(@Param("raffleId") Long raffleId);
+    @Query("select c from RaffleTicketCounterJpaEntity c where c.raffleId = :raffleId order by c.currentValue desc")
+    Optional<RaffleTicketCounterJpaEntity> findFirstByRaffleIdForUpdate(@Param("raffleId") Long raffleId);
 
 }
