@@ -2,11 +2,11 @@ package groom.backend.application.raffle;
 
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
+import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
-import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,12 +23,12 @@ public class RaffleApplicationService {
 
     private final RaffleRepository raffleRepository;
 
-    public Page<RaffleResponse> searchRaffles(User user, RaffleSearchRequest cond, Pageable pageable) {
+    public Page<RaffleResponse> searchRaffles(RaffleSearchCriteria cond, Pageable pageable) {
         Page<Raffle> page = raffleRepository.search(cond, pageable);
         return page.map(RaffleResponse::from);
     }
 
-    public RaffleResponse getRaffleDetails(User user, Long raffleId) {
+    public RaffleResponse getRaffleDetails(Long raffleId) {
         Raffle raffle = raffleRepository.findById(raffleId)
                 .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
         return RaffleResponse.from(raffle);
@@ -46,6 +46,7 @@ public class RaffleApplicationService {
         if(raffleRepository.existsByRaffleProductId(request.getRaffleProductId())) {
             throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
         }
+        normalizeStatus(request);
 
         Raffle raffle = new Raffle(
                 null,
@@ -58,7 +59,7 @@ public class RaffleApplicationService {
                 request.getEntryStartAt(),
                 request.getEntryEndAt(),
                 request.getRaffleDrawAt(),
-                RaffleStatus.DRAFT,
+                request.getStatus(),
                 null,
                 null
         );
@@ -124,6 +125,13 @@ public class RaffleApplicationService {
         // TODO : request 검증 로직 추가 필요
         // RaffleProductId, WinnerProductId 존재하는지 등
 
+        if (request == null) {
+            throw new IllegalStateException("요청이 null입니다.");
+        }
+
+        if (request.getEntryStartAt() == null || request.getEntryEndAt() == null || request.getRaffleDrawAt() == null) {
+            throw new IllegalStateException("응모 시작일, 응모 종료일, 추첨일은 반드시 입력해야 합니다.");
+        }
 
         if(request.getEntryEndAt().isBefore(request.getEntryStartAt())) {
             throw new IllegalStateException("응모 종료일은 응모 시작일 이후여야 합니다.");
@@ -131,6 +139,13 @@ public class RaffleApplicationService {
 
         if(request.getRaffleDrawAt().isBefore(request.getEntryEndAt())) {
             throw new IllegalStateException("추첨일은 응모 종료일 이후여야 합니다.");
+        }
+    }
+
+    // 요청의 status가 누락된 경우 서비스에서 명시적으로 기본값을 적용
+    private void normalizeStatus(RaffleRequest request) {
+        if (request != null && request.getStatus() == null) {
+            request.setStatus(RaffleStatus.DRAFT);
         }
     }
 

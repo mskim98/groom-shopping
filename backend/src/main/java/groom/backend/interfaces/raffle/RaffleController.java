@@ -2,6 +2,8 @@ package groom.backend.interfaces.raffle;
 
 import groom.backend.application.raffle.RaffleApplicationService;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
+import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
@@ -66,7 +68,9 @@ public class RaffleController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        Page<RaffleResponse> page = raffleApplicationService.searchRaffles(user, cond, pageable);
+// 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
+        RaffleSearchCriteria criteria = RaffleSearchMapper.toCriteria(cond);
+        Page<RaffleResponse> page = raffleApplicationService.searchRaffles(user, criteria, pageable);
         return ResponseEntity.ok(page);
     }
 

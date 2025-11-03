@@ -1,14 +1,16 @@
 package groom.backend.interfaces.raffle.persistence;
 
+import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.repository.RaffleRepository;
-import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -16,7 +18,7 @@ import java.util.stream.Collectors;
 @Repository
 public class JpaRaffleRepository implements RaffleRepository {
 
-    SpringDataRaffleRepository raffleRepository;
+    private final SpringDataRaffleRepository raffleRepository;
 
     public JpaRaffleRepository(SpringDataRaffleRepository raffleRepository) {
         this.raffleRepository = raffleRepository;
@@ -44,7 +46,7 @@ public class JpaRaffleRepository implements RaffleRepository {
     }
 
     @Override
-    public Page<Raffle> search(RaffleSearchRequest cond, Pageable pageable) {
+    public Page<Raffle> search(RaffleSearchCriteria cond, Pageable pageable) {
         /*
          * 1) 동적 검색 조건(Specification) 생성
          * - RaffleSpecs.of(cond)는 전달된 검색 조건(RaffleSearchRequest)을 기반으로
@@ -52,7 +54,7 @@ public class JpaRaffleRepository implements RaffleRepository {
          * - Specification은 엔티티 필드에 대한 where 절 조합(AND, OR 등)을 지연 생성하는 객체다.
          * - cond가 null이거나 내부 필드가 비어있으면 항상 true인 conjunction을 반환하도록 구현되어야 한다.
          */
-        Specification<RaffleJpaEntity> spec = RaffleSpecs.of(cond);
+        Specification<RaffleJpaEntity> spec = toSpecification(cond);
         /*
          * 2) Spring Data JPA 리포지토리에 Specification + Pageable로 쿼리 실행
          * - raffleRepository.findAll(spec, pageable)은 DB에 실제 SELECT 쿼리를 날린다.
@@ -87,6 +89,41 @@ public class JpaRaffleRepository implements RaffleRepository {
          * - Pageable의 정렬 필드명이 엔티티 필드명과 일치하는지 확인해야 한다(오타 시 예외 발생).
          */
         return new PageImpl<>(domainList, pageable, page.getTotalElements());
+    }
+
+    // 도메인 기준을 Specification으로 변환 (인터페이스 레이어에 위치하므로 엔티티 참조 가능)
+    private Specification<RaffleJpaEntity> toSpecification(RaffleSearchCriteria cond) {
+        return (root, query, cb) -> {
+            if (cond == null) {
+                return cb.conjunction();
+            }
+
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (cond.getTitle() != null && !cond.getTitle().isEmpty()) {
+                predicates.add(cb.like(cb.lower(root.get("title")), "%" + cond.getTitle().toLowerCase() + "%"));
+            }
+            if (cond.getRaffleProductId() != null && !cond.getRaffleProductId().isEmpty()) {
+                predicates.add(cb.equal(root.get("raffleProductId"), cond.getRaffleProductId()));
+            }
+            if (cond.getStatus() != null) {
+                predicates.add(cb.equal(root.get("status"), cond.getStatus()));
+            }
+            if (cond.getEntryStartFrom() != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("entryStartAt"), cond.getEntryStartFrom()));
+            }
+            if (cond.getEntryStartTo() != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("entryStartAt"), cond.getEntryStartTo()));
+            }
+            if (cond.getRaffleDrawFrom() != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("raffleDrawAt"), cond.getRaffleDrawFrom()));
+            }
+            if (cond.getRaffleDrawTo() != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("raffleDrawAt"), cond.getRaffleDrawTo()));
+            }
+
+            return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
+        };
     }
 
     private Raffle toDomain(RaffleJpaEntity e) {

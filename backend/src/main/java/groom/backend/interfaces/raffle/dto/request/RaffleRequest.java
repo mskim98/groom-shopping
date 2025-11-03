@@ -20,9 +20,8 @@ public class RaffleRequest {
     private String winnerProductId;
     @NotBlank
     private String title;
-    @NotBlank
     private String description;
-    private RaffleStatus status = RaffleStatus.DRAFT;
+    private RaffleStatus status;
     private int winnersCount;
     private int maxEntriesPerUser;
     private LocalDateTime entryStartAt;
