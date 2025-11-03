@@ -18,16 +18,16 @@ public class CouponCreateRequest {
 
   private String description;
 
-  @NotBlank
+  @NotNull
   private Long quantity;
 
-  @NotBlank
+  @NotNull
   private Integer amount;
 
-  @NotBlank
+  @NotNull
   private CouponType type;
 
-  @NotBlank
+  @NotNull
   private LocalDate expireDate;
 
   public Coupon toEntity() {
