@@ -15,20 +15,21 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
+@Validated
 @Slf4j
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/coupon")
 public class CouponController {
   private final CouponService couponService;
-
-
   /**
    * 쿠폰 생성
    * POST /coupon
@@ -99,12 +100,29 @@ public class CouponController {
    * POST /coupon/issue/{coupon_id}
    */
   @PostMapping("/issue/{coupon_id}")
-  public ResponseEntity<CouponIssueResponse> issueCoupon(@PathVariable("coupon_id") Long couponId) {
-    // TODO: credential 유효성 검사
-    // TODO: 날짜 검증
+  public ResponseEntity<CouponIssueResponse> issueCoupon(@AuthenticationPrincipal(expression = "user") User user,
+                                                         @RequestHeader("Date") Instant clientInstant,
+                                                         @PathVariable("coupon_id") Long couponId) {
+
+    // 사용자 정보 추출
+    // 토큰 유효성 검사는 security 측에서 한다.
+    log.info("user identified : {}", user.getName());
+
+    // 서버와 클라이언트 간의 시간 오차 검증 (절대값 기준)
+    Duration diff = Duration.between(clientInstant, Instant.now()).abs();
+
+    // TODO : 요청 트래픽으로 인해 느려질 경우를 고려해야 할 수 있다.
+    // 2차에서 다뤄야 할 사항으로 보임.
+    // 예상 사용자 책정과 성능 요구사항 설정으로 최대 몇 초 이내에 응답해야 하는지에 따라, 오차 또한 달라질 수 있음.
+    // 분 단위 이내만 허용
+    if (diff.toMinutes() >= 1) {
+      log.warn("Time difference exceeded: {} seconds", diff.toSeconds());
+      return ResponseEntity.status(HttpStatus.FORBIDDEN)
+              .build();
+    }
 
     // 쿠폰 발급
-    CouponIssueResponse response = couponService.issueCoupon(couponId);
+    CouponIssueResponse response = couponService.issueCoupon(couponId, user);
 
     // 쿠폰이 존재하지 않을 시
     if (response == null) {
@@ -122,7 +140,7 @@ public class CouponController {
   public ResponseEntity<List<CouponIssueResponse>> myCoupon(@AuthenticationPrincipal(expression = "user") User user) {
     // 사용자 정보 추출
     // 토큰 유효성 검사는 security 측에서 한다.
-    log.info("login identified : {}", user.getName());
+    log.info("user identified : {}", user.getName());
 
     Long userId = user.getId();
 
