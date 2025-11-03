@@ -3,7 +3,6 @@ package groom.backend.interfaces.coupon.dto.response;
 import groom.backend.domain.coupon.entity.CouponIssue;
 import lombok.*;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @NoArgsConstructor
@@ -19,7 +18,7 @@ public class CouponIssueResponse {
 
   public static CouponIssueResponse from(CouponIssue couponIssue) {
     return CouponIssueResponse.builder()
-            .couponId(couponIssue.getCouponId())
+            .couponId(couponIssue.getCoupon().getId())
             .couponIssueId(couponIssue.getId())
             .createdAt(couponIssue.getCreatedAt())
             .deletedAt(couponIssue.getDeletedAt())

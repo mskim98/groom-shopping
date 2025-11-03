@@ -1,8 +1,8 @@
 package groom.backend.interfaces.coupon;
 
+import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.coupon.CouponService;
 import groom.backend.domain.auth.entity.User;
-import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
@@ -30,12 +30,14 @@ import java.util.List;
 @RequestMapping("/coupon")
 public class CouponController {
   private final CouponService couponService;
+  private final CouponIssueService couponIssueService;
+
   /**
    * 쿠폰 생성
    * POST /coupon
    */
   @PostMapping
-  public ResponseEntity<CouponResponse> createCoupon(@RequestBody CouponCreateRequest request) {
+  public ResponseEntity<CouponResponse> createCoupon(@Validated @RequestBody CouponCreateRequest request) {
     CouponResponse response = couponService.createCoupon(request);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
@@ -122,7 +124,7 @@ public class CouponController {
     }
 
     // 쿠폰 발급
-    CouponIssueResponse response = couponService.issueCoupon(couponId, user);
+    CouponIssueResponse response = couponIssueService.issueCoupon(couponId, user);
 
     // 쿠폰이 존재하지 않을 시
     if (response == null) {
@@ -145,7 +147,7 @@ public class CouponController {
     Long userId = user.getId();
 
     // 내 미사용 쿠폰 조회
-    List<CouponIssueResponse> response = couponService.searchMyCoupon(userId);
+    List<CouponIssueResponse> response = couponIssueService.searchMyCoupon(userId);
 
     return ResponseEntity.ok(response);
   }
