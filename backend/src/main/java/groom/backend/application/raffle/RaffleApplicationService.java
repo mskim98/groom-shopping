@@ -23,7 +23,7 @@ public class RaffleApplicationService {
 
     private final RaffleRepository raffleRepository;
 
-    public Page<RaffleResponse> searchRaffles(User user, RaffleSearchCriteria cond, Pageable pageable) {
+    public Page<RaffleResponse> searchRaffles(RaffleSearchCriteria cond, Pageable pageable) {
         Page<Raffle> page = raffleRepository.search(cond, pageable);
         return page.map(RaffleResponse::from);
     }
