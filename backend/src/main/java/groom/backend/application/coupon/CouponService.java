@@ -113,10 +113,12 @@ public class CouponService {
   }
 
   public Boolean deleteCoupon(Long couponId) {
+    // 쿠폰 존재 여부 확인
+    if (!couponRepository.existsById(couponId)) {
+      return false;
+    }
     // 쿠폰 삭제
     couponRepository.deleteById(couponId);
-
-    // 정상 삭제 확인 및 결과 반환
-    return !couponRepository.existsById(couponId);
+    return true;
   }
 }
