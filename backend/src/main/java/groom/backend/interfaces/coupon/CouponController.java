@@ -3,7 +3,6 @@ package groom.backend.interfaces.coupon;
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.coupon.CouponService;
 import groom.backend.domain.auth.entity.User;
-import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;

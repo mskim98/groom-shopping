@@ -1,6 +1,5 @@
 package groom.backend.interfaces.coupon.dto.request;
 
-import groom.backend.domain.coupon.enums.CouponType;
 import lombok.*;
 
 import java.time.LocalDate;

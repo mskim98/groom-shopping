@@ -2,8 +2,6 @@ package groom.backend.interfaces.coupon.dto.request;
 
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.enums.CouponType;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import lombok.*;
 
 import java.time.LocalDate;

@@ -3,7 +3,6 @@ package groom.backend.interfaces.coupon.dto.response;
 import groom.backend.domain.coupon.entity.CouponIssue;
 import lombok.*;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @NoArgsConstructor
