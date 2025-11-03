@@ -1,4 +1,4 @@
-package groom.backend.interfaces.raffle.persistence;
+package groom.backend.interfaces.raffle.persistence.Entity;
 
 import jakarta.persistence.*;
 import lombok.*;

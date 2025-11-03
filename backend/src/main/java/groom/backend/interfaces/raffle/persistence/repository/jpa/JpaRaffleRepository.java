@@ -1,8 +1,10 @@
-package groom.backend.interfaces.raffle.persistence;
+package groom.backend.interfaces.raffle.persistence.repository.jpa;
 
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.repository.RaffleRepository;
+import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
+import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleRepository;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
