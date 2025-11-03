@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -49,10 +50,10 @@ public class CouponService {
     return CouponIssueResponse.from(couponIssue);
   }
 
-  public List<CouponIssue> searchMyCoupon(Long userId) {
+  public List<CouponIssueResponse> searchMyCoupon(Long userId) {
     // 유저 id로 쿠폰 조회
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
-    return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now());
+    return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now()).stream().map(CouponIssueResponse::from).collect(Collectors.toList());
   }
 
   public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest) {

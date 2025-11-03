@@ -1,19 +1,26 @@
 package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponService;
+import groom.backend.domain.auth.entity.User;
+import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/coupon")
@@ -106,16 +113,23 @@ public class CouponController {
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
+  /**
+   * 내 쿠폰 조회
+   * GET /coupon/me
+   */
   @GetMapping("/me")
-  public String myCoupon() {
-    // credential 추출
-    Long userId = 1L;
-    // credential 유효성 검사
+  public ResponseEntity<List<CouponIssueResponse>> myCoupon(Authentication authentication) {
+    // 사용자 정보 추출
+    // 토큰 유효성 검사는 security 측에서 한다.
+    CustomUserDetails user = (CustomUserDetails) authentication.getPrincipal();
+    log.info("login identified : {}", user.getUser().getName());
+
+    Long userId = user.getUser().getId();
 
     // 내 미사용 쿠폰 조회
-    couponService.searchMyCoupon(userId);
+    List<CouponIssueResponse> response = couponService.searchMyCoupon(userId);
 
-    return "my coupon";
+    return ResponseEntity.ok(response);
   }
 
 }
