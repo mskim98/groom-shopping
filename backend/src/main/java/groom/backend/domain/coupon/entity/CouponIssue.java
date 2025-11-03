@@ -21,7 +21,8 @@ public class CouponIssue {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  private Boolean isActive;
+  @Builder.Default
+  private Boolean isActive=true;
 
   private LocalDateTime createdAt;
 

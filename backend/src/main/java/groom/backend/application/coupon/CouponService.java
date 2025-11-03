@@ -1,5 +1,6 @@
 package groom.backend.application.coupon;
 
+import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.coupon.entity.CouponIssue;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -24,7 +26,7 @@ public class CouponService {
   private final CouponRepository couponRepository;
   private final CouponIssueRepository couponIssueRepository;
 
-  public CouponIssueResponse issueCoupon(Long couponId) {
+  public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회
     Coupon coupon = couponRepository.findById(couponId).orElse(null);
 
@@ -42,7 +44,14 @@ public class CouponService {
     coupon.decreaseQuantity();
 
     // 쿠폰 등록 및 DB 적용
-    CouponIssue couponIssue = couponIssueRepository.save(CouponIssue.builder().build());
+    // TODO : 쿠폰 만료일은 정책 관련 사항
+    // coupon 만료일은 00:00을 기준으로 함. LocalDate는 시간이 존재하지 않으므로 생성 시 시간을 추가하여 생성
+    CouponIssue couponIssue = couponIssueRepository.save(CouponIssue.builder()
+                    .couponId(couponId)
+                    .userId(user.getId())
+                    .createdAt(LocalDateTime.now())
+                    .deletedAt(LocalDateTime.of(coupon.getExpireDate(), LocalTime.MIN))
+            .build());
     couponRepository.save(coupon);
 
 
