@@ -21,8 +21,8 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
     }
 
     @Override
-    public int findCountByRaffleIdAndUserId(Long raffleId, Long userId) {
-        return ticketRepository.findCountByRaffleIdAndUserId(raffleId, userId);
+    public int countByRaffleIdAndUserId(Long raffleId, Long userId) {
+        return ticketRepository.countByRaffleIdAndUserId(raffleId, userId);
     }
 
     private RaffleTicket toDomain(RaffleTicketJpaEntity e) {
