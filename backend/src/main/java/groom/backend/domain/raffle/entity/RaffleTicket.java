@@ -1,10 +1,12 @@
 package groom.backend.domain.raffle.entity;
 
+import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
 
 @Getter
+@AllArgsConstructor
 public class RaffleTicket {
 
     private Long raffleTicketId;
@@ -13,11 +15,5 @@ public class RaffleTicket {
     private Long userId;
     private LocalDateTime createdAt;
 
-    public RaffleTicket(Long raffleTicketId, Long ticketNumber, Long raffleId, Long userId, LocalDateTime createdAt) {
-        this.raffleTicketId = raffleTicketId;
-        this.ticketNumber = ticketNumber;
-        this.raffleId = raffleId;
-        this.userId = userId;
-        this.createdAt = createdAt;
-    }
+
 }

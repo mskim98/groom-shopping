@@ -1,11 +1,13 @@
 package groom.backend.domain.raffle.entity;
 
 import groom.backend.domain.raffle.enums.RaffleWinnerStatus;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
 
 @Getter
+@AllArgsConstructor
 public class RaffleWinner {
 
     private Long raffleWinnerId;
@@ -14,11 +16,5 @@ public class RaffleWinner {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
-    public RaffleWinner(Long raffleWinnerId, RaffleWinnerStatus status, Long raffleTicketId, LocalDateTime createdAt, LocalDateTime updatedAt) {
-        this.raffleWinnerId = raffleWinnerId;
-        this.status = status;
-        this.raffleTicketId = raffleTicketId;
-        this.createdAt = createdAt;
-        this.updatedAt = updatedAt;
-    }
+
 }
