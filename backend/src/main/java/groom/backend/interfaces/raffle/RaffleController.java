@@ -70,7 +70,7 @@ public class RaffleController {
 
 // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
         RaffleSearchCriteria criteria = RaffleSearchMapper.toCriteria(cond);
-        Page<RaffleResponse> page = raffleApplicationService.searchRaffles(user, criteria, pageable);
+        Page<RaffleResponse> page = raffleApplicationService.searchRaffles(criteria, pageable);
         return ResponseEntity.ok(page);
     }
 
@@ -81,7 +81,7 @@ public class RaffleController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        RaffleResponse response = raffleApplicationService.getRaffleDetails(user, raffleId);
+        RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
         return ResponseEntity.ok(response);
     }
 }
