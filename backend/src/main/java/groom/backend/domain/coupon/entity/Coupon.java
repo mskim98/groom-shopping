@@ -55,6 +55,10 @@ public class Coupon {
   }
 
   public void decreaseQuantity() {
-    this.quantity--;
+    if (this.quantity != null && this.quantity > 0) {
+      this.quantity--;
+    } else {
+      throw new IllegalStateException("Cannot decrease quantity below zero.");
+    }
   }
 }
