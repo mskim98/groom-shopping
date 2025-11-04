@@ -5,8 +5,8 @@ import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
+import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
-import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,7 +18,7 @@ import java.util.Objects;
 public class RaffleValidationService {
 
     private final RaffleRepository raffleRepository;
-    private final SpringDataRaffleTicketRepository raffleTicketRepo;
+    private final RaffleTicketRepository raffleTicketRepo;
 
     // TODO : request 검증 로직 추가 필요
     // RaffleProductId, WinnerProductId 존재하는지 등
@@ -44,6 +44,23 @@ public class RaffleValidationService {
         }
         if (now.isAfter(raffle.getEntryEndAt())) {
             throw new IllegalStateException("응모 기간이 종료되었습니다.");
+        }
+    }
+
+    // 추첨 가능 여부 검증
+    public void validateRaffleForDraw(Raffle raffle) {
+        if (raffle == null) {
+            throw new IllegalStateException("해당 추첨이 존재하지 않습니다.");
+        }
+        // TODO : 추후 배치 추가 될 시 조건 엄격하게 CLOSED 만 허용하도록 변경 필요
+        if (!(raffle.getStatus() == RaffleStatus.CLOSED
+                || raffle.getStatus() == RaffleStatus.ACTIVE)) {
+            throw new IllegalStateException("현재 진행중인 추첨이 아닙니다.");
+        }
+
+        // TODO : 추후 배치 추가 될 시 당일 여부 검사로 변경 필요
+        if(LocalDateTime.now().isBefore(raffle.getRaffleDrawAt())) {
+            throw new IllegalStateException("아직 추첨일이 되지 않았습니다.");
         }
     }
 
