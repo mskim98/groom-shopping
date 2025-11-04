@@ -1,10 +1,7 @@
 package groom.backend.domain.coupon.entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.time.LocalDateTime;
 
@@ -19,10 +16,15 @@ public class CouponIssue {
   private Long id;
 
   @Builder.Default
+  @Setter
   private Boolean isActive=true;
 
   private LocalDateTime createdAt;
 
+  // 만료일 및 사용 시간을 나타내는 필드
+  // isActive = true 일 시, 만료일
+  // isActive = false 일 시, 사용일
+  @Setter
   private LocalDateTime deletedAt;
 
 

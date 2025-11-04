@@ -11,6 +11,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 public record CreateProductRequest(
         @NotBlank(message = "상품명은 필수입니다")
         @Size(min = 1, max = 100, message = "상품명은 1-100자 사이여야 합니다")
@@ -32,11 +34,14 @@ public record CreateProductRequest(
 ) {
     public Product toEntity() {
         return Product.create(
+                UUID.randomUUID(),
                 new Name(this.name),
                 new Description(this.description),
                 new Price(this.price),
                 new Stock(this.stock),
-                this.category
+                this.category,
+                null, // thresholdValue
+                true  // isActive
         );
     }
 }

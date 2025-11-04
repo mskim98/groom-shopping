@@ -1,8 +1,10 @@
-package groom.backend.interfaces.raffle.persistence;
+package groom.backend.interfaces.raffle.persistence.repository.jpa;
 
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.repository.RaffleRepository;
+import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
+import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleRepository;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -89,6 +91,12 @@ public class JpaRaffleRepository implements RaffleRepository {
          * - Pageable의 정렬 필드명이 엔티티 필드명과 일치하는지 확인해야 한다(오타 시 예외 발생).
          */
         return new PageImpl<>(domainList, pageable, page.getTotalElements());
+    }
+
+    // 추첨용 상품 Id 로 추첨 정보 받아오기
+    @Override
+    public Optional<Raffle> findByRaffleProductId(String raffleProductId) {
+        return raffleRepository.findByRaffleProductId(raffleProductId);
     }
 
     // 도메인 기준을 Specification으로 변환 (인터페이스 레이어에 위치하므로 엔티티 참조 가능)

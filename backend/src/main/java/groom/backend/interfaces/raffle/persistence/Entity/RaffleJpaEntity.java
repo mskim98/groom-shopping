@@ -1,4 +1,4 @@
-package groom.backend.interfaces.raffle.persistence;
+package groom.backend.interfaces.raffle.persistence.Entity;
 
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.persistence.*;
