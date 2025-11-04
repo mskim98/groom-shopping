@@ -53,6 +53,11 @@ public class Raffle {
         if(request.getRaffleDrawAt() != null) {
             this.raffleDrawAt = request.getRaffleDrawAt();
         }
-        this.updatedAt = LocalDateTime.now();
+        //this.updatedAt = LocalDateTime.now();
+    }
+
+    public void updateStatus(RaffleStatus status) {
+        this.status = status;
+        //this.updatedAt = LocalDateTime.now();
     }
 }
