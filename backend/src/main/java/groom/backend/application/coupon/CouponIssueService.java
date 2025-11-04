@@ -5,6 +5,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.entity.CouponIssue;
+import groom.backend.domain.coupon.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
@@ -83,12 +84,22 @@ public class CouponIssueService {
     // 쿠폰 검증
     // 사용자 확인, 활성화 여부 확인
     if (couponIssue.getUserId().equals(userId) && couponIssue.getIsActive()) {
+      Integer discount = 0;
+
       // 할인율 계산 로직
+      // TODO : 정책 리팩토링
+      switch(couponIssue.getCoupon().getType()) {
+        case CouponType.DISCOUNT -> discount = couponIssue.getCoupon().getAmount();
+        case CouponType.PERCENT -> {
+          double rate = couponIssue.getCoupon().getAmount() / 100.0;  // 정수 → 실수 변환
+          discount = (int) Math.floor((Cost * rate) / 100) * 100; // 백원 단위 절삭
+        }
+      }
 
       // 사용 가능 여부 및 할인 금액 반환
-
+      // TODO : dto 등을 통한 사용 가능 여부, 원인, 할인 금액 등 전송 필요
+      return discount;
     }
-
 
     return -1;
   }
