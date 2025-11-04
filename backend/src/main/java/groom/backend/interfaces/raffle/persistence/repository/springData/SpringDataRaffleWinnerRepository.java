@@ -31,7 +31,6 @@ public interface SpringDataRaffleWinnerRepository extends JpaRepository<RaffleWi
             nativeQuery = true)
     int pickWinnersNative(@Param("cond") RaffleDrawCondition cond);
 
-    @Modifying
     @Query(value = ""
             + "SELECT w.raffle_ticket_id, t.user_id, r.winner_product_id as product_id, concat('축하합니다. ', p.name,'에 당첨 되셨습니다.' ) as message "
             + "FROM raffles r "
