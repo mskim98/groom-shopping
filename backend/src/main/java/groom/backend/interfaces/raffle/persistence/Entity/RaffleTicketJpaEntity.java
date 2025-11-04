@@ -4,8 +4,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 @Entity
 @Table(name = "raffle_tickets",
@@ -27,8 +25,5 @@ public class RaffleTicketJpaEntity {
     @ManyToOne
     @JoinColumn(name = "raffle_id")
     private RaffleJpaEntity raffle;
-
-    @OneToMany(mappedBy = "raffleTicket", fetch = FetchType.LAZY)
-    private List<RaffleWinnerJpaEntity> winners = new ArrayList<>();
 
 }
