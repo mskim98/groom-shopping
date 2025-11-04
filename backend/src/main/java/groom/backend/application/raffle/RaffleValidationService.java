@@ -63,15 +63,31 @@ public class RaffleValidationService {
         }
     }
 
-    // 요청 날짜 관련 검증
-    public void validateDateRaffleRequestForUpdate(RaffleRequest request) {
+    // 요청 날짜 관련 검증 (수정 시)
+    public void validateDateRaffleRequestForUpdate(Raffle raffle, RaffleRequest request) {
         if (request == null) {
             throw new IllegalStateException("요청이 null입니다.");
         }
-        if (request.getEntryEndAt().isBefore(request.getEntryStartAt())) {
+
+        // 기존 값과 요청 값을 비교하여 최종 날짜 결정
+        LocalDateTime start = raffle.getEntryStartAt();
+        LocalDateTime end = raffle.getEntryEndAt();
+        LocalDateTime draw = raffle.getRaffleDrawAt();
+
+        if (request.getEntryStartAt() != null) {
+            start = request.getEntryStartAt();
+        }
+        if (request.getEntryEndAt() != null) {
+            end = request.getEntryEndAt();
+        }
+        if (request.getRaffleDrawAt() != null) {
+            draw = request.getRaffleDrawAt();
+        }
+
+        if (end.isBefore(start)) {
             throw new IllegalStateException("응모 종료일은 응모 시작일 이후여야 합니다.");
         }
-        if (request.getRaffleDrawAt().isBefore(request.getEntryEndAt())) {
+        if (draw.isBefore(end)) {
             throw new IllegalStateException("추첨일은 응모 종료일 이후여야 합니다.");
         }
     }
