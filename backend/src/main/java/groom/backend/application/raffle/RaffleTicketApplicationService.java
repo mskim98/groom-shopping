@@ -3,7 +3,6 @@ package groom.backend.application.raffle;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
-import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketCounterRepository;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,20 +16,14 @@ public class RaffleTicketApplicationService {
 
     private final RaffleTicketAllocationService allocationService;
     private final SpringDataRaffleTicketRepository raffleTicketRepo;
-    private final SpringDataRaffleTicketCounterRepository counterRepo;
+    private final RaffleValidationService raffleValidationService;
 
+    // 응모 장바구니에 저장
+    public void addToEntryCart(Raffle raffle, User user, int count) {
+        raffleValidationService.validateRaffleForEntry(raffle);
 
-    // 현재 응모된 수량 구하기
-    public int getEntryCount(Raffle raffle, User user) {
-        return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), user.getId());
-    }
-
-    // 응모 한도 검증
-    public void validateUserEntryLimit(Raffle raffle, User user, int additionalCount) {
-        int currentCount = getEntryCount(raffle, user);
-        if((currentCount + additionalCount) > raffle.getMaxEntriesPerUser()) {
-            throw new IllegalArgumentException("응모 한도를 초과하였습니다.");
-        }
+        raffleValidationService.validateUserEntryLimit(raffle, user, count);
+        // TODO 장바구니 로직 추가 - 실제 티켓은 결제 완료 후 생성
     }
 
     // 결제 완료 후 호출 - 티켓 생성
