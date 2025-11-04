@@ -12,5 +12,9 @@ public interface NotificationRepository {
     List<Notification> findByUserId(Long userId);
     List<Notification> findUnreadByUserId(Long userId);
     List<Long> findUserIdsWithProductInCart(UUID productId);
+    void deleteById(Long id);
+    void deleteAllById(List<Long> ids);
+    void deleteByUserId(Long userId);
+    List<Notification> findByIds(List<Long> ids);
 }
 

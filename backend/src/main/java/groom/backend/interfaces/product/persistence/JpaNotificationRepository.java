@@ -51,6 +51,28 @@ public class JpaNotificationRepository implements NotificationRepository {
         return cartRepo.findUserIdsByProductId(productId);
     }
 
+    @Override
+    public void deleteById(Long id) {
+        springRepo.deleteById(id);
+    }
+
+    @Override
+    public void deleteAllById(List<Long> ids) {
+        springRepo.deleteAllById(ids);
+    }
+
+    @Override
+    public void deleteByUserId(Long userId) {
+        springRepo.deleteByUserId(userId);
+    }
+
+    @Override
+    public List<Notification> findByIds(List<Long> ids) {
+        return springRepo.findAllById(ids).stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
     private Notification toDomain(NotificationJpaEntity e) {
         return new Notification(
                 e.getId(),

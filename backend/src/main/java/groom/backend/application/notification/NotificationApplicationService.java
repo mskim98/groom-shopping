@@ -116,12 +116,60 @@ public class NotificationApplicationService {
      * 알림을 읽음 처리합니다.
      */
     @Transactional
-    public void markAsRead(Long notificationId) {
+    public void markAsRead(Long notificationId, Long userId) {
         notificationRepository.findById(notificationId)
+                .filter(notification -> notification.getUserId().equals(userId))
                 .ifPresent(notification -> {
                     notification.markAsRead();
                     notificationRepository.save(notification);
+                    log.info("[NOTIFICATION_MARK_READ] notificationId={}, userId={}", notificationId, userId);
                 });
+    }
+
+    /**
+     * 사용자의 모든 알림을 읽음 처리합니다.
+     */
+    @Transactional
+    public void markAllAsRead(Long userId) {
+        List<Notification> unreadNotifications = notificationRepository.findUnreadByUserId(userId);
+        int count = 0;
+        for (Notification notification : unreadNotifications) {
+            notification.markAsRead();
+            notificationRepository.save(notification);
+            count++;
+        }
+        log.info("[NOTIFICATION_MARK_ALL_READ] userId={}, count={}", userId, count);
+    }
+
+    /**
+     * 알림을 삭제합니다.
+     */
+    @Transactional
+    public void deleteNotification(Long notificationId, Long userId) {
+        notificationRepository.findById(notificationId)
+                .filter(notification -> notification.getUserId().equals(userId))
+                .ifPresent(notification -> {
+                    notificationRepository.deleteById(notificationId);
+                    log.info("[NOTIFICATION_DELETE] notificationId={}, userId={}", notificationId, userId);
+                });
+    }
+
+    /**
+     * 여러 알림을 일괄 삭제합니다.
+     */
+    @Transactional
+    public void deleteNotifications(List<Long> notificationIds, Long userId) {
+        List<Notification> notifications = notificationRepository.findByIds(notificationIds);
+        List<Long> validIds = notifications.stream()
+                .filter(notification -> notification.getUserId().equals(userId))
+                .map(Notification::getId)
+                .toList();
+        
+        if (!validIds.isEmpty()) {
+            notificationRepository.deleteAllById(validIds);
+            log.info("[NOTIFICATION_BATCH_DELETE] userId={}, deletedCount={}, requestedCount={}", 
+                    userId, validIds.size(), notificationIds.size());
+        }
     }
 }
 
