@@ -34,6 +34,8 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
     @Autowired
     private RaffleApplicationService raffleApplicationService;
 
+    @Autowired
+    private RaffleValidationService raffleValidationService;
 
     @Test
     void createTicket_savesToDatabase_realDb() {
@@ -45,9 +47,9 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
 
         Raffle findRaffle = raffleApplicationService.findByRaffleProductId("4");
 
-        raffleApplicationService.validateRaffleForEntry(findRaffle);
+        raffleValidationService.validateRaffleForEntry(findRaffle);
 
-        raffleTicketService.validateUserEntryLimit(findRaffle, user, 1);
+        raffleValidationService.validateUserEntryLimit(findRaffle, user, 1);
 
         raffleTicketService.createTicket(findRaffle, user);
 

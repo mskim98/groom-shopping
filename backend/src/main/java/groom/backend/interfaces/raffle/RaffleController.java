@@ -1,6 +1,7 @@
 package groom.backend.interfaces.raffle;
 
 import groom.backend.application.raffle.RaffleApplicationService;
+import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class RaffleController {
 
     private final RaffleApplicationService raffleApplicationService;
+    private final RaffleTicketApplicationService raffleTicketApplicationService;
 
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody RaffleRequest raffleRequest) {
@@ -83,5 +85,17 @@ public class RaffleController {
 
         RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{raffleId}/entries")
+    public ResponseEntity<Void> addToEntryCart(@AuthenticationPrincipal(expression = "user") User user,
+                                               @PathVariable Long raffleId,
+                                               @RequestParam(defaultValue = "1") int count) {
+        if (user == null || user.getEmail() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        raffleTicketApplicationService.addToEntryCart(raffleId, user, count);
+        return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 }
