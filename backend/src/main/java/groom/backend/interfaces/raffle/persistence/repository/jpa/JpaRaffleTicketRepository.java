@@ -39,6 +39,7 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
                 .raffleId(raffle.getRaffleId())
                 .raffleTicketId(raffle.getRaffleTicketId())
                 .ticketNumber(raffle.getTicketNumber())
+                .userId(raffle.getUserId())
                 .createdAt(raffle.getCreatedAt())
                 .build();
     }
