@@ -20,7 +20,11 @@ public class RaffleWinnerJpaEntity {
     private Long raffleWinnerId;
     @Enumerated(EnumType.STRING)
     private RaffleWinnerStatus status;
-    private Long raffleTicketId;
+    private Integer rank;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    @ManyToOne
+    @JoinColumn(name = "raffle_ticket_id")
+    private RaffleTicketJpaEntity raffleTicket;
 }

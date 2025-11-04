@@ -79,7 +79,7 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
 
         // then
         assertNotNull(result);
-        assertEquals(10L, result.getRaffleId());
+        assertEquals(10L, result.getRaffle().getRaffleId());
         assertEquals(100L, result.getUserId());
         assertEquals(5L, result.getTicketNumber());
         assertNotNull(result.getCreatedAt());
@@ -89,7 +89,7 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
         then(raffleTicketRepo).should().save(captor.capture());
         RaffleTicketJpaEntity saved = captor.getValue();
         assertEquals(5L, saved.getTicketNumber());
-        assertEquals(10L, saved.getRaffleId());
+        assertEquals(10L, saved.getRaffle().getRaffleId());
         assertEquals(100L, saved.getUserId());
 
         then(allocationService).should().allocateNextTicketNumber(10L);

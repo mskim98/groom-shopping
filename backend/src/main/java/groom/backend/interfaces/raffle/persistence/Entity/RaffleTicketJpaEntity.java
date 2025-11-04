@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "raffle_tickets",
@@ -19,8 +21,14 @@ public class RaffleTicketJpaEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleTicketId;
     private Long ticketNumber;
-    private Long raffleId;
     private Long userId;
     private LocalDateTime createdAt;
+
+    @ManyToOne
+    @JoinColumn(name = "raffle_id")
+    private RaffleJpaEntity raffle;
+
+    @OneToMany(mappedBy = "raffleTicket", fetch = FetchType.LAZY)
+    private List<RaffleWinnerJpaEntity> winners = new ArrayList<>();
 
 }

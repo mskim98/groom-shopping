@@ -3,6 +3,7 @@ package groom.backend.application.raffle;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.repository.RaffleRepository;
+import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,7 +42,7 @@ public class RaffleTicketApplicationService {
         Long ticketNumber = allocationService.allocateNextTicketNumber(raffle.getRaffleId());
 
         RaffleTicketJpaEntity ticket = RaffleTicketJpaEntity.builder()
-                .raffleId(raffle.getRaffleId())
+                .raffle(RaffleJpaEntity.from(raffle))
                 .userId(user.getId())
                 .ticketNumber(ticketNumber)
                 .createdAt(LocalDateTime.now())

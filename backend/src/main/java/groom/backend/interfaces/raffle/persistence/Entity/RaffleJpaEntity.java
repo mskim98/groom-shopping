@@ -1,11 +1,14 @@
 package groom.backend.interfaces.raffle.persistence.Entity;
 
+import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "raffles")
@@ -37,6 +40,9 @@ public class RaffleJpaEntity {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    @OneToMany(mappedBy = "raffle", fetch = FetchType.LAZY)
+    private List<RaffleTicketJpaEntity> tickets = new ArrayList<>();
+
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
@@ -46,6 +52,27 @@ public class RaffleJpaEntity {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+    }
+
+    public static RaffleJpaEntity from(Raffle raffle) {
+
+        RaffleJpaEntity.RaffleJpaEntityBuilder builder = RaffleJpaEntity.builder()
+                .raffleProductId(raffle.getRaffleProductId())
+                .winnerProductId(raffle.getWinnerProductId())
+                .title(raffle.getTitle())
+                .description(raffle.getDescription())
+                .winnersCount(raffle.getWinnersCount())
+                .maxEntriesPerUser(raffle.getMaxEntriesPerUser())
+                .entryStartAt(raffle.getEntryStartAt())
+                .entryEndAt(raffle.getEntryEndAt())
+                .raffleDrawAt(raffle.getRaffleDrawAt())
+                .status(raffle.getStatus());
+
+        if (raffle.getRaffleId() != null){
+            builder.raffleId(raffle.getRaffleId());
+        }
+
+        return builder.build();
     }
 
 
