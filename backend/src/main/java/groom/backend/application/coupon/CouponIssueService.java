@@ -105,6 +105,7 @@ public class CouponIssueService {
   }
 
   // 쿠폰 사용 확정 메서드
+  @Transactional
   public CouponUseResult useCoupon(Long couponId, Long userId) {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
     // 쿠폰 조회
@@ -119,6 +120,7 @@ public class CouponIssueService {
 
     // Coupon 비활성화
     issue.setIsActive(false);
+    couponIssueRepository.save(issue);
 
     // 완료 메시지
     return new CouponUseResult(true, "쿠폰이 정상적으로 사용되었습니다.");
