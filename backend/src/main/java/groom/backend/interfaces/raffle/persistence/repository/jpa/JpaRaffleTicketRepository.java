@@ -21,6 +21,12 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
         return toDomain(saved);
     }
 
+
+    @Override
+    public int countDistinctUserByRaffleId(Long raffleId) {
+        return ticketRepository.countDistinctUserByRaffleId(raffleId);
+    }
+
     @Override
     public int countByRaffleIdAndUserId(Long raffleId, Long userId) {
         return ticketRepository.countByRaffle_RaffleIdAndUserId(raffleId, userId);
