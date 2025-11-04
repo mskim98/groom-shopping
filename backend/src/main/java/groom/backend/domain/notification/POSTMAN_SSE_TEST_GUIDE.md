@@ -7,9 +7,20 @@
 ## 📋 사전 준비사항
 
 1. **Spring Boot 애플리케이션 실행 중**
-2. **PostgreSQL 데이터베이스 연결됨**
+2. **PostgreSQL 데이터베이스 실행 중** (Docker 컨테이너: `db`)
+   - 컨테이너 확인: `docker ps | grep postgres`
+   - 컨테이너가 실행 중이 아니면: `docker start db`
 3. **Kafka 실행 중** (Docker: `docker run -p 9092:9092 apache/kafka`)
 4. **Redis 실행 중**
+
+### Docker 컨테이너 상태 확인
+```bash
+# PostgreSQL 확인
+docker ps | grep postgres
+
+# 모든 서비스 확인
+docker ps
+```
 
 ---
 
@@ -68,6 +79,23 @@
 ```
 
 ### 제품 ID 확인 방법
+
+#### 방법 1: Docker를 통한 PostgreSQL 접근 (권장)
+```bash
+# Docker 컨테이너 내부에서 psql 실행
+docker exec -it db psql -U dev -d shopping_db_dev
+
+# 또는 직접 SQL 실행
+docker exec -it db psql -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE is_active = true LIMIT 5;"
+```
+
+#### 방법 2: 로컬 psql 클라이언트 사용
+```bash
+# Docker 컨테이너가 포트 5432를 매핑했으므로 로컬에서 접근 가능
+PGPASSWORD=dev123 psql -h localhost -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE is_active = true LIMIT 5;"
+```
+
+#### SQL 쿼리
 ```sql
 SELECT id, name, stock, threshold_value 
 FROM product 
@@ -273,9 +301,18 @@ data: {"id":1,"currentStock":1,"thresholdValue":2,"message":"재고가 1개로 �
 
 ### 알림이 오지 않는 경우
 1. **Kafka 실행 확인**: `docker ps | grep kafka`
-2. **장바구니 확인**: User A의 장바구니에 해당 제품이 있는지 확인
-3. **재고 확인**: 구매 후 재고가 임계값 이하인지 확인
-4. **로그 확인**: 애플리케이션 로그에서 `[KAFKA_CONSUME_SUCCESS]` 확인
+2. **PostgreSQL 실행 확인**: `docker ps | grep postgres` 또는 `docker ps | grep db`
+3. **장바구니 확인**: User A의 장바구니에 해당 제품이 있는지 확인
+   ```bash
+   # Docker를 통한 장바구니 확인
+   docker exec -it db psql -U dev -d shopping_db_dev -c "SELECT ci.* FROM cart_item ci JOIN cart c ON ci.cart_id = c.id JOIN users u ON c.user_id = u.id WHERE u.email = 'admin@test.com';"
+   ```
+4. **재고 확인**: 구매 후 재고가 임계값 이하인지 확인
+   ```bash
+   # Docker를 통한 재고 확인
+   docker exec -it db psql -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE id = '제품ID'::uuid;"
+   ```
+5. **로그 확인**: 애플리케이션 로그에서 `[KAFKA_CONSUME_SUCCESS]` 확인
 
 ### Postman에서 SSE가 보이지 않는 경우
 1. **Postman Console 확인**: View → Show Postman Console
@@ -285,6 +322,15 @@ data: {"id":1,"currentStock":1,"thresholdValue":2,"message":"재고가 1개로 �
 ---
 
 ## 📝 예시 제품 데이터
+
+### Docker를 통한 제품 데이터 확인
+```bash
+# PostgreSQL 컨테이너 내부에서 실행
+docker exec -it db psql -U dev -d shopping_db_dev
+
+# 또는 직접 쿼리 실행
+docker exec -it db psql -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE is_active = true LIMIT 10;"
+```
 
 ### 테스트용 제품 ID (임계값 설정됨)
 
@@ -296,6 +342,22 @@ data: {"id":1,"currentStock":1,"thresholdValue":2,"message":"재고가 1개로 �
 | 맥북 프로 16인치 | `249f2bae-e362-4eef-bf7b-526a44d71d0e` | 30 | 5 |
 
 ### 제품 ID 확인 SQL
+
+#### Docker를 통한 실행
+```bash
+# 방법 1: Docker exec로 직접 실행
+docker exec -it db psql -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE is_active = true AND threshold_value IS NOT NULL ORDER BY name;"
+
+# 방법 2: Docker exec로 인터랙티브 모드
+docker exec -it db psql -U dev -d shopping_db_dev
+```
+
+#### 로컬 psql 클라이언트 사용
+```bash
+PGPASSWORD=dev123 psql -h localhost -U dev -d shopping_db_dev -c "SELECT id, name, stock, threshold_value FROM product WHERE is_active = true AND threshold_value IS NOT NULL ORDER BY name;"
+```
+
+#### SQL 쿼리
 ```sql
 SELECT id, name, stock, threshold_value 
 FROM product 

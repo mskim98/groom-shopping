@@ -4,6 +4,7 @@ import groom.backend.application.notification.NotificationApplicationService;
 import groom.backend.domain.notification.entity.Notification;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.infrastructure.sse.SseService;
+import groom.backend.interfaces.notification.dto.request.BatchDeleteNotificationRequest;
 import groom.backend.interfaces.notification.dto.response.NotificationResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -82,7 +83,46 @@ public class NotificationController {
     public ResponseEntity<Void> markAsRead(
             @PathVariable Long notificationId,
             Authentication authentication) {
-        notificationService.markAsRead(notificationId);
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+        Long userId = userDetails.getUser().getId();
+        notificationService.markAsRead(notificationId, userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 사용자의 모든 알림을 읽음 처리합니다.
+     */
+    @PatchMapping("/read-all")
+    public ResponseEntity<Void> markAllAsRead(Authentication authentication) {
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+        Long userId = userDetails.getUser().getId();
+        notificationService.markAllAsRead(userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 알림을 삭제합니다.
+     */
+    @DeleteMapping("/{notificationId}")
+    public ResponseEntity<Void> deleteNotification(
+            @PathVariable Long notificationId,
+            Authentication authentication) {
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+        Long userId = userDetails.getUser().getId();
+        notificationService.deleteNotification(notificationId, userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 여러 알림을 일괄 삭제합니다.
+     */
+    @DeleteMapping("/batch")
+    public ResponseEntity<Void> deleteNotifications(
+            @RequestBody BatchDeleteNotificationRequest request,
+            Authentication authentication) {
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+        Long userId = userDetails.getUser().getId();
+        notificationService.deleteNotifications(request.getNotificationIds(), userId);
         return ResponseEntity.noContent().build();
     }
 
