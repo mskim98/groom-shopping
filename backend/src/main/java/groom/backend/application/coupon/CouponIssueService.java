@@ -17,6 +17,9 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * 사용자에게 발급된 쿠폰을 관리하는 서비스
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -66,5 +69,27 @@ public class CouponIssueService {
     // 유저 id로 쿠폰 조회
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
     return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now()).stream().map(CouponIssueResponse::from).collect(Collectors.toList());
+  }
+
+  // 쿠폰 사용을 위한 할인 금액 조회
+  public Integer calculateDiscount(Long couponId, Long userId, Long Cost) {
+    // 쿠폰 조회
+
+    // 쿠폰 검증
+    // 사용자 확인, 활성화 여부 확인
+
+    // 할인율 계산 로직
+
+    // 사용 가능 여부 및 할인 금액 반환
+    return 0;
+  }
+
+  // 쿠폰 사용 확정 메서드
+  public void useCoupon(Long couponId, Long userId) {
+    // 쿠폰 사용 처리 (쿠폰 비활성화)
+
+    // Coupon 비활성화
+
+    // 완료 메시지
   }
 }
