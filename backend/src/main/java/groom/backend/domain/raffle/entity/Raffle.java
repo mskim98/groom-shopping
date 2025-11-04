@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 public class Raffle {
 
     private Long raffleId;
-    private String raffleProductId;
-    private String winnerProductId;
+    private Long raffleProductId;
+    private Long winnerProductId;
     private String title;
     private String description;
     private int winnersCount;

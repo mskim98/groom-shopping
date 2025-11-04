@@ -98,7 +98,7 @@ public class RaffleValidationService {
     }
 
     // 생성 시: 같은 raffleProductId가 이미 존재하면 예외
-    public void ensureUniqueRaffleProductId(String raffleProductId) {
+    public void ensureUniqueRaffleProductId(Long raffleProductId) {
         if (raffleProductId == null) return;
         if (raffleRepository.existsByRaffleProductId(raffleProductId)) {
             throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
@@ -106,7 +106,7 @@ public class RaffleValidationService {
     }
 
     // 수정 시: 동일한 raffleId인 경우는 허용, 다른 엔티티가 이미 사용 중이면 예외
-    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, String raffleProductId) {
+    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, Long raffleProductId) {
         if (raffleProductId == null) return;
         raffleRepository.findByRaffleProductId(raffleProductId)
                 .ifPresent(existing -> {

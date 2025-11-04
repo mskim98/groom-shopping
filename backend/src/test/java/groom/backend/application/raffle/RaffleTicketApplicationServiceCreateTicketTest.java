@@ -45,7 +45,7 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
         given(raffle.getRaffleId()).willReturn(1L);
         given(user.getId()).willReturn(1L);
 
-        Raffle findRaffle = raffleApplicationService.findByRaffleProductId("4");
+        Raffle findRaffle = raffleApplicationService.findByRaffleProductId(4L);
 
         raffleValidationService.validateRaffleForEntry(findRaffle);
 

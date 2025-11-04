@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import java.util.Optional;
 
 public interface SpringDataRaffleRepository extends JpaRepository<RaffleJpaEntity, Long>, JpaSpecificationExecutor<RaffleJpaEntity> {
-    boolean existsByRaffleProductId(String raffleProductId);
+    boolean existsByRaffleProductId(Long raffleProductId);
 
-    Optional<Raffle> findByRaffleProductId(String raffleProductId);
+    Optional<Raffle> findByRaffleProductId(Long raffleProductId);
 }
