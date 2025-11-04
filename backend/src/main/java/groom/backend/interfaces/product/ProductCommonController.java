@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/v1/product")
 @RequiredArgsConstructor
@@ -39,7 +41,7 @@ public class ProductCommonController {
 
     @PatchMapping("/{id}")
     public ApiResponse<ProductResponse> updateProduct(
-            @PathVariable Long id,
+            @PathVariable UUID id,
             @Valid @RequestBody UpdateProductRequest request) {
 
         Product product = productService.updateProduct(id, request);
@@ -50,7 +52,7 @@ public class ProductCommonController {
 
     @PatchMapping("/{id}/stock/increase")
     public ApiResponse<ProductResponse> increaseStock(
-            @PathVariable Long id,
+            @PathVariable UUID id,
             @RequestParam Integer amount) {
 
         Product product = productService.increaseStock(id, amount);
@@ -60,7 +62,7 @@ public class ProductCommonController {
 
     @PatchMapping("/{id}/stock/decrease")
     public ApiResponse<ProductResponse> decreaseStock(
-            @PathVariable Long id,
+            @PathVariable UUID id,
             @RequestParam Integer amount) {
 
         Product product = productService.decreaseStock(id, amount);
@@ -70,7 +72,7 @@ public class ProductCommonController {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.OK)
-    public ApiResponse<Void> deleteProduct(@PathVariable Long id) {
+    public ApiResponse<Void> deleteProduct(@PathVariable UUID id) {
         productService.deleteProduct(id);
         return ApiResponse.success(null, "상품이 삭제되었습니다.");
     }

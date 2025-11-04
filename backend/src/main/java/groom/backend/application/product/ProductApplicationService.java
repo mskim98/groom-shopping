@@ -1,13 +1,17 @@
 package groom.backend.application.product;
 
-import groom.backend.domain.product.entity.Product;
+import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.infrastructure.kafka.StockThresholdProducer;
+import groom.backend.interfaces.cart.persistence.CartItemJpaEntity;
+import groom.backend.interfaces.cart.persistence.SpringDataCartItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -21,6 +25,7 @@ public class ProductApplicationService {
 
     private final ProductRepository productRepository;
     private final StockThresholdProducer stockThresholdProducer;
+    private final SpringDataCartItemRepository cartItemRepository;
 
     /**
      * 제품을 구매합니다.
@@ -94,6 +99,86 @@ public class ProductApplicationService {
                     productId, quantity, errorDuration, e.getMessage(), e);
             throw e;
         }
+    }
+
+    /**
+     * 사용자의 장바구니에 담긴 모든 제품을 구매합니다.
+     *
+     * @param userId 사용자 ID
+     * @return 구매 결과 리스트
+     */
+    @Transactional
+    public List<PurchaseResult> purchaseCartItems(Long userId) {
+        long cartPurchaseStartTime = System.currentTimeMillis();
+        log.info("[CART_PURCHASE_START] userId={}, timestamp={}", userId, cartPurchaseStartTime);
+
+        // 1. 사용자의 장바구니 항목 조회
+        List<CartItemJpaEntity> cartItems = cartItemRepository.findByUserId(userId);
+
+        if (cartItems.isEmpty()) {
+            log.info("[CART_PURCHASE_EMPTY] userId={}", userId);
+            throw new IllegalArgumentException("장바구니가 비어있습니다.");
+        }
+
+        List<PurchaseResult> results = new ArrayList<>();
+        int successCount = 0;
+        int failCount = 0;
+
+        // 2. 각 장바구니 항목을 구매
+        for (CartItemJpaEntity cartItem : cartItems) {
+            try {
+                UUID productId = cartItem.getProductId();
+                Integer quantity = cartItem.getQuantity();
+
+                log.info("[CART_PURCHASE_ITEM] userId={}, productId={}, quantity={}", 
+                        userId, productId, quantity);
+
+                PurchaseResult result = purchaseProduct(productId, quantity);
+                results.add(result);
+                successCount++;
+
+                log.info("[CART_PURCHASE_ITEM_SUCCESS] userId={}, productId={}, quantity={}", 
+                        userId, productId, quantity);
+
+            } catch (Exception e) {
+                log.error("[CART_PURCHASE_ITEM_FAILED] userId={}, productId={}, quantity={}, error={}", 
+                        userId, cartItem.getProductId(), cartItem.getQuantity(), e.getMessage(), e);
+                failCount++;
+            }
+        }
+
+        // 3. 구매 완료 후 장바구니 비우기 (성공한 항목만)
+        if (successCount > 0) {
+            try {
+                // 구매 성공한 제품들의 cartItem만 삭제
+                for (CartItemJpaEntity cartItem : cartItems) {
+                    UUID productId = cartItem.getProductId();
+                    // 구매 결과에 있는 제품인지 확인
+                    boolean purchaseSuccess = results.stream()
+                            .anyMatch(r -> r.getProductId().equals(productId));
+                    
+                    if (purchaseSuccess) {
+                        cartItemRepository.delete(cartItem);
+                        log.info("[CART_ITEM_DELETED] userId={}, productId={}, cartItemId={}", 
+                                userId, productId, cartItem.getId());
+                    }
+                }
+            } catch (Exception e) {
+                log.error("[CART_CLEAR_FAILED] userId={}, error={}", userId, e.getMessage(), e);
+            }
+        }
+
+        long cartPurchaseEndTime = System.currentTimeMillis();
+        long cartPurchaseDuration = cartPurchaseEndTime - cartPurchaseStartTime;
+
+        log.info("[CART_PURCHASE_COMPLETE] userId={}, totalItems={}, successCount={}, failCount={}, duration={}ms", 
+                cartItems.size(), successCount, failCount, cartPurchaseDuration);
+
+        if (results.isEmpty()) {
+            throw new IllegalArgumentException("구매할 수 있는 제품이 없습니다.");
+        }
+
+        return results;
     }
 
     /**

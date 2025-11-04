@@ -2,6 +2,7 @@ package groom.backend.interfaces.product.persistence;
 
 import groom.backend.domain.notification.entity.Notification;
 import groom.backend.domain.notification.repository.NotificationRepository;
+import groom.backend.interfaces.cart.persistence.SpringDataCartRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;

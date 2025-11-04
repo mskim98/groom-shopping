@@ -1,4 +1,4 @@
-package groom.backend.interfaces.product.persistence;
+package groom.backend.interfaces.cart.persistence;
 
 import groom.backend.interfaces.auth.persistence.UserJpaEntity;
 import jakarta.persistence.*;
@@ -7,7 +7,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "cart")
@@ -22,15 +23,13 @@ public class CartJpaEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false, unique = true)
     private UserJpaEntity user;
 
-    @Column(name = "product_id", nullable = false, columnDefinition = "uuid")
-    private UUID productId;
-
-    @Column(name = "quantity", nullable = false)
-    private Integer quantity;
+    @OneToMany(mappedBy = "cart", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<CartItemJpaEntity> cartItems = new ArrayList<>();
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -39,5 +38,15 @@ public class CartJpaEntity {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    public void addCartItem(CartItemJpaEntity cartItem) {
+        cartItems.add(cartItem);
+        cartItem.setCart(this);
+    }
+
+    public void removeCartItem(CartItemJpaEntity cartItem) {
+        cartItems.remove(cartItem);
+        cartItem.setCart(null);
+    }
 }
 

@@ -39,6 +39,9 @@ public class ProductJpaEntity {
     @Column(name = "category")
     private String category;
 
+    @Column(name = "status")
+    private String status;
+
     @Column(name = "threshold_value")
     private Integer thresholdValue;
 
