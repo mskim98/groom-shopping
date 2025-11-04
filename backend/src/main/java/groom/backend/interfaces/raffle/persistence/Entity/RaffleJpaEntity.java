@@ -7,8 +7,6 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 @Entity
 @Table(name = "raffles")
@@ -21,9 +19,7 @@ public class RaffleJpaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleId;
-    @NotBlank
     private Long raffleProductId;
-    @NotBlank
     private Long winnerProductId;
     @NotBlank
     private String title;
@@ -39,9 +35,6 @@ public class RaffleJpaEntity {
     private LocalDateTime createdAt;
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
-
-    @OneToMany(mappedBy = "raffle", fetch = FetchType.LAZY)
-    private List<RaffleTicketJpaEntity> tickets = new ArrayList<>();
 
     @PreUpdate
     protected void onUpdate() {
