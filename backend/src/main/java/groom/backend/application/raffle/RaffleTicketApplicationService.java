@@ -2,6 +2,7 @@ package groom.backend.application.raffle;
 
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
+import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,11 +16,18 @@ import java.time.LocalDateTime;
 public class RaffleTicketApplicationService {
 
     private final RaffleTicketAllocationService allocationService;
+    private final RaffleRepository raffleRepository;
     private final SpringDataRaffleTicketRepository raffleTicketRepo;
     private final RaffleValidationService raffleValidationService;
 
     // 응모 장바구니에 저장
-    public void addToEntryCart(Raffle raffle, User user, int count) {
+    public void addToEntryCart(Long raffleId, User user, int count) {
+        Raffle raffle = raffleRepository.findById(raffleId)
+                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+
+        // TODO : 응모 상품 존재 여부 조회
+
+
         raffleValidationService.validateRaffleForEntry(raffle);
 
         raffleValidationService.validateUserEntryLimit(raffle, user, count);
