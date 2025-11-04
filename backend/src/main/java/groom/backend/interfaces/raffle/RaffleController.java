@@ -1,6 +1,7 @@
 package groom.backend.interfaces.raffle;
 
 import groom.backend.application.raffle.RaffleApplicationService;
+import groom.backend.application.raffle.RaffleDrawApplicationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
@@ -25,6 +26,7 @@ public class RaffleController {
 
     private final RaffleApplicationService raffleApplicationService;
     private final RaffleTicketApplicationService raffleTicketApplicationService;
+    private final RaffleDrawApplicationService raffleDrawApplicationService;
 
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody RaffleRequest raffleRequest) {
@@ -97,5 +99,19 @@ public class RaffleController {
 
         raffleTicketApplicationService.addToEntryCart(raffleId, user, count);
         return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    @PostMapping("/{raffleId}/draws")
+    public ResponseEntity<Void> drawRaffleWinners(@AuthenticationPrincipal(expression = "user") User user,
+                                                  @PathVariable Long raffleId) {
+        if (user == null || user.getEmail() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        // 추첨 실행
+        raffleDrawApplicationService.drawRaffleWinners(user, raffleId);
+        // TODO: 당첨자 알람 전송
+        raffleDrawApplicationService.sendRaffleWinnersNotification(raffleId);
+
+        return ResponseEntity.ok().build();
     }
 }
