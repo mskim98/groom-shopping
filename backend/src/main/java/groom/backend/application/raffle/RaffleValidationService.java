@@ -4,17 +4,20 @@ import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
+import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
 public class RaffleValidationService {
 
+    private final RaffleRepository raffleRepository;
     private final SpringDataRaffleTicketRepository raffleTicketRepo;
 
     // TODO : request 검증 로직 추가 필요
@@ -60,6 +63,20 @@ public class RaffleValidationService {
         }
     }
 
+    // 요청 날짜 관련 검증
+    public void validateDateRaffleRequestForUpdate(RaffleRequest request) {
+        if (request == null) {
+            throw new IllegalStateException("요청이 null입니다.");
+        }
+        if (request.getEntryEndAt().isBefore(request.getEntryStartAt())) {
+            throw new IllegalStateException("응모 종료일은 응모 시작일 이후여야 합니다.");
+        }
+        if (request.getRaffleDrawAt().isBefore(request.getEntryEndAt())) {
+            throw new IllegalStateException("추첨일은 응모 종료일 이후여야 합니다.");
+        }
+    }
+
+
     // 요청의 상태 누락 시 기본값 적용
     public void normalizeStatus(RaffleRequest request) {
         if (request != null && request.getStatus() == null) {
@@ -78,6 +95,25 @@ public class RaffleValidationService {
     // 현재 응모된 수량 구하기
     public int getEntryCount(Raffle raffle, User user) {
         return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), user.getId());
+    }
+
+    // 생성 시: 같은 raffleProductId가 이미 존재하면 예외
+    public void ensureUniqueRaffleProductId(String raffleProductId) {
+        if (raffleProductId == null) return;
+        if (raffleRepository.existsByRaffleProductId(raffleProductId)) {
+            throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
+        }
+    }
+
+    // 수정 시: 동일한 raffleId인 경우는 허용, 다른 엔티티가 이미 사용 중이면 예외
+    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, String raffleProductId) {
+        if (raffleProductId == null) return;
+        raffleRepository.findByRaffleProductId(raffleProductId)
+                .ifPresent(existing -> {
+                    if (!Objects.equals(existing.getRaffleId(), currentRaffleId)) {
+                        throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
+                    }
+                });
     }
 
 

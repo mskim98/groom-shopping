@@ -36,14 +36,14 @@ public class RaffleApplicationService {
 
     @Transactional
     public RaffleResponse createRaffle(User user, RaffleRequest request) {
-
+        // 권한 검증
         raffleValidationService.ensureAdmin(user);
+        // 요청 날짜 검증
         raffleValidationService.validateDateRaffleRequest(request);
+        // TODO : 추첨 상품, 증정 상품 존재 여부 조회
 
-        if(raffleRepository.existsByRaffleProductId(request.getRaffleProductId())) {
-            throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
-        }
-
+        // 추첨 상품 중복 검사
+        raffleValidationService.ensureUniqueRaffleProductId(request.getRaffleProductId());
         raffleValidationService.normalizeStatus(request);
 
         Raffle raffle = new Raffle(
@@ -71,7 +71,7 @@ public class RaffleApplicationService {
     public RaffleResponse updateRaffle(User user, Long raffleId, RaffleRequest request) {
 
         raffleValidationService.ensureAdmin(user);
-        raffleValidationService.validateDateRaffleRequest(request);
+        raffleValidationService.validateDateRaffleRequestForUpdate(request);
 
         Raffle raffle = raffleRepository.findById(raffleId)
                 .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
@@ -80,11 +80,7 @@ public class RaffleApplicationService {
             throw new IllegalStateException("진행중이거나 종료된 추첨은 수정할 수 없습니다.");
         }
 
-        if(!raffle.getRaffleProductId().equals(request.getRaffleProductId())) {
-            if(raffleRepository.existsByRaffleProductId(request.getRaffleProductId())) {
-                throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
-            }
-        }
+        raffleValidationService.ensureUniqueRaffleProductIdForUpdate(raffle.getRaffleId(), request.getRaffleProductId());
 
         raffle.updateRaffle(request);
 
