@@ -120,6 +120,7 @@ public class CouponIssueService {
 
     // Coupon 비활성화
     issue.setIsActive(false);
+    issue.setDeletedAt(LocalDateTime.now());
     couponIssueRepository.save(issue);
 
     // 완료 메시지

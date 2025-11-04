@@ -21,6 +21,10 @@ public class CouponIssue {
 
   private LocalDateTime createdAt;
 
+  // 만료일 및 사용 시간을 나타내는 필드
+  // isActive = true 일 시, 만료일
+  // isActive = false 일 시, 사용일
+  @Setter
   private LocalDateTime deletedAt;
 
 
