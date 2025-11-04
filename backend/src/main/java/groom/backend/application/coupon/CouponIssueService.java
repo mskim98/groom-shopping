@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -72,16 +73,24 @@ public class CouponIssueService {
   }
 
   // 쿠폰 사용을 위한 할인 금액 조회
-  public Integer calculateDiscount(Long couponId, Long userId, Long Cost) {
+  // 임시 : 사용 가능 여부 반환 시 사용하지 못할 경우 -1 반환
+  // TODO : 여러 쿠폰 사용 가능하도록 개선
+  public Integer calculateDiscount(Long couponId, Long userId, Integer Cost) {
     // 쿠폰 조회
+    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElse(null);
+    if (couponIssue == null) {return -1;}
 
     // 쿠폰 검증
     // 사용자 확인, 활성화 여부 확인
+    if (couponIssue.getUserId().equals(userId) && couponIssue.getIsActive()) {
+      // 할인율 계산 로직
 
-    // 할인율 계산 로직
+      // 사용 가능 여부 및 할인 금액 반환
 
-    // 사용 가능 여부 및 할인 금액 반환
-    return 0;
+    }
+
+
+    return -1;
   }
 
   // 쿠폰 사용 확정 메서드
