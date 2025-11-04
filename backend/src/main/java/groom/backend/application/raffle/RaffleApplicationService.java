@@ -117,7 +117,7 @@ public class RaffleApplicationService {
         raffleRepository.deleteById(raffle.getRaffleId());
     }
 
-    // 장바구니에서 결제 완료 후, 해당 상품이 속한 추첨 ID 조회
+    // 장바구니에서 결제 완료 후, 해당 상품이 속한 추첨 엔티티(Raffle)를 조회
     @Transactional
     public Raffle findByRaffleProductId(String raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId)
