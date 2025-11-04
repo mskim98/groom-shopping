@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.UUID;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -21,7 +23,7 @@ public class ProductQueryService {
         return productQueryRepository.findAll(pageable);
     }
 
-    public Product findById(Long id) {
+    public Product findById(UUID id) {
         return productQueryRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "존재하지 않는 상품입니다."));

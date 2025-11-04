@@ -48,4 +48,8 @@ public class Stock {
     public boolean isEmpty() {
         return this.amount == 0;
     }
+
+    public Integer getAmount() {
+        return this.amount;
+    }
 }

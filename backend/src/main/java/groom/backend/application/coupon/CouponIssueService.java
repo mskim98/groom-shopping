@@ -5,6 +5,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.coupon.entity.Coupon;
 import groom.backend.domain.coupon.entity.CouponIssue;
+import groom.backend.domain.coupon.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
@@ -15,8 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+/**
+ * 사용자에게 발급된 쿠폰을 관리하는 서비스
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -67,4 +72,63 @@ public class CouponIssueService {
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
     return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now()).stream().map(CouponIssueResponse::from).collect(Collectors.toList());
   }
+
+  // 쿠폰 사용을 위한 할인 금액 조회
+  // 임시 : 사용 가능 여부 반환 시 사용하지 못할 경우 -1 반환
+  // TODO : 여러 쿠폰 사용 가능하도록 개선
+  public CouponDiscountResult calculateDiscount(Long couponId, Long userId, Integer cost) {
+    Integer discount = 0;
+
+    // 쿠폰 조회
+    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElse(null);
+
+    if (couponIssue == null) return new CouponDiscountResult(false, discount, "쿠폰이 존재하지 않습니다.");
+
+    // 쿠폰 검증
+    // 사용자 확인, 활성화 여부 확인
+    if (!couponIssue.getUserId().equals(userId)) return new CouponDiscountResult(false, discount, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    if (!couponIssue.getIsActive()) return new CouponDiscountResult(false, discount, "이미 사용된 쿠폰입니다.");
+
+
+    // 할인율 계산 로직
+    // TODO : 정책 리팩토링
+    switch(couponIssue.getCoupon().getType()) {
+      case CouponType.DISCOUNT -> discount = couponIssue.getCoupon().getAmount();
+      case CouponType.PERCENT -> {
+        double rate = couponIssue.getCoupon().getAmount() / 100.0;  // 정수 → 실수 변환
+        discount = (int) Math.floor((cost * rate) / 100) * 100; // 백원 단위 절삭
+      }
+    }
+
+    // 사용 가능 여부 및 할인 금액 반환
+    return new CouponDiscountResult(true, discount, "쿠폰 할인 금액 계산 성공");
+  }
+
+  // 쿠폰 사용 확정 메서드
+  @Transactional
+  public CouponUseResult useCoupon(Long couponId, Long userId) {
+    // 쿠폰 사용 처리 (쿠폰 비활성화)
+    // 쿠폰 조회
+    CouponIssue issue = couponIssueRepository.findById(couponId).orElse(null);
+
+    if (issue == null)
+      return new CouponUseResult(false, "쿠폰이 존재하지 않습니다.");
+    if (!issue.getUserId().equals(userId))
+      return new CouponUseResult(false, "본인 소유의 쿠폰이 아닙니다.");
+    if (!issue.getIsActive())
+      return new CouponUseResult(false, "이미 사용된 쿠폰입니다.");
+
+    // Coupon 비활성화
+    issue.setIsActive(false);
+    issue.setDeletedAt(LocalDateTime.now());
+    couponIssueRepository.save(issue);
+
+    // 완료 메시지
+    return new CouponUseResult(true, "쿠폰이 정상적으로 사용되었습니다.");
+  }
+
+  // 쿠폰 할인 금액 계산 DTO
+  public record CouponDiscountResult(boolean success, Integer discount, String reason) {}
+  // 쿠폰 사용 확정 DTO
+  public record CouponUseResult(boolean success, String reason) {}
 }
