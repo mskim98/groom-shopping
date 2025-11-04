@@ -1,9 +1,15 @@
 package groom.backend.domain.product.repository;
 
 import groom.backend.domain.product.model.Product;
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
-public interface ProductQueryRepository extends JpaRepository<Product, Long> {
+import java.util.Optional;
+import java.util.UUID;
+
+public interface ProductQueryRepository {
+    Page<Product> findAll(Pageable pageable);
+    Optional<Product> findById(UUID id);
 
 //    // 카테고리별 조회
 //    Page<Product> findByCategory(ProductCategory category, Pageable pageable);

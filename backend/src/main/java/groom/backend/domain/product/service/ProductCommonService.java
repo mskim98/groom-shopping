@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.UUID;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -21,7 +23,7 @@ public class ProductCommonService {
     private final ProductCommonRepository productCommonRepository;
 
     @Transactional
-    public Product findById(Long id) {
+    public Product findById(UUID id) {
         return productCommonRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "존재하지 않는 상품입니다."));
@@ -36,7 +38,7 @@ public class ProductCommonService {
     }
 
     @Transactional
-    public Product updateProduct(Long id, UpdateProductRequest request) {
+    public Product updateProduct(UUID id, UpdateProductRequest request) {
         Product product = findById(id);
 
         if (request.name() != null) {
@@ -49,7 +51,7 @@ public class ProductCommonService {
             product.changePrice(new Price(request.price()));
         }
         if (request.stock() != null) {
-            int diff = request.stock() - product.getStock().getAmount();
+            int diff = request.stock() - product.getStock();
             if (diff > 0) {
                 product.increaseStock(diff);
             } else if (diff < 0) {
@@ -66,7 +68,7 @@ public class ProductCommonService {
     }
 
     @Transactional
-    public Product increaseStock(Long id, Integer amount) {
+    public Product increaseStock(UUID id, Integer amount) {
         System.out.println("서비스 : " + amount);
         Product product = findById(id);
         product.increaseStock(amount);
@@ -75,7 +77,7 @@ public class ProductCommonService {
     }
 
     @Transactional
-    public Product decreaseStock(Long id, int amount) {
+    public Product decreaseStock(UUID id, int amount) {
         Product product = findById(id);
         product.decreaseStock(amount);
         productCommonRepository.save(product);
@@ -83,9 +85,8 @@ public class ProductCommonService {
     }
 
     @Transactional
-    public void deleteProduct(Long id) {
-        Product product = findById(id);
-        productCommonRepository.delete(product);
+    public void deleteProduct(UUID id) {
+        productCommonRepository.deleteById(id);
     }
 }
 

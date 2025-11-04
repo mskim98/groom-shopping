@@ -44,4 +44,8 @@ public class Price {
         }
         return new Price(this.amount - amount);
     }
+
+    public Integer getValue() {
+        return this.amount;
+    }
 }

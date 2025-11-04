@@ -1,11 +1,6 @@
 package groom.backend.interfaces.product.dto.request;
 
-import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
-import groom.backend.domain.product.model.vo.Description;
-import groom.backend.domain.product.model.vo.Name;
-import groom.backend.domain.product.model.vo.Price;
-import groom.backend.domain.product.model.vo.Stock;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 
@@ -24,13 +19,4 @@ public record UpdateProductRequest(
 
         ProductCategory category
 ) {
-    public Product toEntity() {
-        return Product.create(
-                new Name(this.name),
-                new Description(this.description),
-                new Price(this.price),
-                new Stock(this.stock),
-                this.category
-        );
-    }
 }

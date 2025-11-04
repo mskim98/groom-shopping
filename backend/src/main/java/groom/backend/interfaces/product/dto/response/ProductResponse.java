@@ -4,8 +4,10 @@ import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
 
+import java.util.UUID;
+
 public record ProductResponse(
-        Long productId,
+        UUID productId,
         String name,
         String description,
         Integer price,
@@ -16,10 +18,10 @@ public record ProductResponse(
     public static ProductResponse from(Product product) {
         return new ProductResponse(
                 product.getId(),
-                product.getName().getValue(),
-                product.getDescription() != null ? product.getDescription().getValue() : null,
-                product.getPrice().getAmount(),
-                product.getStock().getAmount(),
+                product.getName(),
+                product.getDescription(),
+                product.getPrice(),
+                product.getStock(),
                 product.getStatus(),
                 product.getCategory()
         );
