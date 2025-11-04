@@ -105,11 +105,19 @@ public class CouponIssueService {
   }
 
   // 쿠폰 사용 확정 메서드
-  public void useCoupon(Long couponId, Long userId) {
+  public Boolean useCoupon(Long couponId, Long userId) {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
+    // 쿠폰 조회
+    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElse(null);
+
+    if (couponIssue == null) return false;
+    if (!couponIssue.getUserId().equals(userId)) return false;
+    if (!couponIssue.getIsActive()) return false;
 
     // Coupon 비활성화
+    couponIssue.setIsActive(false);
 
     // 완료 메시지
+    return true;
   }
 }

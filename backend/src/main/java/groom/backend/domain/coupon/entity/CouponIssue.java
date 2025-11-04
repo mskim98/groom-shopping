@@ -1,10 +1,7 @@
 package groom.backend.domain.coupon.entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.time.LocalDateTime;
 
@@ -19,6 +16,7 @@ public class CouponIssue {
   private Long id;
 
   @Builder.Default
+  @Setter
   private Boolean isActive=true;
 
   private LocalDateTime createdAt;
