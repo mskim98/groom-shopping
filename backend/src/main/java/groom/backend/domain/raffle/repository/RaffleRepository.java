@@ -15,4 +15,7 @@ public interface RaffleRepository {
 
     // 도메인 수준의 검색 기준을 사용하도록 변경
     Page<Raffle> search(RaffleSearchCriteria cond, Pageable pageable);
+
+    // 추첨용 상품으로 RaffleId 조회
+    Optional<Raffle> findByRaffleProductId(String raffleProductId);
 }

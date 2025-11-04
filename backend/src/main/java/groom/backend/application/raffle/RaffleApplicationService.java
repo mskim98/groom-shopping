@@ -15,6 +15,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -113,6 +115,28 @@ public class RaffleApplicationService {
         }
 
         raffleRepository.deleteById(raffle.getRaffleId());
+    }
+
+    // 장바구니에서 결제 완료 후, 해당 상품이 속한 추첨 ID 조회
+    @Transactional
+    public Raffle findByRaffleProductId(String raffleProductId) {
+        return raffleRepository.findByRaffleProductId(raffleProductId)
+                .orElseThrow(() -> new IllegalStateException("해당 상품으로 등록된 추첨이 존재하지 않습니다."));
+    }
+
+    // 현재 응모 가능여부 체크
+    public void validateRaffleForEntry(Raffle raffle) {
+        if(raffle.getStatus() != RaffleStatus.ACTIVE) {
+            throw new IllegalStateException("현재 진행중인 추첨이 아닙니다.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (now.isBefore(raffle.getEntryStartAt())) {
+            throw new IllegalStateException("응모 기간이 아직 시작되지 않았습니다.");
+        }
+        if (now.isAfter(raffle.getEntryEndAt())) {
+            throw new IllegalStateException("응모 기간이 종료되었습니다.");
+        }
     }
 
 

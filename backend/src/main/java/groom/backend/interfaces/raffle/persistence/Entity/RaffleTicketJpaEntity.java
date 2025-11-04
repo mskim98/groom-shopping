@@ -1,4 +1,4 @@
-package groom.backend.interfaces.raffle.persistence;
+package groom.backend.interfaces.raffle.persistence.Entity;
 
 import jakarta.persistence.*;
 import lombok.*;
@@ -6,7 +6,8 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "raffle_tickets")
+@Table(name = "raffle_tickets",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"raffle_id", "ticket_number"}))
 @Getter
 @Setter
 @NoArgsConstructor
