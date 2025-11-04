@@ -76,7 +76,7 @@ public class CouponIssueService {
   // 쿠폰 사용을 위한 할인 금액 조회
   // 임시 : 사용 가능 여부 반환 시 사용하지 못할 경우 -1 반환
   // TODO : 여러 쿠폰 사용 가능하도록 개선
-  public CouponDiscountResult calculateDiscount(Long couponId, Long userId, Integer Cost) {
+  public CouponDiscountResult calculateDiscount(Long couponId, Long userId, Integer cost) {
     Integer discount = 0;
 
     // 쿠폰 조회
@@ -96,7 +96,7 @@ public class CouponIssueService {
       case CouponType.DISCOUNT -> discount = couponIssue.getCoupon().getAmount();
       case CouponType.PERCENT -> {
         double rate = couponIssue.getCoupon().getAmount() / 100.0;  // 정수 → 실수 변환
-        discount = (int) Math.floor((Cost * rate) / 100) * 100; // 백원 단위 절삭
+        discount = (int) Math.floor((cost * rate) / 100) * 100; // 백원 단위 절삭
       }
     }
 
