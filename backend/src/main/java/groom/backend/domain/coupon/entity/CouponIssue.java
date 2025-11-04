@@ -1,9 +1,6 @@
 package groom.backend.domain.coupon.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -29,7 +26,7 @@ public class CouponIssue {
   private LocalDateTime deletedAt;
 
 
-  // coupon 1 : coupon issue N
+//  coupon 1 : coupon issue N
 //  @ManyToOne(fetch = FetchType.LAZY)
 //  @JoinColumn(name = "user_id", nullable = false)
 //  private User user;
@@ -37,8 +34,7 @@ public class CouponIssue {
 
 
   // coupon 1 : coupon issue N
-//  @ManyToOne(fetch = FetchType.LAZY)
-//  @JoinColumn(name = "coupon_id", nullable = false)
-//  private Coupon coupon;
-  private Long couponId;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "coupon_id", nullable = false)
+  private Coupon coupon;
 }
