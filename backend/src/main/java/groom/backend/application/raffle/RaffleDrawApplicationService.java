@@ -61,10 +61,12 @@ public class RaffleDrawApplicationService {
         int result = raffleWinnerRepo.pickWinnersNative(condition);
 
         // 추첨 결과 검증:
-        // 당첨자가 실제 참가자 수 보다 적거나 당첨자 수 보다 많으면 오류 처리
-        if(result < entryCount || result > raffle.getWinnersCount()) {
+        // 결과값이 실제 응모자 수 또는 요청된 당첨자 수 중 작은 값과 일치하는지 확인
+        int expected = Math.min(entryCount, numberOfWinnersToDraw);
+        if (result != expected) {
             throw new IllegalStateException("당첨자 추첨에 실패했습니다. 다시 시도해주세요.");
         }
+
 
         // 추첨 결과 검증
         // 당첨자 수가 설정된 당첨자 수보다 적으면 경고 로그 출력
