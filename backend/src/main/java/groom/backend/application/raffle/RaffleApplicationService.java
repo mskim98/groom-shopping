@@ -71,10 +71,11 @@ public class RaffleApplicationService {
     public RaffleResponse updateRaffle(User user, Long raffleId, RaffleRequest request) {
 
         raffleValidationService.ensureAdmin(user);
-        raffleValidationService.validateDateRaffleRequestForUpdate(request);
 
         Raffle raffle = raffleRepository.findById(raffleId)
                 .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+
+        raffleValidationService.validateDateRaffleRequestForUpdate(raffle, request);
 
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
             throw new IllegalStateException("진행중이거나 종료된 추첨은 수정할 수 없습니다.");
