@@ -75,7 +75,7 @@ public class CouponIssueService {
   // 쿠폰 사용을 위한 할인 금액 조회
   // 임시 : 사용 가능 여부 반환 시 사용하지 못할 경우 -1 반환
   // TODO : 여러 쿠폰 사용 가능하도록 개선
-  public CouponDiscountResult calculateDiscount(Long couponId, Long userId, Integer cost) {
+  public Integer calculateDiscount(Long couponId, Long userId, Integer cost) {
     Integer discount = 0;
 
     // 쿠폰 조회
@@ -98,12 +98,12 @@ public class CouponIssueService {
     }
 
     // 사용 가능 여부 및 할인 금액 반환
-    return new CouponDiscountResult(true, discount, "쿠폰 할인 금액 계산 성공");
+    return discount;
   }
 
   // 쿠폰 사용 확정 메서드
   @Transactional
-  public CouponUseResult useCoupon(Long couponId, Long userId) {
+  public Boolean useCoupon(Long couponId, Long userId) {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
     // 쿠폰 조회
     CouponIssue issue = couponIssueRepository.findById(couponId).orElseThrow(
@@ -120,11 +120,6 @@ public class CouponIssueService {
     couponIssueRepository.save(issue);
 
     // 완료 메시지
-    return new CouponUseResult(true, "쿠폰이 정상적으로 사용되었습니다.");
+    return true;
   }
-
-  // 쿠폰 할인 금액 계산 DTO
-  public record CouponDiscountResult(boolean success, Integer discount, String reason) {}
-  // 쿠폰 사용 확정 DTO
-  public record CouponUseResult(boolean success, String reason) {}
 }
