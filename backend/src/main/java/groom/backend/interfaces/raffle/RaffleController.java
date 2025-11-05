@@ -97,7 +97,7 @@ public class RaffleController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        raffleTicketApplicationService.addToEntryCart(raffleId, user, count);
+        raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), count);
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
