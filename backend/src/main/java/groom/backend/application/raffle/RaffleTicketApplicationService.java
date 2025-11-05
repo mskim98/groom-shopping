@@ -37,6 +37,7 @@ public class RaffleTicketApplicationService {
     }
 
     // 결제 완료 후 호출 - 티켓 생성
+    // Order 서비스에서 사용 (변경시 주의요망)
     @Transactional
     public Boolean createTicket(Raffle raffle, Long userId) {
         // allocateNextTicketNumber 내부에서 PESSIMISTIC_WRITE로 카운터를 잠그고 증가시킴

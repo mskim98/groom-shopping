@@ -76,6 +76,7 @@ public class RaffleValidationService {
     }
 
     // 응모 가능 여부 검증
+    // Order 서비스에서 사용 (변경시 주의요망)
     public void validateRaffleForEntry(Raffle raffle) {
         if (raffle == null) {
             throw new IllegalStateException("해당 추첨이 존재하지 않습니다.");
@@ -163,6 +164,7 @@ public class RaffleValidationService {
     }
 
     // 응모 한도 검증
+    // Order 서비스에서 사용 (변경시 주의요망)
     public void validateUserEntryLimit(Raffle raffle, Long userId, int additionalCount) {
         int currentCount = getEntryCount(raffle, userId);
         if((currentCount + additionalCount) > raffle.getMaxEntriesPerUser()) {
@@ -171,6 +173,7 @@ public class RaffleValidationService {
     }
 
     // 현재 응모된 수량 구하기
+    // Order 서비스에서 사용 (변경시 주의요망)
     public int getEntryCount(Raffle raffle, Long userId) {
         return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), userId);
     }

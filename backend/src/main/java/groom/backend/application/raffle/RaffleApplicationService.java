@@ -117,6 +117,7 @@ public class RaffleApplicationService {
     }
 
     // 장바구니에서 결제 완료 후, 해당 상품이 속한 추첨 엔티티(Raffle)를 조회
+    // ORDER 에 API 제공
     @Transactional
     public Raffle findByRaffleProductId(UUID raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId)
