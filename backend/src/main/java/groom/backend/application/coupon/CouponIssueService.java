@@ -82,9 +82,7 @@ public class CouponIssueService {
     CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
 
     // 쿠폰 검증
-    // 사용자 확인, 활성화 여부 확인
-    if (!couponIssue.getUserId().equals(userId)) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
-    if (!couponIssue.getIsActive()) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    checkCouponUsable(couponIssue, userId);
 
 
     // 할인율 계산 로직
@@ -110,9 +108,7 @@ public class CouponIssueService {
             () -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
 
     // 쿠폰 검증
-    // 사용자 확인, 활성화 여부 확인
-    if (!issue.getUserId().equals(userId)) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
-    if (!issue.getIsActive()) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    checkCouponUsable(issue, userId);
 
     // Coupon 비활성화
     issue.setIsActive(false);
@@ -121,5 +117,14 @@ public class CouponIssueService {
 
     // 완료 메시지
     return true;
+  }
+
+  private void checkCouponUsable(CouponIssue issue, Long userId) {
+    // 쿠폰 검증
+    // 사용자 확인, 활성화 여부 확인
+    if (!issue.getUserId().equals(userId))
+      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    if (!issue.getIsActive())
+      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
   }
 }
