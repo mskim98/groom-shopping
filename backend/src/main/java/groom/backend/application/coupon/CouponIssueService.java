@@ -119,12 +119,17 @@ public class CouponIssueService {
     return true;
   }
 
+  // 쿠폰 검증 메서드
+  // 할인금액 계산, 사용 확정에서 사용
   private void checkCouponUsable(CouponIssue issue, Long userId) {
-    // 쿠폰 검증
     // 사용자 확인, 활성화 여부 확인
     if (!issue.getUserId().equals(userId))
       throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
     if (!issue.getIsActive())
       throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    // 쿠폰 만료일 확인
+    // isActive가 true일 경우 활성화된 상태이기에 만료일을 검사하지 않음. DeletedAt을 검사해주어야 한다.
+    if (issue.getDeletedAt().isBefore(LocalDateTime.now()))
+      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 사용일이 만료되었습니다.");
   }
 }
