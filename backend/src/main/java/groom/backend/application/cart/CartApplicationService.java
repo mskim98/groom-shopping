@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -130,6 +131,298 @@ public class CartApplicationService {
                 savedCart.getId(), savedCartItem.getId(), userId, productId, savedCartItem.getQuantity());
 
         return new CartAddResult(savedCart.getId(), savedCartItem.getId(), savedCartItem.getQuantity());
+    }
+
+    /**
+     * 사용자의 장바구니에 담긴 모든 제품을 조회합니다.
+     *
+     * @param userId 사용자 ID
+     * @return 장바구니 정보
+     */
+    @Transactional(readOnly = true)
+    public CartViewResult getCartItems(Long userId) {
+        log.info("[CART_VIEW_START] userId={}", userId);
+
+        // 1. 사용자의 장바구니 조회
+        CartJpaEntity cart = cartRepository.findByUserId(userId)
+                .orElse(null);
+
+        if (cart == null) {
+            log.info("[CART_VIEW_EMPTY] userId={}", userId);
+            return new CartViewResult(null, List.of(), 0, 0);
+        }
+
+        // 2. 장바구니 항목 조회
+        List<CartItemJpaEntity> cartItems = cartItemRepository.findByUserId(userId);
+
+        if (cartItems.isEmpty()) {
+            log.info("[CART_VIEW_NO_ITEMS] userId={}, cartId={}", userId, cart.getId());
+            return new CartViewResult(cart.getId(), List.of(), 0, 0);
+        }
+
+        // 3. 제품 정보 조회
+        List<UUID> productIds = cartItems.stream()
+                .map(CartItemJpaEntity::getProductId)
+                .toList();
+
+        List<Product> products = productRepository.findByIds(productIds);
+        
+        // 4. 제품 정보를 Map으로 변환 (빠른 조회를 위해)
+        java.util.Map<UUID, Product> productMap = products.stream()
+                .collect(java.util.stream.Collectors.toMap(Product::getId, p -> p));
+
+        // 5. 결과 생성
+        int totalItems = cartItems.size();
+        int totalPrice = 0;
+
+        List<CartItemResult> itemResults = new java.util.ArrayList<>();
+        for (CartItemJpaEntity cartItem : cartItems) {
+            Product product = productMap.get(cartItem.getProductId());
+            if (product != null) {
+                int itemTotalPrice = product.getPrice() * cartItem.getQuantity();
+                totalPrice += itemTotalPrice;
+
+                itemResults.add(new CartItemResult(
+                        cartItem.getId(),
+                        cartItem.getProductId(),
+                        product.getName(),
+                        product.getPrice(),
+                        cartItem.getQuantity(),
+                        itemTotalPrice,
+                        cartItem.getCreatedAt(),
+                        cartItem.getUpdatedAt()
+                ));
+            }
+        }
+
+        log.info("[CART_VIEW_SUCCESS] userId={}, cartId={}, totalItems={}, totalPrice={}", 
+                userId, cart.getId(), totalItems, totalPrice);
+
+        return new CartViewResult(cart.getId(), itemResults, totalItems, totalPrice);
+    }
+
+    /**
+     * 장바구니 조회 결과를 담는 내부 클래스
+     */
+    public static class CartViewResult {
+        private final Long cartId;
+        private final List<CartItemResult> items;
+        private final Integer totalItems;
+        private final Integer totalPrice;
+
+        public CartViewResult(Long cartId, List<CartItemResult> items, Integer totalItems, Integer totalPrice) {
+            this.cartId = cartId;
+            this.items = items;
+            this.totalItems = totalItems;
+            this.totalPrice = totalPrice;
+        }
+
+        public Long getCartId() {
+            return cartId;
+        }
+
+        public List<CartItemResult> getItems() {
+            return items;
+        }
+
+        public Integer getTotalItems() {
+            return totalItems;
+        }
+
+        public Integer getTotalPrice() {
+            return totalPrice;
+        }
+    }
+
+    /**
+     * 장바구니 항목 결과를 담는 내부 클래스
+     */
+    public static class CartItemResult {
+        private final Long cartItemId;
+        private final UUID productId;
+        private final String productName;
+        private final Integer price;
+        private final Integer quantity;
+        private final Integer totalPrice;
+        private final java.time.LocalDateTime createdAt;
+        private final java.time.LocalDateTime updatedAt;
+
+        public CartItemResult(Long cartItemId, UUID productId, String productName, 
+                             Integer price, Integer quantity, Integer totalPrice,
+                             java.time.LocalDateTime createdAt, java.time.LocalDateTime updatedAt) {
+            this.cartItemId = cartItemId;
+            this.productId = productId;
+            this.productName = productName;
+            this.price = price;
+            this.quantity = quantity;
+            this.totalPrice = totalPrice;
+            this.createdAt = createdAt;
+            this.updatedAt = updatedAt;
+        }
+
+        public Long getCartItemId() { return cartItemId; }
+        public UUID getProductId() { return productId; }
+        public String getProductName() { return productName; }
+        public Integer getPrice() { return price; }
+        public Integer getQuantity() { return quantity; }
+        public Integer getTotalPrice() { return totalPrice; }
+        public java.time.LocalDateTime getCreatedAt() { return createdAt; }
+        public java.time.LocalDateTime getUpdatedAt() { return updatedAt; }
+    }
+
+    /**
+     * 장바구니에서 제품 수량을 줄이거나 제거합니다.
+     * 하나 또는 여러 개의 제품을 한 번에 처리할 수 있습니다.
+     * 수량이 0이 되면 항목을 제거하고, 수량이 남으면 수량만 감소시킵니다.
+     *
+     * @param userId 사용자 ID
+     * @param itemsToRemove 제거할 제품 목록 (productId, quantity)
+     * @return 제거 결과 리스트
+     */
+    @Transactional
+    public CartRemoveBatchResult removeCartItems(Long userId, List<CartItemToRemove> itemsToRemove) {
+        log.info("[CART_REMOVE_BATCH_START] userId={}, itemCount={}", userId, itemsToRemove.size());
+
+        // 1. 사용자의 장바구니 조회
+        CartJpaEntity cart = cartRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+
+        // 2. 사전 검증: 모든 항목을 검증하고 하나라도 문제가 있으면 예외 발생
+        List<CartItemJpaEntity> cartItemsToProcess = new java.util.ArrayList<>();
+        String validationError = null;
+
+        for (CartItemToRemove item : itemsToRemove) {
+            UUID productId = item.getProductId();
+            Integer quantity = item.getQuantity();
+
+            // 수량 검증
+            if (quantity == null || quantity < 1) {
+                validationError = "제거할 수량은 1 이상이어야 합니다.";
+                break;
+            }
+
+            // 장바구니 항목 조회
+            CartItemJpaEntity cartItem = cartItemRepository.findByCartIdAndProductId(cart.getId(), productId)
+                    .orElse(null);
+
+            if (cartItem == null) {
+                validationError = "해당 제품이 장바구니에 존재하지 않습니다.";
+                break;
+            }
+
+            // 현재 수량 확인
+            int currentQuantity = cartItem.getQuantity();
+            log.info("[CART_REMOVE_VALIDATE] userId={}, productId={}, currentQuantity={}, removeQuantity={}", 
+                    userId, productId, currentQuantity, quantity);
+
+            // 수량 검증 (장바구니에 있는 수량보다 많이 제거할 수 없음)
+            if (quantity > currentQuantity) {
+                validationError = "장바구니의 제품보다 수량이 큽니다.";
+                break;
+            }
+
+            // 검증 통과한 항목만 추가
+            cartItemsToProcess.add(cartItem);
+        }
+
+        // 3. 하나라도 검증 실패하면 전체 실패 (트랜잭션 롤백)
+        if (validationError != null) {
+            log.error("[CART_REMOVE_VALIDATION_FAILED] userId={}, error={}", userId, validationError);
+            throw new IllegalArgumentException(validationError);
+        }
+
+        // 4. 모든 검증 통과 - 실제 제거 처리
+        List<CartRemoveResult> results = new java.util.ArrayList<>();
+
+        for (int i = 0; i < itemsToRemove.size(); i++) {
+            CartItemToRemove item = itemsToRemove.get(i);
+            CartItemJpaEntity cartItem = cartItemsToProcess.get(i);
+            UUID productId = item.getProductId();
+            Integer quantity = item.getQuantity();
+            int currentQuantity = cartItem.getQuantity();
+            int remainingQuantity = currentQuantity - quantity;
+
+            if (remainingQuantity == 0) {
+                // 수량이 0이면 항목 제거
+                cart.removeCartItem(cartItem);
+                cartItemRepository.delete(cartItem);
+                log.info("[CART_REMOVE_COMPLETE] userId={}, productId={}, cartItemId={}, removed=true", 
+                        userId, productId, cartItem.getId());
+            } else {
+                // 수량이 남으면 수량만 감소
+                cartItem.setQuantity(remainingQuantity);
+                cartItemRepository.save(cartItem);
+                log.info("[CART_REMOVE_PARTIAL] userId={}, productId={}, cartItemId={}, remainingQuantity={}", 
+                        userId, productId, cartItem.getId(), remainingQuantity);
+            }
+
+            results.add(new CartRemoveResult(productId, quantity, remainingQuantity, remainingQuantity == 0));
+        }
+
+        // 5. 장바구니 저장
+        cartRepository.save(cart);
+
+        log.info("[CART_REMOVE_BATCH_SUCCESS] userId={}, totalItems={}, successCount={}", 
+                userId, itemsToRemove.size(), results.size());
+
+        return new CartRemoveBatchResult(results, results.size(), 0);
+    }
+
+    /**
+     * 제거할 제품 정보를 담는 내부 클래스
+     */
+    public static class CartItemToRemove {
+        private final UUID productId;
+        private final Integer quantity;
+
+        public CartItemToRemove(UUID productId, Integer quantity) {
+            this.productId = productId;
+            this.quantity = quantity;
+        }
+
+        public UUID getProductId() { return productId; }
+        public Integer getQuantity() { return quantity; }
+    }
+
+    /**
+     * 장바구니 제거 결과를 담는 내부 클래스
+     */
+    public static class CartRemoveResult {
+        private final UUID productId;
+        private final Integer removedQuantity;
+        private final Integer remainingQuantity;
+        private final Boolean isRemoved;
+
+        public CartRemoveResult(UUID productId, Integer removedQuantity, Integer remainingQuantity, Boolean isRemoved) {
+            this.productId = productId;
+            this.removedQuantity = removedQuantity;
+            this.remainingQuantity = remainingQuantity;
+            this.isRemoved = isRemoved;
+        }
+
+        public UUID getProductId() { return productId; }
+        public Integer getRemovedQuantity() { return removedQuantity; }
+        public Integer getRemainingQuantity() { return remainingQuantity; }
+        public Boolean getIsRemoved() { return isRemoved; }
+    }
+
+    /**
+     * 장바구니 일괄 제거 결과를 담는 내부 클래스
+     */
+    public static class CartRemoveBatchResult {
+        private final List<CartRemoveResult> results;
+        private final Integer successCount;
+        private final Integer failCount;
+
+        public CartRemoveBatchResult(List<CartRemoveResult> results, Integer successCount, Integer failCount) {
+            this.results = results;
+            this.successCount = successCount;
+            this.failCount = failCount;
+        }
+
+        public List<CartRemoveResult> getResults() { return results; }
+        public Integer getSuccessCount() { return successCount; }
+        public Integer getFailCount() { return failCount; }
     }
 }
 
