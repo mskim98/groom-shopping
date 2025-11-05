@@ -1,5 +1,6 @@
 package groom.backend.interfaces.raffle.persistence.Entity;
 
+import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
@@ -18,10 +19,8 @@ public class RaffleJpaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleId;
-    @NotBlank
-    private String raffleProductId;
-    @NotBlank
-    private String winnerProductId;
+    private Long raffleProductId;
+    private Long winnerProductId;
     @NotBlank
     private String title;
     private String description;
@@ -46,6 +45,27 @@ public class RaffleJpaEntity {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+    }
+
+    public static RaffleJpaEntity from(Raffle raffle) {
+
+        RaffleJpaEntity.RaffleJpaEntityBuilder builder = RaffleJpaEntity.builder()
+                .raffleProductId(raffle.getRaffleProductId())
+                .winnerProductId(raffle.getWinnerProductId())
+                .title(raffle.getTitle())
+                .description(raffle.getDescription())
+                .winnersCount(raffle.getWinnersCount())
+                .maxEntriesPerUser(raffle.getMaxEntriesPerUser())
+                .entryStartAt(raffle.getEntryStartAt())
+                .entryEndAt(raffle.getEntryEndAt())
+                .raffleDrawAt(raffle.getRaffleDrawAt())
+                .status(raffle.getStatus());
+
+        if (raffle.getRaffleId() != null){
+            builder.raffleId(raffle.getRaffleId());
+        }
+
+        return builder.build();
     }
 
 

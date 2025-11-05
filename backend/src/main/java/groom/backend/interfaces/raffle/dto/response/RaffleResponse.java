@@ -13,8 +13,8 @@ import java.time.LocalDateTime;
 @Builder
 public class RaffleResponse {
     private Long raffleId;
-    private String raffleProductId;
-    private String winnerProductId;
+    private Long raffleProductId;
+    private Long winnerProductId;
     private String title;
     private String description;
     private int winnersCount;

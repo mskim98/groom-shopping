@@ -14,10 +14,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RaffleRequest {
-    @NotBlank
-    private String raffleProductId;
-    @NotBlank
-    private String winnerProductId;
+    private Long raffleProductId;
+    private Long winnerProductId;
     @NotBlank
     private String title;
     private String description;

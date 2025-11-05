@@ -38,7 +38,7 @@ public class JpaRaffleRepository implements RaffleRepository {
     }
 
     @Override
-    public boolean existsByRaffleProductId(String raffleProductId) {
+    public boolean existsByRaffleProductId(Long raffleProductId) {
         return raffleRepository.existsByRaffleProductId(raffleProductId);
     }
 
@@ -95,7 +95,7 @@ public class JpaRaffleRepository implements RaffleRepository {
 
     // 추첨용 상품 Id 로 추첨 정보 받아오기
     @Override
-    public Optional<Raffle> findByRaffleProductId(String raffleProductId) {
+    public Optional<Raffle> findByRaffleProductId(Long raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId);
     }
 

@@ -19,8 +19,11 @@ public class RaffleTicketJpaEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleTicketId;
     private Long ticketNumber;
-    private Long raffleId;
     private Long userId;
     private LocalDateTime createdAt;
+
+    @ManyToOne
+    @JoinColumn(name = "raffle_id")
+    private RaffleJpaEntity raffle;
 
 }

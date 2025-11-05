@@ -11,8 +11,9 @@ import java.time.LocalDateTime;
 public class RaffleWinner {
 
     private Long raffleWinnerId;
-    private RaffleWinnerStatus status;
     private Long raffleTicketId;
+    private RaffleWinnerStatus status;
+    private Integer rank;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

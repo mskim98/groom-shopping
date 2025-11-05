@@ -107,7 +107,7 @@ public class RaffleApplicationService {
 
     // 장바구니에서 결제 완료 후, 해당 상품이 속한 추첨 엔티티(Raffle)를 조회
     @Transactional
-    public Raffle findByRaffleProductId(String raffleProductId) {
+    public Raffle findByRaffleProductId(Long raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId)
                 .orElseThrow(() -> new IllegalStateException("해당 상품으로 등록된 추첨이 존재하지 않습니다."));
     }
