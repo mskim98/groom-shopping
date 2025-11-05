@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -80,14 +79,12 @@ public class CouponIssueService {
     Integer discount = 0;
 
     // 쿠폰 조회
-    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElse(null);
-
-    if (couponIssue == null) return new CouponDiscountResult(false, discount, "쿠폰이 존재하지 않습니다.");
+    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
 
     // 쿠폰 검증
     // 사용자 확인, 활성화 여부 확인
-    if (!couponIssue.getUserId().equals(userId)) return new CouponDiscountResult(false, discount, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
-    if (!couponIssue.getIsActive()) return new CouponDiscountResult(false, discount, "이미 사용된 쿠폰입니다.");
+    if (!couponIssue.getUserId().equals(userId)) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    if (!couponIssue.getIsActive()) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
 
 
     // 할인율 계산 로직
@@ -109,14 +106,13 @@ public class CouponIssueService {
   public CouponUseResult useCoupon(Long couponId, Long userId) {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
     // 쿠폰 조회
-    CouponIssue issue = couponIssueRepository.findById(couponId).orElse(null);
+    CouponIssue issue = couponIssueRepository.findById(couponId).orElseThrow(
+            () -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
 
-    if (issue == null)
-      return new CouponUseResult(false, "쿠폰이 존재하지 않습니다.");
-    if (!issue.getUserId().equals(userId))
-      return new CouponUseResult(false, "본인 소유의 쿠폰이 아닙니다.");
-    if (!issue.getIsActive())
-      return new CouponUseResult(false, "이미 사용된 쿠폰입니다.");
+    // 쿠폰 검증
+    // 사용자 확인, 활성화 여부 확인
+    if (!issue.getUserId().equals(userId)) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+    if (!issue.getIsActive()) throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
 
     // Coupon 비활성화
     issue.setIsActive(false);
