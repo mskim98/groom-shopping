@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.BDDMockito.*;
@@ -45,7 +46,7 @@ public class RaffleTicketApplicationServiceCreateTicketTest {
         given(raffle.getRaffleId()).willReturn(1L);
         given(user.getId()).willReturn(1L);
 
-        Raffle findRaffle = raffleApplicationService.findByRaffleProductId(4L);
+        Raffle findRaffle = raffleApplicationService.findByRaffleProductId(UUID.fromString("raffle-product-1"));
 
         raffleValidationService.validateRaffleForEntry(findRaffle);
 

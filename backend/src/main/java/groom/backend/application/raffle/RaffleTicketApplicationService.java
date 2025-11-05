@@ -1,16 +1,12 @@
 package groom.backend.application.raffle;
 
-import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
+import groom.backend.domain.raffle.entity.RaffleTicket;
 import groom.backend.domain.raffle.repository.RaffleRepository;
-import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
-import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
-import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
+import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -18,37 +14,41 @@ public class RaffleTicketApplicationService {
 
     private final RaffleTicketAllocationService allocationService;
     private final RaffleRepository raffleRepository;
-    private final SpringDataRaffleTicketRepository raffleTicketRepo;
-    private final RaffleValidationService raffleValidationService;
+    private final RaffleTicketRepository raffleTicketRepo;
+    private final RaffleValidationService validationService;
 
     // 응모 장바구니에 저장
-    public void addToEntryCart(Long raffleId, User user, int count) {
+    public void addToEntryCart(Long raffleId, Long userId, int count) {
         Raffle raffle = raffleRepository.findById(raffleId)
                 .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
 
         // TODO : 응모 상품 존재 여부 조회
 
+        // 응모 가능 여부 검증 (응모 기간, 상태 )
+        validationService.validateRaffleForEntry(raffle);
 
-        raffleValidationService.validateRaffleForEntry(raffle);
-
-        raffleValidationService.validateUserEntryLimit(raffle, user, count);
+        // 사용자 응모 한도 검증
+        validationService.validateUserEntryLimit(raffle, userId, count);
         // TODO 장바구니 로직 추가 - 실제 티켓은 결제 완료 후 생성
+
     }
 
     // 결제 완료 후 호출 - 티켓 생성
     @Transactional
-    public RaffleTicketJpaEntity createTicket(Raffle raffle, User user) {
+    public Boolean createTicket(Raffle raffle, Long userId) {
         // allocateNextTicketNumber 내부에서 PESSIMISTIC_WRITE로 카운터를 잠그고 증가시킴
         Long ticketNumber = allocationService.allocateNextTicketNumber(raffle.getRaffleId());
 
-        RaffleTicketJpaEntity ticket = RaffleTicketJpaEntity.builder()
-                .raffle(RaffleJpaEntity.from(raffle))
-                .userId(user.getId())
-                .ticketNumber(ticketNumber)
-                .createdAt(LocalDateTime.now())
-                .build();
+        RaffleTicket ticket = new RaffleTicket(
+                null,
+                raffle.getRaffleId(),
+                userId,
+                ticketNumber,
+                null
+        );
 
-        return raffleTicketRepo.save(ticket);
+        RaffleTicket saved = raffleTicketRepo.save(ticket);
+        return saved != null;
     }
 
 }

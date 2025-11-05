@@ -7,14 +7,15 @@ import lombok.Builder;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Getter
 @AllArgsConstructor
 @Builder
 public class RaffleResponse {
     private Long raffleId;
-    private Long raffleProductId;
-    private Long winnerProductId;
+    private UUID raffleProductId;
+    private UUID winnerProductId;
     private String title;
     private String description;
     private int winnersCount;

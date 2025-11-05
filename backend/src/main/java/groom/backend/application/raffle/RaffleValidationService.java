@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -118,20 +119,20 @@ public class RaffleValidationService {
     }
 
     // 응모 한도 검증
-    public void validateUserEntryLimit(Raffle raffle, User user, int additionalCount) {
-        int currentCount = getEntryCount(raffle, user);
+    public void validateUserEntryLimit(Raffle raffle, Long userId, int additionalCount) {
+        int currentCount = getEntryCount(raffle, userId);
         if((currentCount + additionalCount) > raffle.getMaxEntriesPerUser()) {
             throw new IllegalArgumentException("응모 한도를 초과하였습니다.");
         }
     }
 
     // 현재 응모된 수량 구하기
-    public int getEntryCount(Raffle raffle, User user) {
-        return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), user.getId());
+    public int getEntryCount(Raffle raffle, Long userId) {
+        return raffleTicketRepo.countByRaffleIdAndUserId(raffle.getRaffleId(), userId);
     }
 
     // 생성 시: 같은 raffleProductId가 이미 존재하면 예외
-    public void ensureUniqueRaffleProductId(Long raffleProductId) {
+    public void ensureUniqueRaffleProductId(UUID raffleProductId) {
         if (raffleProductId == null) return;
         if (raffleRepository.existsByRaffleProductId(raffleProductId)) {
             throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
@@ -139,7 +140,7 @@ public class RaffleValidationService {
     }
 
     // 수정 시: 동일한 raffleId인 경우는 허용, 다른 엔티티가 이미 사용 중이면 예외
-    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, Long raffleProductId) {
+    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, UUID raffleProductId) {
         if (raffleProductId == null) return;
         raffleRepository.findByRaffleProductId(raffleProductId)
                 .ifPresent(existing -> {

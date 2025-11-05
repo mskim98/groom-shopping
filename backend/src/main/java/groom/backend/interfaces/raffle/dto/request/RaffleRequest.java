@@ -8,14 +8,15 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 public class RaffleRequest {
-    private Long raffleProductId;
-    private Long winnerProductId;
+    private UUID raffleProductId;
+    private UUID winnerProductId;
     @NotBlank
     private String title;
     private String description;

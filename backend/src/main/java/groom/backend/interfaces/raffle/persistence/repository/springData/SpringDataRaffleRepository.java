@@ -6,9 +6,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.Optional;
+import java.util.UUID;
 
 public interface SpringDataRaffleRepository extends JpaRepository<RaffleJpaEntity, Long>, JpaSpecificationExecutor<RaffleJpaEntity> {
-    boolean existsByRaffleProductId(Long raffleProductId);
+    boolean existsByRaffleProductId(UUID raffleProductId);
 
-    Optional<Raffle> findByRaffleProductId(Long raffleProductId);
+    Optional<Raffle> findByRaffleProductId(UUID raffleProductId);
 }

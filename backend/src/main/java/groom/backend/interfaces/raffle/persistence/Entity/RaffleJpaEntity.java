@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "raffles")
@@ -19,8 +20,8 @@ public class RaffleJpaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleId;
-    private Long raffleProductId;
-    private Long winnerProductId;
+    private UUID raffleProductId;
+    private UUID winnerProductId;
     @NotBlank
     private String title;
     private String description;
