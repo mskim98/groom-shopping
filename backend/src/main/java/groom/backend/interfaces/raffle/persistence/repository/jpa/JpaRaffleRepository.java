@@ -15,6 +15,7 @@ import org.springframework.stereotype.Repository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Repository
@@ -38,7 +39,7 @@ public class JpaRaffleRepository implements RaffleRepository {
     }
 
     @Override
-    public boolean existsByRaffleProductId(Long raffleProductId) {
+    public boolean existsByRaffleProductId(UUID raffleProductId) {
         return raffleRepository.existsByRaffleProductId(raffleProductId);
     }
 
@@ -95,7 +96,7 @@ public class JpaRaffleRepository implements RaffleRepository {
 
     // 추첨용 상품 Id 로 추첨 정보 받아오기
     @Override
-    public Optional<Raffle> findByRaffleProductId(Long raffleProductId) {
+    public Optional<Raffle> findByRaffleProductId(UUID raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId);
     }
 

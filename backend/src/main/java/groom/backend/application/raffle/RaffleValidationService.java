@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -131,7 +132,7 @@ public class RaffleValidationService {
     }
 
     // 생성 시: 같은 raffleProductId가 이미 존재하면 예외
-    public void ensureUniqueRaffleProductId(Long raffleProductId) {
+    public void ensureUniqueRaffleProductId(UUID raffleProductId) {
         if (raffleProductId == null) return;
         if (raffleRepository.existsByRaffleProductId(raffleProductId)) {
             throw new IllegalStateException("해당 상품으로 등록된 추첨이 이미 존재합니다.");
@@ -139,7 +140,7 @@ public class RaffleValidationService {
     }
 
     // 수정 시: 동일한 raffleId인 경우는 허용, 다른 엔티티가 이미 사용 중이면 예외
-    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, Long raffleProductId) {
+    public void ensureUniqueRaffleProductIdForUpdate(Long currentRaffleId, UUID raffleProductId) {
         if (raffleProductId == null) return;
         raffleRepository.findByRaffleProductId(raffleProductId)
                 .ifPresent(existing -> {
