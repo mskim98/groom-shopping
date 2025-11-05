@@ -6,11 +6,10 @@ import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
 import groom.backend.domain.product.model.vo.Price;
 import groom.backend.domain.product.model.vo.Stock;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-
-import java.util.UUID;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -109,8 +108,8 @@ public class Product {
 
     // 알림 가능 여부 확인
     public boolean canNotify() {
-        return this.isActive != null && this.isActive 
-                && !this.stock.isEmpty() 
+        return this.isActive != null && this.isActive
+                && !this.stock.isEmpty()
                 && isStockBelowThreshold();
     }
 
