@@ -9,8 +9,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import java.math.BigDecimal;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -31,34 +31,34 @@ public class OrderItem {
     private Order order;
 
     @Column(name = "productId", nullable = false)
-    private Long productId;
+    private UUID productId;
 
-    @Column(name = "productName", nullable = false, length = 200)
+    @Column(name = "name", nullable = false, length = 200)
     private String productName;
 
-    @Column(name = "unitPrice", nullable = false, precision = 15, scale = 2)
-    private BigDecimal unitPrice;
+    @Column(name = "price", nullable = false, precision = 15, scale = 2)
+    private Integer price;
 
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
 
     @Column(name = "subTotal", nullable = false, precision = 15, scale = 2)
-    private BigDecimal subTotal;
+    private Integer subTotal;
 
     @Builder
-    public OrderItem(Long productId, String productName, BigDecimal unitPrice, Integer quantity) {
+    public OrderItem(UUID productId, String productName, Integer price, Integer quantity) {
         this.productId = productId;
         this.productName = productName;
-        this.unitPrice = unitPrice;
+        this.price = price;
         this.quantity = quantity;
-        this.subTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
+        this.subTotal = price * quantity;
     }
 
     protected void setOrder(Order order) {
         this.order = order;
     }
 
-    public BigDecimal getSubtotal() {
+    public Integer getSubtotal() {
         return this.subTotal;
     }
 

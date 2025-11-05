@@ -11,12 +11,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
@@ -35,14 +35,14 @@ public class Order {
     @Column(name = "userId", nullable = false)
     private Long userId;
 
-    @Column(name = "subTotal", precision = 15, scale = 2, nullable = false)
-    private BigDecimal subTotal;
+    @Column(name = "subTotal", nullable = false)
+    private Integer subTotal;
 
-    @Column(name = "discountAmount", precision = 15, scale = 2)
-    private BigDecimal discountAmount;
+    @Column(name = "discountAmount")
+    private Integer discountAmount;
 
-    @Column(name = "totalAmount", precision = 15, scale = 2, nullable = false)
-    private BigDecimal totalAmount;
+    @Column(name = "totalAmount", nullable = false)
+    private Integer totalAmount;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
@@ -61,17 +61,18 @@ public class Order {
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> orderItems = new ArrayList<>();
 
+    @Builder
     public Order(Long userId, Long couponId, OrderStatus status) {
         this.userId = userId;
         this.couponId = couponId;
         this.status = status != null ? status : OrderStatus.PENDING;
-        this.subTotal = BigDecimal.ZERO;
-        this.discountAmount = BigDecimal.ZERO;
-        this.totalAmount = BigDecimal.ZERO;
+        this.subTotal = 0;
+        this.discountAmount = 0;
+        this.totalAmount = 0;
     }
 
-    public void setDiscountAmount(BigDecimal discountAmount) {
-        this.discountAmount = discountAmount != null ? discountAmount : BigDecimal.ZERO;
+    public void setDiscountAmount(Integer discountAmount) {
+        this.discountAmount = discountAmount != null ? discountAmount : 0;
     }
 
     public void addOrderItem(OrderItem orderItem) {
@@ -79,21 +80,25 @@ public class Order {
         orderItem.setOrder(this);
     }
 
-    public void calculateAmounts() {
-        this.subTotal = orderItems.stream()
-                .map(OrderItem::getSubtotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        this.totalAmount = this.subTotal.subtract(this.discountAmount);
-
-        if (this.totalAmount.compareTo(BigDecimal.ZERO) < 0) {
-            this.totalAmount = BigDecimal.ZERO;
-        }
-    }
-
     public void changeStatus(OrderStatus newStatus) {
         this.status = newStatus;
     }
+
+    public void calculateAmounts() {
+        this.subTotal = orderItems.stream()
+                .map(OrderItem::getSubtotal)           // Integer 값 반환
+                .filter(Objects::nonNull)              // null 방지
+                .reduce(0, Integer::sum);              // Integer 합계 계산
+
+        int discount = this.discountAmount != null ? this.discountAmount : 0;
+
+        this.totalAmount = this.subTotal - discount;
+
+        if (this.totalAmount < 0) {
+            this.totalAmount = 0;
+        }
+    }
+
 
     @Override
     public boolean equals(Object o) {
