@@ -32,8 +32,7 @@ public class RaffleDrawApplicationService {
         validationService.ensureAdmin(user);
 
         // 추첨 존재 여부 및 상태 검증
-        Raffle raffle = raffleRepository.findById(raffleId)
-                            .orElseThrow(() -> new IllegalArgumentException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = validationService.findById(raffleId);
 
         // 추첨 가능 상태 검증
         validationService.validateRaffleForDraw(raffle);
@@ -85,8 +84,7 @@ public class RaffleDrawApplicationService {
     @Transactional
     public void sendRaffleWinnersNotification(Long raffleId) {
 
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = validationService.findById(raffleId);
 
         List<RaffleWinnerNotification> notifications = raffleWinnerRepo.findNotificationsByRaffleId(raffleId);
 

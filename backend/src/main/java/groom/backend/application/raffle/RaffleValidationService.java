@@ -2,6 +2,10 @@ package groom.backend.application.raffle;
 
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
+import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.model.enums.ProductStatus;
+import groom.backend.domain.product.service.ProductCommonService;
+import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
@@ -9,6 +13,7 @@ import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -20,9 +25,48 @@ public class RaffleValidationService {
 
     private final RaffleRepository raffleRepository;
     private final RaffleTicketRepository raffleTicketRepo;
+    private final ProductCommonService productCommonService;
 
-    // TODO : request 검증 로직 추가 필요
-    // RaffleProductId, WinnerProductId 존재하는지 등
+    public Raffle findById(Long raffleId) {
+        return raffleRepository.findById(raffleId)
+                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+    }
+
+    // RaffleProductId, WinnerProductId 존재여부 확인
+    private void validateProductForRaffle(UUID productId, String fieldName, int winnerCount) {
+        if (productId == null) return;
+        try {
+            Product product = productCommonService.findById(productId);
+
+            // 상품 활성화 상태 및 판매 상태 확인
+            if(product.getIsActive() == Boolean.FALSE || product.getStatus() != ProductStatus.AVAILABLE) {
+                throw new IllegalStateException(fieldName + "에 해당하는 상품이 비활성화 상태입니다.");
+            }
+
+            // 증정 상품의 재고 확인
+            if("winnerProductId".equals(fieldName)) {
+                if (product.getStock() < winnerCount) {
+                    throw new IllegalStateException("증정 상품의 재고가 부족합니다.");
+                }
+            } else {
+                // 추첨 상품의 재고 확인
+                if (product.getStock() < 1) {
+                    throw new IllegalStateException("추첨 상품의 재고가 부족합니다.");
+                }
+            }
+        } catch (ResponseStatusException ex) { // 상품이 존재하지 않는 경우
+            throw new IllegalStateException(fieldName + "에 해당하는 상품이 존재하지 않습니다.");
+        }
+    }
+
+    public void validateProductsForRaffle(RaffleValidationCriteria criteria) {
+        if (criteria == null) {
+            throw new IllegalStateException("상품이 존재하지 않습니다.");
+        }
+        validateProductForRaffle(criteria.getRaffleProductId(), "raffleProductId", criteria.getWinnerCount());
+        validateProductForRaffle(criteria.getWinnerProductId(), "winnerProductId", criteria.getWinnerCount());
+    }
+
 
     // 관리자 권한 검사(예외 던지기)
     public void ensureAdmin(User user) {

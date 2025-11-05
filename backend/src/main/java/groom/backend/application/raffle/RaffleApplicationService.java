@@ -2,6 +2,7 @@ package groom.backend.application.raffle;
 
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
+import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
@@ -31,8 +32,7 @@ public class RaffleApplicationService {
     }
 
     public RaffleResponse getRaffleDetails(Long raffleId) {
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = raffleValidationService.findById(raffleId);
         return RaffleResponse.from(raffle);
     }
 
@@ -40,12 +40,22 @@ public class RaffleApplicationService {
     public RaffleResponse createRaffle(User user, RaffleRequest request) {
         // 권한 검증
         raffleValidationService.ensureAdmin(user);
-        // 요청 날짜 검증
+
+        // 요청 날짜 검증 (응모일, 추첨일)
         raffleValidationService.validateDateRaffleRequest(request);
-        // TODO : 추첨 상품, 증정 상품 존재 여부 조회
+
+        // 상품 존재 및 상태 ,재고 검증
+        RaffleValidationCriteria criteria = RaffleValidationCriteria.builder()
+                .winnerProductId(request.getWinnerProductId())
+                .raffleProductId(request.getRaffleProductId())
+                .winnerCount(request.getWinnersCount())
+                .build();
+        raffleValidationService.validateProductsForRaffle(criteria);
 
         // 추첨 상품 중복 검사
         raffleValidationService.ensureUniqueRaffleProductId(request.getRaffleProductId());
+
+        // 상태 값 정규화 (미입력 시 DRAFT로 설정)
         raffleValidationService.normalizeStatus(request);
 
         Raffle raffle = new Raffle(
@@ -71,12 +81,12 @@ public class RaffleApplicationService {
 
     @Transactional
     public RaffleResponse updateRaffle(User user, Long raffleId, RaffleRequest request) {
-
+        // 권한 검증
         raffleValidationService.ensureAdmin(user);
 
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = raffleValidationService.findById(raffleId);
 
+        // 요청 날짜 검증 (응모일, 추첨일)
         raffleValidationService.validateDateRaffleRequestForUpdate(raffle, request);
 
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
@@ -97,8 +107,7 @@ public class RaffleApplicationService {
 
         raffleValidationService.ensureAdmin(user);
 
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = raffleValidationService.findById(raffleId);
 
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
             throw new IllegalStateException("진행중이거나 종료된 추첨은 삭제할 수 없습니다.");

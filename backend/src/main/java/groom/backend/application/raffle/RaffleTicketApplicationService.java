@@ -1,5 +1,6 @@
 package groom.backend.application.raffle;
 
+import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.entity.RaffleTicket;
 import groom.backend.domain.raffle.repository.RaffleRepository;
@@ -19,12 +20,14 @@ public class RaffleTicketApplicationService {
 
     // 응모 장바구니에 저장
     public void addToEntryCart(Long raffleId, Long userId, int count) {
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = validationService.findById(raffleId);
+        // 상품 존재 및 상태 ,재고 검증
+        RaffleValidationCriteria criteria = RaffleValidationCriteria.builder()
+                .raffleProductId(raffle.getRaffleProductId())
+                .build();
+        validationService.validateProductsForRaffle(criteria);
 
-        // TODO : 응모 상품 존재 여부 조회
-
-        // 응모 가능 여부 검증 (응모 기간, 상태 )
+        // 응모 가능 여부 검증 (응모 기간, 상태)
         validationService.validateRaffleForEntry(raffle);
 
         // 사용자 응모 한도 검증
