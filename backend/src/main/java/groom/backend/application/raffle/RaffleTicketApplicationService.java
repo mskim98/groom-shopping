@@ -35,20 +35,28 @@ public class RaffleTicketApplicationService {
 
     // 결제 완료 후 호출 - 티켓 생성
     @Transactional
-    public Boolean createTicket(Raffle raffle, Long userId) {
-        // allocateNextTicketNumber 내부에서 PESSIMISTIC_WRITE로 카운터를 잠그고 증가시킴
-        Long ticketNumber = allocationService.allocateNextTicketNumber(raffle.getRaffleId());
+    public Boolean createTicket(Raffle raffle, Long userId, int quantity) {
 
-        RaffleTicket ticket = new RaffleTicket(
-                null,
-                raffle.getRaffleId(),
-                userId,
-                ticketNumber,
-                null
-        );
+        for (int i = 0; i < quantity; i++) {
+            // allocateNextTicketNumber 내부에서 PESSIMISTIC_WRITE로 카운터를 잠그고 증가시킴
+            Long ticketNumber = allocationService.allocateNextTicketNumber(raffle.getRaffleId());
 
-        RaffleTicket saved = raffleTicketRepo.save(ticket);
-        return saved != null;
+            RaffleTicket ticket = new RaffleTicket(
+                    null,
+                    raffle.getRaffleId(),
+                    userId,
+                    ticketNumber,
+                    null
+            );
+
+            RaffleTicket saved = raffleTicketRepo.save(ticket);
+
+            if(saved.getUserId() == null) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
 }
