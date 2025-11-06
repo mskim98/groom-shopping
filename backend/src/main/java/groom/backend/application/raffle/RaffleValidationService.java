@@ -3,6 +3,7 @@ package groom.backend.application.raffle;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
 import groom.backend.domain.product.service.ProductCommonService;
 import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
@@ -19,6 +20,9 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * 추첨(Raffle) 관련 검증 로직을 처리하는 서비스 클래스
+ */
 @Service
 @RequiredArgsConstructor
 public class RaffleValidationService {
@@ -43,15 +47,24 @@ public class RaffleValidationService {
                 throw new IllegalStateException(fieldName + "에 해당하는 상품이 비활성화 상태입니다.");
             }
 
-            // 증정 상품의 재고 확인
+
             if("winnerProductId".equals(fieldName)) {
+                // 증정 상품의 재고 확인
                 if (product.getStock() < winnerCount) {
                     throw new IllegalStateException("증정 상품의 재고가 부족합니다.");
+                }
+
+                if (product.getCategory() != ProductCategory.RAFFLE) {
+                    throw new IllegalStateException("증정 상품용이 아닙니다.");
                 }
             } else {
                 // 추첨 상품의 재고 확인
                 if (product.getStock() < 1) {
                     throw new IllegalStateException("추첨 상품의 재고가 부족합니다.");
+                }
+
+                if (product.getCategory() != ProductCategory.TICKET) {
+                    throw new IllegalStateException("추첨 티켓 상품이 아닙니다.");
                 }
             }
         } catch (ResponseStatusException ex) { // 상품이 존재하지 않는 경우
