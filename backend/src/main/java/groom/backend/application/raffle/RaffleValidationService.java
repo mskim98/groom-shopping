@@ -12,6 +12,7 @@ import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
+import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;

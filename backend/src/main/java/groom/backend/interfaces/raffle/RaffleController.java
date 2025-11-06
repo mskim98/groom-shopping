@@ -31,7 +31,7 @@ public class RaffleController {
     private final RaffleDrawApplicationService raffleDrawApplicationService;
 
     @PostMapping
-    public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody RaffleRequest raffleRequest) {
+    public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody @Valid RaffleRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
