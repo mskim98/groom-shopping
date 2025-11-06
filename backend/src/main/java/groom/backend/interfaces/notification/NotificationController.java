@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @RestController
-@RequestMapping("/notifications")
+@RequestMapping("/v1/notification")
 @RequiredArgsConstructor
 public class NotificationController {
 

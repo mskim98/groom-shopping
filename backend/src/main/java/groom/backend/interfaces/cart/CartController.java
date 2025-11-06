@@ -22,7 +22,7 @@ import java.util.List;
  */
 @Slf4j
 @RestController
-@RequestMapping("/cart")
+@RequestMapping("/v1/cart")
 @RequiredArgsConstructor
 public class CartController {
 
