@@ -11,4 +11,5 @@ import java.util.List;
 public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> {
   List<CouponIssue> findCouponIssueByUserId(Long userId);
   List<CouponIssue> findByUserIdAndIsActiveTrueAndDeletedAtAfter(Long userId, LocalDateTime currentDate);
+  List<CouponIssue> findByCouponIdAndUserId(Long couponId, Long userId);
 }

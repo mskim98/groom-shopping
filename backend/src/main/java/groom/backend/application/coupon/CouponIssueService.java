@@ -28,6 +28,7 @@ public class CouponIssueService {
   private final CouponRepository couponRepository;
   private final CouponIssueRepository  couponIssueRepository;
 
+  // 쿠폰 발급 메서드
   @Transactional
   public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회
@@ -44,6 +45,11 @@ public class CouponIssueService {
     // 수량 확인
     if (coupon.getQuantity() <= 0) {
       throw new BusinessException(ErrorCode.CONFLICT, "수량이 소진되었습니다.");
+    }
+
+    // 사용자 중복 쿠폰 발급 방지
+    if (!couponIssueRepository.findByCouponIdAndUserId(couponId, user.getId()).isEmpty()) {
+      throw new BusinessException(ErrorCode.CONFLICT, "이미 발급받은 쿠폰입니다.");
     }
 
     // 쿠폰 확보
@@ -66,6 +72,7 @@ public class CouponIssueService {
     return CouponIssueResponse.from(couponIssue);
   }
 
+  // 사용자 쿠폰 조회 메서드
   public List<CouponIssueResponse> searchMyCoupon(Long userId) {
     // 유저 id로 쿠폰 조회
     // 현재 사용 가능한 (만료 시간, 활성화 여부) 쿠폰 조회
@@ -73,9 +80,11 @@ public class CouponIssueService {
   }
 
   // 쿠폰 사용을 위한 할인 금액 조회
-  // 임시 : 사용 가능 여부 반환 시 사용하지 못할 경우 -1 반환
-  // TODO : 여러 쿠폰 사용 가능하도록 개선
+  // 사용 가능 여부 반환 시 사용하지 못할 경우 exception 던짐
+  // 쿠폰 미조회 : Not Found
+  // 정책적 검증 실패 (사용자 불일치, 사용기간 만료 등) : Forbidden
   public Integer calculateDiscount(Long couponId, Long userId, Integer cost) {
+    // TODO : 여러 쿠폰 사용 가능하도록 개선
     Integer discount = 0;
 
     // 쿠폰 조회
@@ -100,6 +109,9 @@ public class CouponIssueService {
   }
 
   // 쿠폰 사용 확정 메서드
+  // 사용 시 실패할 경우 exception 던짐
+  // 쿠폰 미조회 : Not Found
+  // 정책적 검증 실패 (사용자 불일치, 사용기간 만료 등) : Forbidden
   @Transactional
   public Boolean useCoupon(Long couponId, Long userId) {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
