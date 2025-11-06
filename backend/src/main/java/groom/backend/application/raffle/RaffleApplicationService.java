@@ -17,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
+/**
+ * 추첨(Raffle) 관련 비즈니스 로직을 처리하는 서비스 클래스
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

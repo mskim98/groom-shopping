@@ -8,6 +8,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 추첨 티켓(Raffle Ticket) 관련 비즈니스 로직을 처리하는 서비스 클래스
+ *
+ * 1. 사용자가 응모 하면 장바구니에 응모 상품을 담는다.
+ * 2. 결제 완료 후 티켓을 생성한다.
+ */
 @Service
 @RequiredArgsConstructor
 public class RaffleTicketApplicationService {
@@ -18,6 +24,7 @@ public class RaffleTicketApplicationService {
     private final CartApplicationService cartApplicationService;;
 
     // 응모 장바구니에 저장
+    @Transactional
     public void addToEntryCart(Long raffleId, Long userId, int count) {
         Raffle raffle = validationService.findById(raffleId);
         // 상품 존재 및 상태 ,재고 검증 (add To Cart 내부에서 처리함)

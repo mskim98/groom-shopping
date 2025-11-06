@@ -109,7 +109,7 @@ public class RaffleController {
         }
         // 추첨 실행
         raffleDrawApplicationService.drawRaffleWinners(user, raffleId);
-        // TODO: 당첨자 알람 전송
+        // 당첨자 알림 전송
         raffleDrawApplicationService.sendRaffleWinnersNotification(raffleId);
 
         return ResponseEntity.ok().build();

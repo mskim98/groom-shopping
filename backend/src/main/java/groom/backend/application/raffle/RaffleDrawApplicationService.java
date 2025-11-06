@@ -4,7 +4,6 @@ import groom.backend.application.notification.NotificationApplicationService;
 import groom.backend.application.product.ProductApplicationService;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
-import groom.backend.interfaces.raffle.dto.notification.RaffleWinnerNotification;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.domain.raffle.repository.RaffleTicketRepository;
@@ -18,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * 추첨 당첨자 선정 및 알림 전송을 담당하는 Application Service입니다.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -44,7 +46,6 @@ public class RaffleDrawApplicationService {
 
         // 실제 참가자 수 조회
         int entryCount = ticketRepository.countDistinctUserByRaffleId(raffle.getRaffleId());
-
         if (entryCount == 0) {
             throw new IllegalStateException("응모자가 없어 당첨자 추첨을 진행할 수 없습니다.");
         }
