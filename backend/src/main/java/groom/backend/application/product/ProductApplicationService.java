@@ -102,6 +102,50 @@ public class ProductApplicationService {
     }
 
     /**
+     * 제품의 재고를 단순 차감합니다.
+     * 알림 전송 없이 재고만 차감합니다.
+     *
+     * @param productId 제품 ID
+     * @param quantity 차감할 수량
+     * @return 차감 후 재고 수량
+     */
+    @Transactional
+    public Integer reduceStock(UUID productId, Integer quantity) {
+        long reduceStartTime = System.currentTimeMillis();
+        log.info("[STOCK_REDUCE_START] productId={}, quantity={}, timestamp={}", 
+                productId, quantity, reduceStartTime);
+
+        try {
+            // 1. 제품 조회
+            long queryStartTime = System.currentTimeMillis();
+            Product product = productRepository.findById(productId)
+                    .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+            long queryDuration = System.currentTimeMillis() - queryStartTime;
+            log.info("[STOCK_REDUCE_QUERY] productId={}, queryDuration={}ms", productId, queryDuration);
+
+            // 2. 재고 차감
+            int stockBefore = product.getStock();
+            product.reduceStock(quantity);
+            int stockAfter = product.getStock();
+            
+            long saveStartTime = System.currentTimeMillis();
+            productRepository.save(product);
+            long saveDuration = System.currentTimeMillis() - saveStartTime;
+            
+            log.info("[STOCK_REDUCE_SUCCESS] productId={}, stockBefore={}, stockAfter={}, quantity={}, saveDuration={}ms", 
+                    productId, stockBefore, stockAfter, quantity, saveDuration);
+
+            return stockAfter;
+
+        } catch (Exception e) {
+            long errorDuration = System.currentTimeMillis() - reduceStartTime;
+            log.error("[STOCK_REDUCE_FAILED] productId={}, quantity={}, duration={}ms, error={}", 
+                    productId, quantity, errorDuration, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
      * 사용자의 장바구니에 담긴 모든 제품을 구매합니다.
      *
      * @param userId 사용자 ID
