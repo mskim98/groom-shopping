@@ -103,9 +103,9 @@ public class RaffleApplicationService {
         // 상품 존재 및 상태 ,재고 검증
         if(isAnyProductOrCountChanged(raffle, request)) {
             RaffleValidationCriteria criteria = RaffleValidationCriteria.builder()
-                    .winnerProductId(request.getWinnerProductId())
-                    .raffleProductId(request.getRaffleProductId())
-                    .winnerCount(request.getWinnersCount())
+                    .winnerProductId(request.getWinnerProductId() != null ? request.getWinnerProductId() : raffle.getWinnerProductId())
+                    .raffleProductId(request.getRaffleProductId() != null ? request.getRaffleProductId() : raffle.getRaffleProductId())
+                    .winnerCount(request.getWinnersCount() != null ? request.getWinnersCount() : raffle.getWinnersCount())
                     .build();
             raffleValidationService.validateProductsForRaffle(criteria);
         }

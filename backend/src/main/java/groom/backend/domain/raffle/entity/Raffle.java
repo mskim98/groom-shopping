@@ -39,10 +39,10 @@ public class Raffle {
         if(request.getWinnerProductId() != null) {
             this.winnerProductId = request.getWinnerProductId();
         }
-        if(request.getWinnersCount() > 0) {
+        if(request.getWinnersCount() != null) {
             this.winnersCount = request.getWinnersCount();
         }
-        if(request.getMaxEntriesPerUser() > 0) {
+        if(request.getMaxEntriesPerUser() != null) {
             this.maxEntriesPerUser = request.getMaxEntriesPerUser();
         }
         if(request.getEntryStartAt() != null) {
