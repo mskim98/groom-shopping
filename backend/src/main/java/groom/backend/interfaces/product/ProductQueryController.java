@@ -4,6 +4,7 @@ import groom.backend.common.response.ApiResponse;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.service.ProductQueryService;
 import groom.backend.interfaces.product.dto.response.ProductResponse;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -14,10 +15,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.UUID;
-
 @RestController
-@RequestMapping("/v1/product")
+@RequestMapping("/product")
 @RequiredArgsConstructor
 public class ProductQueryController {
 

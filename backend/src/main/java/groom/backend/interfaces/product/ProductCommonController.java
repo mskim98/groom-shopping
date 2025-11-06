@@ -7,6 +7,7 @@ import groom.backend.interfaces.product.dto.request.CreateProductRequest;
 import groom.backend.interfaces.product.dto.request.UpdateProductRequest;
 import groom.backend.interfaces.product.dto.response.ProductResponse;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,10 +20,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.UUID;
-
 @RestController
-@RequestMapping("/v1/product")
+@RequestMapping("/product")
 @RequiredArgsConstructor
 public class ProductCommonController {
 
