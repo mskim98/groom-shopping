@@ -35,5 +35,18 @@ public class Notification {
         String message = String.format("재고가 %d개로 얼마 남지 않았어요", currentStock);
         return new Notification(null, currentStock, thresholdValue, message, false, LocalDateTime.now(), userId, productId);
     }
+
+    /**
+     * 실시간 알림 전송용 Notification 객체를 생성합니다.
+     * DB에 저장하고 SSE 전송도 수행합니다.
+     * 
+     * @param userId 사용자 ID
+     * @param productId 제품 ID
+     * @param message 알림 메시지
+     * @return Notification 객체
+     */
+    public static Notification createForRealtime(Long userId, UUID productId, String message) {
+        return new Notification(null, null, null, message, false, LocalDateTime.now(), userId, productId);
+    }
 }
 
