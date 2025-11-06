@@ -2,6 +2,7 @@ package groom.backend.interfaces.raffle.persistence.Entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -20,6 +21,8 @@ public class RaffleTicketJpaEntity {
     private Long raffleTicketId;
     private Long ticketNumber;
     private Long userId;
+    @CreationTimestamp
+    @Column(name = "createdAt", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @ManyToOne

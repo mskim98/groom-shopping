@@ -17,27 +17,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class RaffleTicketAllocationService {
     private final SpringDataRaffleTicketCounterRepository counterRepo;
 
+
     /**
-     * 주어진 raffleId에 대해 다음 티켓 번호를 할당하고 반환한다.
+     * 지정된 추첨 ID에 대해 연속된 티켓 번호 범위를 할당합니다.
      *
-     * 동작:
-     * 1. raffleId로 카운터 엔티티를 조회한다(포르업데이트 조회를 통해 동시성 제어).
-     * 2. 카운터가 없으면 초기값 0으로 새 엔티티를 생성한다.
-     * 3. 현재 값에 1을 더해 다음 티켓 번호를 계산한다.
-     * 4. 증가된 값을 엔티티에 설정하고 저장한다.
-     * 5. 계산된 다음 번호를 반환한다.
-     *
-     * @param raffleId 티켓을 할당할 래플 식별자
-     * @return 할당된 다음 티켓 번호
+     * @param raffleId  티켓을 할당할 추첨의 ID
+     * @param quantity  할당할 티켓 수
+     * @return 할당된 티켓 번호의 시작과 끝을 포함하는 TiketRange 객체
      */
     @Transactional
-    public Long allocateNextTicketNumber(Long raffleId) {
+    public TiketRange allocateTicketRange(Long raffleId, int quantity) {
         RaffleTicketCounterJpaEntity counter = counterRepo.findFirstByRaffleIdForUpdate(raffleId)
                 .orElseGet(() -> new RaffleTicketCounterJpaEntity(raffleId, 0L));
-        long next = counter.getCurrentValue() + 1;
-        counter.setCurrentValue(next);
+        long start = counter.getCurrentValue() + 1;
+        long end = start + quantity - 1;
+        counter.setCurrentValue(end);
         counterRepo.save(counter);
-        return next;
+        return new TiketRange(start, end);
+
     }
 
 }
