@@ -9,3 +9,4 @@ public interface SpringDataProductRepository extends JpaRepository<ProductJpaEnt
     List<ProductJpaEntity> findByIdIn(List<UUID> ids);
 }
 
+
