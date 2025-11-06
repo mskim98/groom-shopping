@@ -32,7 +32,7 @@ public interface SpringDataRaffleWinnerRepository extends JpaRepository<RaffleWi
     int pickWinnersNative(@Param("cond") RaffleDrawCondition cond);
 
     @Query(value = ""
-            + "SELECT w.raffle_ticket_id, t.user_id, r.winner_product_id as product_id, concat('축하합니다. ', p.name,'에 당첨 되셨습니다.' ) as message "
+            + "SELECT w.raffle_ticket_id, t.user_id, r.winner_product_id as product_id, concat('축하합니다. [', r.title,'] 추첨에 당첨 되셨습니다. \n 상품은 ', p.name, ' 입니다 ' ) as message "
             + "FROM raffles r "
             + "JOIN raffle_tickets t ON r.raffle_id = t.raffle_id "
             + "JOIN raffle_winners w ON t.raffle_ticket_id = w.raffle_ticket_id "
