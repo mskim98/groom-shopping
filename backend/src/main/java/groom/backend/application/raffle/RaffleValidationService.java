@@ -140,7 +140,7 @@ public class RaffleValidationService {
     }
 
     // 요청 날짜 관련 검증 (수정 시)
-    public void validateDateRaffleRequestForUpdate(Raffle raffle, RaffleRequest request) {
+    public void validateDateRaffleRequestForUpdate(Raffle raffle, RaffleUpdateRequest request) {
         if (request == null) {
             throw new IllegalStateException("요청이 null입니다.");
         }

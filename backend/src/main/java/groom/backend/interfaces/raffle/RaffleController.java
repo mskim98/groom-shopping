@@ -8,7 +8,9 @@ import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
+import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -41,7 +43,7 @@ public class RaffleController {
     @PutMapping("/{raffleId}")
     public ResponseEntity<RaffleResponse> updateRaffle(@AuthenticationPrincipal(expression = "user") User user,
                                                        @PathVariable Long raffleId,
-                                                       @RequestBody RaffleRequest raffleRequest) {
+                                                       @RequestBody @Valid RaffleUpdateRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }

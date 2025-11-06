@@ -7,6 +7,7 @@ import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
+import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -83,26 +84,62 @@ public class RaffleApplicationService {
     }
 
     @Transactional
-    public RaffleResponse updateRaffle(User user, Long raffleId, RaffleRequest request) {
+    public RaffleResponse updateRaffle(User user, Long raffleId, RaffleUpdateRequest request) {
         // 권한 검증
         raffleValidationService.ensureAdmin(user);
 
         Raffle raffle = raffleValidationService.findById(raffleId);
 
-        // 요청 날짜 검증 (응모일, 추첨일)
-        raffleValidationService.validateDateRaffleRequestForUpdate(raffle, request);
-
+        // 상태 검증 - 진행중이거나 종료된 추첨은 수정 불가
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
             throw new IllegalStateException("진행중이거나 종료된 추첨은 수정할 수 없습니다.");
         }
 
+        // 요청 날짜 검증 (응모일, 추첨일)
+        raffleValidationService.validateDateRaffleRequestForUpdate(raffle, request);
+
         raffleValidationService.ensureUniqueRaffleProductIdForUpdate(raffle.getRaffleId(), request.getRaffleProductId());
+
+        // 상품 존재 및 상태 ,재고 검증
+        if(isAnyProductOrCountChanged(raffle, request)) {
+            RaffleValidationCriteria criteria = RaffleValidationCriteria.builder()
+                    .winnerProductId(request.getWinnerProductId())
+                    .raffleProductId(request.getRaffleProductId())
+                    .winnerCount(request.getWinnersCount())
+                    .build();
+            raffleValidationService.validateProductsForRaffle(criteria);
+        }
 
         raffle.updateRaffle(request);
 
         Raffle saved = raffleRepository.save(raffle);
 
         return RaffleResponse.from(saved);
+    }
+
+    // 상품 아이디 또는 당첨자 수 변경 여부 확인
+    private Boolean isAnyProductOrCountChanged(Raffle raffle, RaffleUpdateRequest request) {
+        return isRaffleProductChanged(raffle, request)
+                || isWinnerProductChanged(raffle, request)
+                || isWinnersCountChanged(raffle, request);
+    }
+
+    // 개별 변경 여부 확인 메서드
+    private Boolean isRaffleProductChanged(Raffle raffle, RaffleUpdateRequest request) {
+        return request.getRaffleProductId() != null
+                && !raffle.getRaffleProductId().equals(request.getRaffleProductId());
+    }
+
+    // 개별 변경 여부 확인 메서드
+    private Boolean isWinnerProductChanged(Raffle raffle, RaffleUpdateRequest request) {
+        return request.getWinnerProductId() != null
+                && !raffle.getWinnerProductId().equals(request.getWinnerProductId());
+    }
+
+    // 개별 변경 여부 확인 메서드
+    private Boolean isWinnersCountChanged(Raffle raffle, RaffleUpdateRequest request) {
+        return request.getWinnersCount() != null
+                && raffle.getWinnersCount() != request.getWinnersCount();
     }
 
     @Transactional
