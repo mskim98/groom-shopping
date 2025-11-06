@@ -1,12 +1,11 @@
 package groom.backend.application.order;
 
 import groom.backend.application.coupon.CouponIssueService;
-import groom.backend.application.order.dto.CartItemProduct;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.repository.OrderRepository;
+import groom.backend.interfaces.cart.persistence.CartItemJpaEntity;
 import groom.backend.interfaces.cart.persistence.SpringDataCartItemRepository;
-import groom.backend.interfaces.cart.persistence.SpringDataCartRepository;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.List;
@@ -27,7 +26,6 @@ public class OrderApplicationService {
 
     private final OrderRepository orderRepository;
     private final SpringDataCartItemRepository cartItemRepository;
-    private final SpringDataCartRepository cartRepository;
     private final SpringDataProductRepository productRepository;
     private final CouponIssueService couponIssueService;
 
@@ -35,7 +33,7 @@ public class OrderApplicationService {
     public Order createOrder(Long userId, Long couponId) {
 
         // 사용자 장바구니의 상품 정보 조회하여 (productId, quantity) 리스트로 받기
-        List<CartItemProduct> cartItemProducts = cartItemRepository.findProductInfoByUserId(userId);
+        List<CartItemJpaEntity> cartItemProducts = cartItemRepository.findByUserId(userId);
 
         if (cartItemProducts.isEmpty()) {
             throw new IllegalArgumentException("장바구니가 비어있습니다.");
@@ -43,7 +41,7 @@ public class OrderApplicationService {
 
         // productId(UUID) 만 리스트로 추출
         List<UUID> productIds = cartItemProducts.stream()
-                .map(CartItemProduct::productId)
+                .map(CartItemJpaEntity::getProductId)
                 .toList();
 
         // productIds(UUID 리스트)로 상품 정보 조회 (이름, 가격 등)
@@ -59,12 +57,13 @@ public class OrderApplicationService {
         // 기본 주문 발행
         Order order = Order.builder()
                 .userId(userId)
+                .couponId(couponId)
                 .build();
 
-        // Step 6: 각 장바구니 아이템을 OrderItem으로 변환하여 추가
-        for (CartItemProduct cartItemProduct : cartItemProducts) {
-            UUID productId = cartItemProduct.productId();
-            Integer quantity = cartItemProduct.quantity();
+        // 각 장바구니 아이템을 OrderItem으로 변환하여 추가
+        for (CartItemJpaEntity cartItem : cartItemProducts) {
+            UUID productId = cartItem.getProductId();
+            Integer quantity = cartItem.getQuantity();
 
             // 상품 조회
             ProductJpaEntity product = productMap.get(productId);
@@ -110,13 +109,17 @@ public class OrderApplicationService {
 
         order.calculateAmounts();
 
-//        Integer discountAmount = couponIssueService.calculateDiscount(couponId, userId, order.getSubTotal());
-//
-//        order.setDiscountAmount(discountAmount);
+        // 쿠폰 할인 적용 (쿠폰이 있는 경우)
+        if (couponId != null) {
+            Integer discountAmount = couponIssueService.calculateDiscount(couponId, userId, order.getSubTotal());
+            order.setDiscountAmount(discountAmount);
+            log.info("Coupon applied - couponId: {}, discountAmount: {}", couponId, discountAmount);
+        }
 
+        // 최종 금액 계산 (subtotal, discount, total)
         order.calculateAmounts();
 
-        // Step 8: Order 저장 (cascade로 OrderItem 저장)
+        // Order 저장 (cascade로 OrderItem 저장)
         Order savedOrder = orderRepository.save(order);
 
         return savedOrder;

@@ -2,7 +2,9 @@ package groom.backend.domain.product.model.enums;
 
 public enum ProductCategory {
     GENERAL("일반 품목"),
-    TICKET("추첨 티켓");
+    TICKET("추첨 티켓"),
+    RAFFLE("증정 상품");
+
 
     private final String description; // 필드 추가
 

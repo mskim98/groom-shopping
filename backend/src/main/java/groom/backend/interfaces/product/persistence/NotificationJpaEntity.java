@@ -20,10 +20,10 @@ public class NotificationJpaEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "current_stock", nullable = false)
+    @Column(name = "current_stock")
     private Integer currentStock;
 
-    @Column(name = "threshold_value", nullable = false)
+    @Column(name = "threshold_value")
     private Integer thresholdValue;
 
     @Column(name = "message", columnDefinition = "TEXT")

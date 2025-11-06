@@ -171,5 +171,35 @@ public class NotificationApplicationService {
                     userId, validIds.size(), notificationIds.size());
         }
     }
+
+    /**
+     * 사용자에게 실시간 알림을 전송하고 DB에 저장합니다.
+     * 
+     * @param userId 사용자 ID
+     * @param productId 제품 ID
+     * @param message 알림 메시지
+     */
+    @Transactional
+    public void sendRealtimeNotification(Long userId, UUID productId, String message) {
+        log.info("[REALTIME_NOTIFICATION_START] userId={}, productId={}, message={}", userId, productId, message);
+
+        try {
+            // Notification 객체 생성
+            Notification notification = Notification.createForRealtime(userId, productId, message);
+            
+            // DB에 저장
+            Notification saved = notificationRepository.save(notification);
+            
+            // SSE로 실시간 전송
+            sseService.sendNotification(userId, saved);
+            
+            log.info("[REALTIME_NOTIFICATION_SUCCESS] userId={}, productId={}, notificationId={}, message={}", 
+                    userId, productId, saved.getId(), message);
+        } catch (Exception e) {
+            log.error("[REALTIME_NOTIFICATION_FAILED] userId={}, productId={}, message={}, error={}", 
+                    userId, productId, message, e.getMessage(), e);
+            throw e;
+        }
+    }
 }
 

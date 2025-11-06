@@ -28,7 +28,7 @@ public class OrderController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ResponseEntity<OrderResponse> createOrder(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @Valid @RequestBody CreateOrderRequest request
     ) {
 
