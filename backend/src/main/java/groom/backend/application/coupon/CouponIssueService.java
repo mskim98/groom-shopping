@@ -47,6 +47,11 @@ public class CouponIssueService {
       throw new BusinessException(ErrorCode.CONFLICT, "수량이 소진되었습니다.");
     }
 
+    // 사용자 중복 쿠폰 발급 방지
+    if (!couponIssueRepository.findByCouponIdAndUserId(couponId, user.getId()).isEmpty()) {
+      throw new BusinessException(ErrorCode.CONFLICT, "이미 발급받은 쿠폰입니다.");
+    }
+
     // 쿠폰 확보
     // 분산 아키텍처에서는 여전히 동시성 문제 발생 가능
     coupon.decreaseQuantity();
