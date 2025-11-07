@@ -83,7 +83,6 @@ public class AuthController {
     @Operation(
             summary = "로그아웃",
             description = "현재 로그인한 사용자의 세션 또는 토큰을 무효화합니다.",
-            security = {@SecurityRequirement(name = "BearerAuth")},
             responses = {
                     @ApiResponse(responseCode = "200", description = "로그아웃 성공"),
                     @ApiResponse(responseCode = "401", description = "인증되지 않은 사용자")
@@ -105,7 +104,6 @@ public class AuthController {
     @Operation(
             summary = "사용자 정보 수정",
             description = "회원 권한과 등급을 수정합니다.",
-            security = {@SecurityRequirement(name = "BearerAuth")},
             responses = {
                     @ApiResponse(responseCode = "200", description = "정보 수정 성공",
                             content = @Content(schema = @Schema(implementation = UserUpdateResponse.class))),
