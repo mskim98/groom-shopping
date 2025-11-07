@@ -167,7 +167,7 @@ public class CouponController {
           @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
           @AuthenticationPrincipal(expression = "user") User user,
           @Parameter(description = "클라이언트 기준 UTC 시간", required = true, example = "Wed, 06 Nov 2025 15:00:00 GMT")
-          @RequestHeader("Date") Instant clientInstant,
+          @RequestHeader("Request-Date") Instant clientInstant,
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId) {
 
