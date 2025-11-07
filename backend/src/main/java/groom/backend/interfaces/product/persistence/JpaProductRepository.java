@@ -61,19 +61,10 @@ public class JpaProductRepository implements ProductRepository {
                     ? ProductCategory.valueOf(e.getCategory().toUpperCase()) 
                     : ProductCategory.GENERAL; // 기본값
             
-            return Product.create(
-                    e.getId(),
-                    new Name(e.getName() != null ? e.getName() : ""),
-                    new Description(e.getDescription()),
-                    new Price(e.getPrice() != null ? e.getPrice() : 0),
-                    new Stock(e.getStock() != null ? e.getStock() : 0),
-                    category,
-                    e.getThresholdValue(),
-                    e.getIsActive()
-            );
-        } catch (IllegalArgumentException ex) {
-            // 카테고리 변환 실패 시 기본값 사용
-            ProductCategory category = ProductCategory.GENERAL;
+            // thresholdValue가 null이면 기본값 10 설정
+            Integer thresholdValue = e.getThresholdValue() != null 
+                    ? e.getThresholdValue() 
+                    : 10;
             
             return Product.create(
                     e.getId(),
@@ -82,7 +73,26 @@ public class JpaProductRepository implements ProductRepository {
                     new Price(e.getPrice() != null ? e.getPrice() : 0),
                     new Stock(e.getStock() != null ? e.getStock() : 0),
                     category,
-                    e.getThresholdValue(),
+                    thresholdValue,
+                    e.getIsActive()
+            );
+        } catch (IllegalArgumentException ex) {
+            // 카테고리 변환 실패 시 기본값 사용
+            ProductCategory category = ProductCategory.GENERAL;
+            
+            // thresholdValue가 null이면 기본값 10 설정
+            Integer thresholdValue = e.getThresholdValue() != null 
+                    ? e.getThresholdValue() 
+                    : 10;
+            
+            return Product.create(
+                    e.getId(),
+                    new Name(e.getName() != null ? e.getName() : ""),
+                    new Description(e.getDescription()),
+                    new Price(e.getPrice() != null ? e.getPrice() : 0),
+                    new Stock(e.getStock() != null ? e.getStock() : 0),
+                    category,
+                    thresholdValue,
                     e.getIsActive()
             );
         }
