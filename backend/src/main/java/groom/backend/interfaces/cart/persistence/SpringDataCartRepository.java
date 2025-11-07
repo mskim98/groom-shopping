@@ -15,3 +15,4 @@ public interface SpringDataCartRepository extends JpaRepository<CartJpaEntity, L
     java.util.List<Long> findUserIdsByProductId(@Param("productId") java.util.UUID productId);
 }
 
+
