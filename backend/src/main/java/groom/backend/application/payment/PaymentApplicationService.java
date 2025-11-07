@@ -166,6 +166,9 @@ public class PaymentApplicationService {
         // 재고 차감 및 차감된 상품 ID 수집
         List<UUID> reducedProductIds = reduceProductStock(order);
 
+        // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
+        processTicketProducts(order);
+
         log.info("[TEST_PAYMENT_CONFIRM_SUCCESS] Test payment confirmed - PaymentId: {}, OrderId: {}",
                 payment.getId(), orderId);
 
@@ -318,37 +321,8 @@ public class PaymentApplicationService {
             // 사용자 응모 한도 검증 (전체 수량에 대해 한 번만)
             raffleValidationService.validateUserEntryLimit(raffle, userId, quantity);
 
-            // 티켓 번호 범위 할당 (Pessimistic Lock으로 동시성 제어)
-            Long startTicketNumber = 1l;
-
-            log.info(
-                    "[TICKET_NUMBER_ALLOCATED] Ticket number range allocated - RaffleId: {}, StartNumber: {}, Count: {}",
-                    raffle.getRaffleId(), startTicketNumber, quantity);
-
-            // 할당된 번호로 티켓 생성
-            for (int i = 0; i < quantity; i++) {
-                Long ticketNumber = startTicketNumber + i;
-
-                // 각 티켓 생성 전 응모 한도 재검증 (동시성 제어)
-                raffleValidationService.validateUserEntryLimit(raffle, userId, 1);
-
-                Boolean created =true;
-
-                if (created) {
-                    log.info(
-                            "[RAFFLE_TICKET_CREATED] Raffle ticket created - RaffleId: {}, UserId: {}, TicketNumber: {}, Count: {}/{}",
-                            raffle.getRaffleId(), userId, ticketNumber, i + 1, quantity);
-                } else {
-                    log.error(
-                            "[RAFFLE_TICKET_FAILED] Failed to create raffle ticket - RaffleId: {}, UserId: {}, TicketNumber: {}, Count: {}/{}",
-                            raffle.getRaffleId(), userId, ticketNumber, i + 1, quantity);
-                    throw new RuntimeException("Raffle 티켓 생성에 실패했습니다.");
-                }
-            }
-
-            log.info(
-                    "[TICKET_PRODUCT_PROCESS_SUCCESS] All tickets created - ProductId: {}, RaffleId: {}, UserId: {}, TotalCount: {}",
-                    product.getId(), raffle.getRaffleId(), userId, quantity);
+            // 티켓생성
+            raffleTicketApplicationService.createTickets(raffle, userId, quantity);
         }
     }
 }
