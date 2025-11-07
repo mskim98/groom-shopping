@@ -39,6 +39,7 @@ public class PaymentApplicationService {
     private final RaffleValidationService raffleValidationService;
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
+    private final PaymentNotificationService paymentNotificationService;
 
     /**
      * 결제 준비 - Order 기반으로 Payment 생성
@@ -114,14 +115,17 @@ public class PaymentApplicationService {
             order.changeStatus(OrderStatus.CONFIRMED);
             orderRepository.save(order);
 
-            // 재고 차감
-            reduceProductStock(order);
+            // 재고 차감 및 차감된 상품 ID 수집
+            List<UUID> reducedProductIds = reduceProductStock(order);
 
             // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
             processTicketProducts(order);
 
             log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
                     payment.getId(), orderId);
+
+            // 비동기로 알림 처리 (응답 시간에 영향 없음)
+            paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
 
             return payment;
 
@@ -159,14 +163,14 @@ public class PaymentApplicationService {
         order.changeStatus(OrderStatus.CONFIRMED);
         orderRepository.save(order);
 
-        // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
-        processTicketProducts(order);
-
-        // 재고 차감
-        reduceProductStock(order);
+        // 재고 차감 및 차감된 상품 ID 수집
+        List<UUID> reducedProductIds = reduceProductStock(order);
 
         log.info("[TEST_PAYMENT_CONFIRM_SUCCESS] Test payment confirmed - PaymentId: {}, OrderId: {}",
                 payment.getId(), orderId);
+
+        // 비동기로 알림 처리 (응답 시간에 영향 없음)
+        paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
 
         return payment;
     }
@@ -248,7 +252,9 @@ public class PaymentApplicationService {
         return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
     }
 
-    private void reduceProductStock(Order order) {
+    private List<UUID> reduceProductStock(Order order) {
+        List<UUID> reducedProductIds = new java.util.ArrayList<>();
+
         for (OrderItem orderItem : order.getOrderItems()) {
             Product product = productRepository.findById(orderItem.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException(
@@ -257,9 +263,14 @@ public class PaymentApplicationService {
             product.decreaseStock(orderItem.getQuantity());
             productRepository.save(product);
 
+            // 차감된 상품 ID 수집
+            reducedProductIds.add(product.getId());
+
             log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, Remaining: {}",
                     product.getId(), orderItem.getQuantity(), product.getStock());
         }
+
+        return reducedProductIds;
     }
 
     private void restoreProductStock(Order order) {
