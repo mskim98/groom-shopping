@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
 @RestController
-@RequestMapping("/payments")
+@RequestMapping("/v1/payment")
 @RequiredArgsConstructor
 public class PaymentController {
 
@@ -34,7 +34,7 @@ public class PaymentController {
      */
     @PostMapping("/prepare")
     public ResponseEntity<PaymentResponse> preparePayment(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @RequestBody PreparePaymentRequest request) {
 
         log.info("[API_REQUEST] Prepare payment - UserId: {}, OrderId: {}",
@@ -57,7 +57,7 @@ public class PaymentController {
      */
     @PostMapping("/confirm")
     public ResponseEntity<PaymentResponse> confirmPayment(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @RequestBody ConfirmPaymentRequest request) {
 
         log.info("[API_REQUEST] Confirm payment - UserId: {}, OrderId: {}, PaymentKey: {}",
@@ -103,7 +103,7 @@ public class PaymentController {
      */
     @PostMapping("/cancel")
     public ResponseEntity<PaymentResponse> cancelPayment(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @RequestBody CancelPaymentRequest request) {
 
         log.info("[API_REQUEST] Cancel payment - UserId: {}, PaymentId: {}, Reason: {}",
@@ -127,7 +127,7 @@ public class PaymentController {
      */
     @GetMapping("/{paymentId}")
     public ResponseEntity<PaymentResponse> getPayment(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @PathVariable UUID paymentId) {
 
         log.info("[API_REQUEST] Get payment - UserId: {}, PaymentId: {}",
@@ -144,7 +144,7 @@ public class PaymentController {
      */
     @GetMapping("/order/{orderId}")
     public ResponseEntity<PaymentResponse> getPaymentByOrderId(
-            @AuthenticationPrincipal User user,
+            @AuthenticationPrincipal(expression = "user") User user,
             @PathVariable UUID orderId) {
 
         log.info("[API_REQUEST] Get payment by order - UserId: {}, OrderId: {}",
@@ -161,7 +161,7 @@ public class PaymentController {
      */
     @GetMapping("/my")
     public ResponseEntity<List<PaymentResponse>> getMyPayments(
-            @AuthenticationPrincipal User user) {
+            @AuthenticationPrincipal(expression = "user") User user) {
 
         log.info("[API_REQUEST] Get my payments - UserId: {}", user.getId());
 
