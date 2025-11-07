@@ -26,15 +26,14 @@ public class RaffleTicketAllocationService {
      * @return 할당된 티켓 번호의 시작과 끝을 포함하는 TiketRange 객체
      */
     @Transactional
-    public TiketRange allocateTicketRange(Long raffleId, int quantity) {
+    public TicketRange allocateTicketRange(Long raffleId, int quantity) {
         RaffleTicketCounterJpaEntity counter = counterRepo.findFirstByRaffleIdForUpdate(raffleId)
                 .orElseGet(() -> new RaffleTicketCounterJpaEntity(raffleId, 0L));
         long start = counter.getCurrentValue() + 1;
         long end = start + quantity - 1;
         counter.setCurrentValue(end);
         counterRepo.save(counter);
-        return new TiketRange(start, end);
-
+        return new TicketRange(start, end);
     }
 
 }

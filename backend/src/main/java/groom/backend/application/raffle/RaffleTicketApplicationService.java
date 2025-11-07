@@ -45,7 +45,7 @@ public class RaffleTicketApplicationService {
         // 1) 연속된 티켓 번호 범위를 원자적으로 확보
         // allocateTicketRange 는 DB에서 PESSIMISTIC_WRITE 또는 단일 업데이트로 current 값을 증가시켜
         // 시작(start)과 끝(end) 번호 범위를 반환합니다. 이 호출은 동시성 문제(번호 중복/누락)를 방지합니다.
-        TiketRange range = allocationService.allocateTicketRange(raffle.getRaffleId(), quantity);
+        TicketRange range = allocationService.allocateTicketRange(raffle.getRaffleId(), quantity);
 
         if (range == null || range.size() != quantity) {
             return false;
@@ -53,7 +53,7 @@ public class RaffleTicketApplicationService {
 
         // 2) 확보한 티켓 번호 범위로 RaffleTicket 엔티티를 생성
         List<RaffleTicket> toSave = new ArrayList<>(quantity);
-        for (long i = range.getStart(); i <= range.getEnd(); i++) {
+        for (long i = range.start(); i <= range.end(); i++) {
             // RaffleTicket 생성
             RaffleTicket ticket = new RaffleTicket(null, raffle.getRaffleId(), userId, i, null);
             toSave.add(ticket);

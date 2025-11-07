@@ -22,7 +22,7 @@ public class RaffleTicketJpaEntity {
     private Long ticketNumber;
     private Long userId;
     @CreationTimestamp
-    @Column(name = "createdAt", nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @ManyToOne
