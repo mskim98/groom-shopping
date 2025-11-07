@@ -6,10 +6,18 @@ import groom.backend.infrastructure.sse.SseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * 알림 생성 및 SSE 전송을 담당하는 Application Service입니다.
@@ -22,6 +30,8 @@ public class NotificationApplicationService {
 
     private final NotificationRepository notificationRepository;
     private final SseService sseService;
+    private final PlatformTransactionManager transactionManager;
+    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     /**
      * 재고 임계값 도달 시 해당 제품을 장바구니에 담은 모든 사용자에게 알림을 생성하고 SSE로 전송합니다.
@@ -31,7 +41,6 @@ public class NotificationApplicationService {
      * @param currentStock 현재 재고
      * @param thresholdValue 임계값
      */
-    @Transactional
     public void createAndSendNotifications(UUID productId, Integer currentStock, Integer thresholdValue) {
         long startTime = System.currentTimeMillis();
         log.info("[NOTIFICATION_SERVICE_START] productId={}, currentStock={}, thresholdValue={}", 
@@ -50,43 +59,66 @@ public class NotificationApplicationService {
                 return;
             }
 
-            // 2. 각 사용자에게 알림 생성 및 SSE 전송
-            int successCount = 0;
-            int failCount = 0;
-            long totalUserProcessingTime = 0;
+            // 2. 병렬 처리: 모든 사용자에게 알림 생성 및 SSE 전송
+            long parallelStartTime = System.currentTimeMillis();
+            
+            List<CompletableFuture<NotificationResult>> futures = userIds.stream()
+                    .map(userId -> CompletableFuture.supplyAsync(() -> {
+                        // 각 작업마다 개별 트랜잭션 생성
+                        DefaultTransactionDefinition def = new DefaultTransactionDefinition();
+                        def.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                        TransactionStatus status = transactionManager.getTransaction(def);
+                        
+                        try {
+                            long userStartTime = System.currentTimeMillis();
+                            
+                            // 알림 생성
+                            Notification notification = Notification.create(userId, productId, currentStock, thresholdValue);
+                            Notification saved = notificationRepository.save(notification);
+                            
+                            // 트랜잭션 커밋
+                            transactionManager.commit(status);
+                            
+                            // SSE로 실시간 전송 (트랜잭션 외부에서 수행)
+                            sseService.sendNotification(userId, saved);
+                            
+                            long userEndTime = System.currentTimeMillis();
+                            long userDuration = userEndTime - userStartTime;
+                            
+                            log.info("[NOTIFICATION_SENT] userId={}, notificationId={}, duration={}ms", 
+                                    userId, saved.getId(), userDuration);
+                            
+                            return new NotificationResult(userId, true, userDuration, null);
+                        } catch (Exception e) {
+                            // 트랜잭션 롤백
+                            transactionManager.rollback(status);
+                            log.error("[NOTIFICATION_SEND_FAILED] userId={}, productId={}, error={}", 
+                                    userId, productId, e.getMessage(), e);
+                            return new NotificationResult(userId, false, 0L, e.getMessage());
+                        }
+                    }, executorService))
+                    .collect(Collectors.toList());
 
-            for (Long userId : userIds) {
-                try {
-                    long userStartTime = System.currentTimeMillis();
-                    
-                    // 알림 생성
-                    Notification notification = Notification.create(userId, productId, currentStock, thresholdValue);
-                    Notification saved = notificationRepository.save(notification);
-                    
-                    // SSE로 실시간 전송
-                    sseService.sendNotification(userId, saved);
-                    
-                    long userEndTime = System.currentTimeMillis();
-                    long userDuration = userEndTime - userStartTime;
-                    totalUserProcessingTime += userDuration;
-                    
-                    log.info("[NOTIFICATION_SENT] userId={}, notificationId={}, duration={}ms", 
-                            userId, saved.getId(), userDuration);
-                    successCount++;
-                    
-                } catch (Exception e) {
-                    log.error("[NOTIFICATION_SEND_FAILED] userId={}, productId={}, error={}", 
-                            userId, productId, e.getMessage(), e);
-                    failCount++;
-                }
-            }
+            // 모든 작업 완료 대기
+            List<NotificationResult> results = futures.stream()
+                    .map(CompletableFuture::join)
+                    .collect(Collectors.toList());
+
+            long parallelEndTime = System.currentTimeMillis();
+            long parallelDuration = parallelEndTime - parallelStartTime;
+            
+            int successCount = (int) results.stream().filter(r -> r.success).count();
+            int failCount = (int) results.stream().filter(r -> !r.success).count();
+            long totalUserProcessingTime = results.stream()
+                    .mapToLong(r -> r.duration)
+                    .sum();
+            long avgUserProcessingTime = results.size() > 0 ? totalUserProcessingTime / results.size() : 0;
 
             long serviceEndTime = System.currentTimeMillis();
             long totalServiceDuration = serviceEndTime - startTime;
-            long avgUserProcessingTime = userIds.size() > 0 ? totalUserProcessingTime / userIds.size() : 0;
             
-            log.info("[NOTIFICATION_SERVICE_COMPLETE] productId={}, totalUsers={}, successCount={}, failCount={}, totalDuration={}ms, avgUserProcessingTime={}ms", 
-                    productId, userIds.size(), successCount, failCount, totalServiceDuration, avgUserProcessingTime);
+            log.info("[NOTIFICATION_SERVICE_COMPLETE] productId={}, totalUsers={}, successCount={}, failCount={}, totalDuration={}ms, parallelDuration={}ms, avgUserProcessingTime={}ms", 
+                    productId, userIds.size(), successCount, failCount, totalServiceDuration, parallelDuration, avgUserProcessingTime);
             
         } catch (Exception e) {
             long errorDuration = System.currentTimeMillis() - startTime;
@@ -199,6 +231,23 @@ public class NotificationApplicationService {
             log.error("[REALTIME_NOTIFICATION_FAILED] userId={}, productId={}, message={}, error={}", 
                     userId, productId, message, e.getMessage(), e);
             throw e;
+        }
+    }
+
+    /**
+     * 알림 처리 결과를 담는 내부 클래스
+     */
+    private static class NotificationResult {
+        final Long userId;
+        final boolean success;
+        final long duration;
+        final String errorMessage;
+
+        NotificationResult(Long userId, boolean success, long duration, String errorMessage) {
+            this.userId = userId;
+            this.success = success;
+            this.duration = duration;
+            this.errorMessage = errorMessage;
         }
     }
 }

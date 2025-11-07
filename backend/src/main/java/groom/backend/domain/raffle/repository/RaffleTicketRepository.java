@@ -2,8 +2,12 @@ package groom.backend.domain.raffle.repository;
 
 import groom.backend.domain.raffle.entity.RaffleTicket;
 
+import java.util.List;
+
 public interface RaffleTicketRepository {
     RaffleTicket save(RaffleTicket raffle);
+
+    List<RaffleTicket> saveAll(List<RaffleTicket> raffleTickets);
 
     // 특정 래플에 대해 총 사용자 수 추출
     int countDistinctUserByRaffleId(Long raffleId);

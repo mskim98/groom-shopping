@@ -1,15 +1,18 @@
 package groom.backend.domain.order.model;
 
 import groom.backend.domain.order.model.enums.OrderStatus;
+import groom.backend.domain.payment.model.Payment;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -58,6 +61,9 @@ public class Order {
     @Column(name = "couponId")
     private Long couponId;
 
+    @OneToOne(mappedBy = "order", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    private Payment payment;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> orderItems = new ArrayList<>();
 
@@ -69,6 +75,10 @@ public class Order {
         this.subTotal = 0;
         this.discountAmount = 0;
         this.totalAmount = 0;
+    }
+
+    public void assignPayment(Payment payment) {
+        this.payment = payment;
     }
 
     public void setDiscountAmount(Integer discountAmount) {

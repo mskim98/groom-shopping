@@ -20,3 +20,4 @@ public interface SpringDataCartItemRepository extends JpaRepository<CartItemJpaE
     List<CartItemJpaEntity> findByUserId(@Param("userId") Long userId);
 }
 
+
