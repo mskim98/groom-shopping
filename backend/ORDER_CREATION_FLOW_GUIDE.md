@@ -913,6 +913,9 @@ public Order createOrder(Long userId, Long couponId) {
 2. Order 상태 변경 (PENDING → CONFIRMED)
 3. **재고 차감** (실제 stock 감소)
 4. TICKET 상품의 경우 Raffle 티켓 생성
+5. **비동기 처리** (결제 응답 후 백그라운드에서 실행):
+   - 재고 임계값 알림 전송
+   - 장바구니 비우기 (주문한 상품만 제거)
 
 ---
 
