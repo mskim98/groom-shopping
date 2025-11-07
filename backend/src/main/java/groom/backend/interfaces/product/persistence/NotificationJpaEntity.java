@@ -43,3 +43,4 @@ public class NotificationJpaEntity {
     private UUID productId;
 }
 
+
