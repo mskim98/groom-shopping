@@ -7,6 +7,8 @@ import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
 public class JpaRaffleTicketRepository implements RaffleTicketRepository {
     private final SpringDataRaffleTicketRepository ticketRepository;
@@ -19,6 +21,12 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
     public RaffleTicket save(RaffleTicket ticket) {
         RaffleTicketJpaEntity saved = ticketRepository.save(toEntity(ticket));
         return toDomain(saved);
+    }
+
+    @Override
+    public List<RaffleTicket> saveAll(List<RaffleTicket> tickets) {
+        List<RaffleTicketJpaEntity> saved = ticketRepository.saveAll(toEntityList(tickets));
+        return toDomainList(saved);
     }
 
 
@@ -52,5 +60,17 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
                 .userId(raffle.getUserId())
                 .createdAt(raffle.getCreatedAt())
                 .build();
+    }
+
+    private List<RaffleTicketJpaEntity> toEntityList(List<RaffleTicket> raffleTickets) {
+        return raffleTickets.stream()
+                .map(this::toEntity)
+                .toList();
+    }
+
+    private List<RaffleTicket> toDomainList(List<RaffleTicketJpaEntity> entities) {
+        return entities.stream()
+                .map(this::toDomain)
+                .toList();
     }
 }

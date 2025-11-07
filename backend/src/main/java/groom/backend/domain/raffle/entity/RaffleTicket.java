@@ -10,9 +10,9 @@ import java.time.LocalDateTime;
 public class RaffleTicket {
 
     private Long raffleTicketId;
-    private Long ticketNumber;
     private Long raffleId;
     private Long userId;
+    private Long ticketNumber;
     private LocalDateTime createdAt;
 
 
