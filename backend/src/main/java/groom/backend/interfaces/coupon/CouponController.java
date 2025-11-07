@@ -8,6 +8,14 @@ import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -17,12 +25,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
+@Tag(name = "Coupon", description = "쿠폰 발급 및 사용 관련 API")
 @Validated
 @Slf4j
 @RestController
@@ -32,22 +42,28 @@ public class CouponController {
   private final CouponService couponService;
   private final CouponIssueService couponIssueService;
 
-  /**
-   * 쿠폰 생성
-   * POST /coupon
-   */
   @PostMapping
+  @Operation(summary = "쿠폰 생성", description = "지정된 값으로 쿠폰을 생성합니다. 할인 정책을 적용시 해당 정책의 수치는 변경할 수 없습니다.")
+  @ApiResponses(value = {
+          @ApiResponse(responseCode = "201", description = "Created",
+                  content = {@Content(schema = @Schema(implementation = CouponResponse.class))}),
+  })
   public ResponseEntity<CouponResponse> createCoupon(@Validated @RequestBody CouponCreateRequest request) {
     CouponResponse response = couponService.createCoupon(request);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
-  /**
-   * 쿠폰 단일 조회
-   * GET /coupon/{coupon_id}
-   */
   @GetMapping("/{coupon_id}")
-  public ResponseEntity<CouponResponse> findCoupon(@PathVariable("coupon_id") Long couponId) {
+  @Operation(summary = "단일 쿠폰 조회", description = "지정된 id의 쿠폰을 조회합니다.")
+  @ApiResponses(value = {
+          @ApiResponse(responseCode = "200", description = "Created",
+                  content = {@Content(schema = @Schema(implementation = CouponResponse.class))}),
+          @ApiResponse(responseCode = "404", description = "Not Found")
+  })
+  public ResponseEntity<CouponResponse> findCoupon(
+          @PathVariable("coupon_id")
+          @Schema(description = "Path Value", example = "1")
+          Long couponId) {
     CouponResponse response = couponService.findCoupon(couponId);
     if (response == null) {
       return ResponseEntity.notFound().build();
@@ -55,24 +71,40 @@ public class CouponController {
     return ResponseEntity.ok(response);
   }
 
-  /**
-   * 쿠폰 조건부 검색 (페이징)
-   * GET /coupon?name=테스트&type=DISCOUNT&isActive=true&page=0&size=10
-   */
   @GetMapping
+  @Operation(
+          summary = "쿠폰 조건부 검색 (페이징)",
+          description = "쿠폰 이름, 타입, 활성 상태 등의 조건을 이용해 쿠폰을 검색합니다."
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "200", description = "검색 성공",
+                  content = @Content(schema = @Schema(implementation = CouponResponse.class))
+          ),
+//          @ApiResponse(responseCode = "400", description = "잘못된 요청 파라미터",
+//                  content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+  })
   public ResponseEntity<Page<CouponResponse>> searchCoupon(
+          @Parameter(description = "검색 조건", required = false)
           @ModelAttribute CouponSearchCondition condition,
+          @Parameter(description = "페이징 정보", required = false)
           @PageableDefault(size = 10) Pageable pageable) {
     Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
     return ResponseEntity.ok(response);
   }
 
-  /**
-   * 쿠폰 수정
-   * PUT /coupon/{coupon_id}
-   */
+  @Operation(
+          summary = "쿠폰 수정",
+          description = "쿠폰 ID를 기반으로 쿠폰 정보를 수정합니다."
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "200", description = "수정 성공",
+                  content = @Content(schema = @Schema(implementation = CouponResponse.class))),
+          @ApiResponse(responseCode = "404", description = "수정 실패",
+                  content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+  })
   @PutMapping("/{coupon_id}")
   public ResponseEntity<CouponResponse> updateCoupon(
+          @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId,
           @RequestBody CouponUpdateRequest request) {
     CouponResponse response = couponService.updateCoupon(couponId, request);
@@ -82,10 +114,17 @@ public class CouponController {
     return ResponseEntity.ok(response);
   }
 
-  /**
-   * 쿠폰 삭제
-   * DELETE /coupon/{coupon_id}
-   */
+  @Operation(
+          summary = "쿠폰 삭제",
+          description = "쿠폰 ID를 기반으로 쿠폰을 삭제합니다."
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "204", description = "삭제 성공"),
+          @ApiResponse(responseCode = "404", description = "삭제 실패"),
+//          TODO : 현재 Coupon 삭제 시 실패 요청은 메시지를 던지지 않으며, 컨트롤러에서 직접 검증함.
+//          @ApiResponse(responseCode = "404", description = "요청한 리소스를 찾을 수 없습니다.",
+//                  content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+  })
   @DeleteMapping("/{coupon_id}")
   public ResponseEntity<Void> deleteCoupon(@PathVariable("coupon_id") Long couponId) {
     Boolean result = couponService.deleteCoupon(couponId);
@@ -97,14 +136,40 @@ public class CouponController {
     return ResponseEntity.noContent().build();
   }
 
-  /**
-   * 쿠폰 발급
-   * POST /coupon/issue/{coupon_id}
-   */
+  @Operation(
+          summary = "쿠폰 발급",
+          description = """
+          지정된 쿠폰 ID의 쿠폰을 현재 로그인한 사용자에게 발급합니다.
+          요청 헤더의 Date 값과 서버 시간의 차이가 1분 이상이면 거부됩니다.
+          """
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "201", description = "쿠폰 발급 성공",
+                  content = @Content(schema = @Schema(implementation = CouponIssueResponse.class))),
+          @ApiResponse(responseCode = "403", description = "시간 오차 초과 (요청 거부)",
+                  content = @Content(schema = @Schema(implementation = ErrorResponse.class),
+                          examples = @ExampleObject(
+                                  name = "Time Difference Exceeded",
+                                  value = """
+                  {
+                    "status": 403,
+                    "code": "TIME_OUT_OF_SYNC",
+                    "message": "클라이언트와 서버 간의 시간차가 허용 범위를 초과했습니다.",
+                    "timestamp": "2025-11-06T15:25:42"
+                  }
+                  """
+                          ))),
+          @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰",
+                  content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+  })
   @PostMapping("/issue/{coupon_id}")
-  public ResponseEntity<CouponIssueResponse> issueCoupon(@AuthenticationPrincipal(expression = "user") User user,
-                                                         @RequestHeader("Date") Instant clientInstant,
-                                                         @PathVariable("coupon_id") Long couponId) {
+  public ResponseEntity<CouponIssueResponse> issueCoupon(
+          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
+          @AuthenticationPrincipal(expression = "user") User user,
+          @Parameter(description = "클라이언트 기준 UTC 시간", required = true, example = "Wed, 06 Nov 2025 15:00:00 GMT")
+          @RequestHeader("Date") Instant clientInstant,
+          @Parameter(description = "쿠폰 ID", example = "1")
+          @PathVariable("coupon_id") Long couponId) {
 
     // 사용자 정보 추출
     // 토큰 유효성 검사는 security 측에서 한다.
@@ -134,12 +199,20 @@ public class CouponController {
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
-  /**
-   * 내 쿠폰 조회
-   * GET /coupon/me
-   */
+  @Operation(
+          summary = "내 쿠폰 조회",
+          description = "로그인한 사용자의 미사용 쿠폰 목록을 조회합니다."
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "200", description = "조회 성공",
+                  content = @Content(schema = @Schema(implementation = CouponIssueResponse.class))),
+          @ApiResponse(responseCode = "401", description = "인증 실패",
+                  content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+  })
   @GetMapping("/me")
-  public ResponseEntity<List<CouponIssueResponse>> myCoupon(@AuthenticationPrincipal(expression = "user") User user) {
+  public ResponseEntity<List<CouponIssueResponse>> myCoupon(
+          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
+          @AuthenticationPrincipal(expression = "user") User user) {
     // 사용자 정보 추출
     // 토큰 유효성 검사는 security 측에서 한다.
     log.info("user identified : {}", user.getName());
