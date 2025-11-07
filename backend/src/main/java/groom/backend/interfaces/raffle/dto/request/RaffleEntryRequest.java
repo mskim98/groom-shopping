@@ -1,13 +1,15 @@
 package groom.backend.interfaces.raffle.dto.request;
 
+import jakarta.validation.constraints.Min;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Getter
+@Setter
+@NoArgsConstructor
 public class RaffleEntryRequest {
-    private Integer count = 1;
+    @Min(1)
+    private int count;
 
-    public Integer getCount() {
-        return count;
-    }
-
-    public void setCount(Integer count) {
-        this.count = count;
-    }
 }

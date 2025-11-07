@@ -10,6 +10,7 @@ import groom.backend.interfaces.raffle.dto.request.RaffleEntryRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -93,7 +94,7 @@ public class RaffleController {
     @PostMapping("/{raffleId}/entries")
     public ResponseEntity<Void> addToEntryCart(@AuthenticationPrincipal(expression = "user") User user,
                                                @PathVariable Long raffleId,
-                                               @RequestBody RaffleEntryRequest entry) {
+                                               @RequestBody @Valid RaffleEntryRequest entry) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
