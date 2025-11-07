@@ -42,8 +42,9 @@ public class ProductJpaEntity {
     @Column(name = "status")
     private String status;
 
-    @Column(name = "threshold_value")
-    private Integer thresholdValue;
+    @Column(name = "threshold_value", columnDefinition = "integer default 10")
+    @Builder.Default
+    private Integer thresholdValue = 10;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -53,5 +54,4 @@ public class ProductJpaEntity {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 }
-
 

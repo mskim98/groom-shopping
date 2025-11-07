@@ -2,6 +2,8 @@ package groom.backend.application.notification;
 
 import groom.backend.domain.notification.entity.Notification;
 import groom.backend.domain.notification.repository.NotificationRepository;
+import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.infrastructure.sse.SseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +33,7 @@ public class NotificationApplicationService {
     private final NotificationRepository notificationRepository;
     private final SseService sseService;
     private final PlatformTransactionManager transactionManager;
+    private final ProductRepository productRepository;
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     /**
@@ -47,15 +50,20 @@ public class NotificationApplicationService {
                 productId, currentStock, thresholdValue);
 
         try {
-            // 1. 해당 제품을 장바구니에 담은 사용자 조회
+            // 1. 제품 정보 조회 (제품명 포함)
+            Product product = productRepository.findById(productId)
+                    .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다: " + productId));
+            String productName = product.getName() != null ? product.getName() : "제품";
+
+            // 2. 해당 제품을 장바구니에 담은 사용자 조회
             long queryStartTime = System.currentTimeMillis();
             List<Long> userIds = notificationRepository.findUserIdsWithProductInCart(productId);
             long queryDuration = System.currentTimeMillis() - queryStartTime;
-            log.info("[NOTIFICATION_QUERY_USERS] productId={}, userIdCount={}, queryDuration={}ms", 
-                    productId, userIds.size(), queryDuration);
+            log.info("[NOTIFICATION_QUERY_USERS] productId={}, productName={}, userIdCount={}, queryDuration={}ms", 
+                    productId, productName, userIds.size(), queryDuration);
 
             if (userIds.isEmpty()) {
-                log.info("[NOTIFICATION_NO_USERS] productId={}", productId);
+                log.info("[NOTIFICATION_NO_USERS] productId={}, productName={}", productId, productName);
                 return;
             }
 
@@ -72,8 +80,8 @@ public class NotificationApplicationService {
                         try {
                             long userStartTime = System.currentTimeMillis();
                             
-                            // 알림 생성
-                            Notification notification = Notification.create(userId, productId, currentStock, thresholdValue);
+                            // 알림 생성 (제품명 포함)
+                            Notification notification = Notification.create(userId, productId, productName, currentStock, thresholdValue);
                             Notification saved = notificationRepository.save(notification);
                             
                             // 트랜잭션 커밋
@@ -202,6 +210,80 @@ public class NotificationApplicationService {
             log.info("[NOTIFICATION_BATCH_DELETE] userId={}, deletedCount={}, requestedCount={}", 
                     userId, validIds.size(), notificationIds.size());
         }
+    }
+
+    /**
+     * 여러 제품 ID를 받아 재고가 임계값 이하인 제품에 대해 알림을 생성하고 SSE로 전송합니다.
+     * 각 제품의 재고가 thresholdValue(기본값 10) 이하인지 확인하고, 조건을 만족하는 제품에 대해서만 알림을 발송합니다.
+     *
+     * @param productIds 제품 ID 목록
+     */
+    public void createAndSendNotificationsForProducts(List<UUID> productIds) {
+        long startTime = System.currentTimeMillis();
+        log.info("[BATCH_NOTIFICATION_START] productIds={}, count={}, timestamp={}", 
+                productIds, productIds.size(), startTime);
+
+        if (productIds == null || productIds.isEmpty()) {
+            log.info("[BATCH_NOTIFICATION_EMPTY] no products to check");
+            return;
+        }
+
+        int processedCount = 0;
+        int notifiedCount = 0;
+        int skippedCount = 0;
+
+        for (UUID productId : productIds) {
+            try {
+                long productStartTime = System.currentTimeMillis();
+                
+                // 1. 제품 정보 조회
+                Product product = productRepository.findById(productId)
+                        .orElse(null);
+
+                if (product == null) {
+                    log.warn("[BATCH_NOTIFICATION_PRODUCT_NOT_FOUND] productId={}", productId);
+                    skippedCount++;
+                    continue;
+                }
+
+                // 2. 재고와 임계값 확인
+                Integer currentStock = product.getStock();
+                Integer thresholdValue = product.getThresholdValue() != null ? product.getThresholdValue() : 10;
+
+                log.info("[BATCH_NOTIFICATION_CHECK] productId={}, productName={}, currentStock={}, thresholdValue={}", 
+                        productId, product.getName(), currentStock, thresholdValue);
+
+                // 3. 재고가 임계값 이하인지 확인
+                if (currentStock != null && currentStock <= thresholdValue) {
+                    // 임계값 이하이면 알림 발송
+                    log.info("[BATCH_NOTIFICATION_THRESHOLD_REACHED] productId={}, currentStock={}, thresholdValue={}", 
+                            productId, currentStock, thresholdValue);
+                    
+                    createAndSendNotifications(productId, currentStock, thresholdValue);
+                    notifiedCount++;
+                } else {
+                    log.info("[BATCH_NOTIFICATION_THRESHOLD_NOT_REACHED] productId={}, currentStock={}, thresholdValue={}", 
+                            productId, currentStock, thresholdValue);
+                    skippedCount++;
+                }
+
+                processedCount++;
+                long productDuration = System.currentTimeMillis() - productStartTime;
+                log.info("[BATCH_NOTIFICATION_PRODUCT_PROCESSED] productId={}, duration={}ms", 
+                        productId, productDuration);
+
+            } catch (Exception e) {
+                log.error("[BATCH_NOTIFICATION_PRODUCT_FAILED] productId={}, error={}", 
+                        productId, e.getMessage(), e);
+                skippedCount++;
+            }
+        }
+
+        long endTime = System.currentTimeMillis();
+        long totalDuration = endTime - startTime;
+
+        log.info("[BATCH_NOTIFICATION_COMPLETE] totalProducts={}, processedCount={}, notifiedCount={}, skippedCount={}, totalDuration={}ms", 
+                productIds.size(), processedCount, notifiedCount, skippedCount, totalDuration);
     }
 
     /**
