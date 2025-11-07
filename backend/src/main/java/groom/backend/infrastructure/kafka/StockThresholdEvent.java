@@ -16,3 +16,4 @@ public class StockThresholdEvent {
     private Long timestamp;
 }
 
+

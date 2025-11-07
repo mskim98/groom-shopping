@@ -18,3 +18,4 @@ public class BatchDeleteNotificationRequest {
     private List<Long> notificationIds;
 }
 
+

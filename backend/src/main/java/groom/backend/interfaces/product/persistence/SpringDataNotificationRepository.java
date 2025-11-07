@@ -16,3 +16,4 @@ public interface SpringDataNotificationRepository extends JpaRepository<Notifica
     void deleteByUserId(@Param("userId") Long userId);
 }
 
+

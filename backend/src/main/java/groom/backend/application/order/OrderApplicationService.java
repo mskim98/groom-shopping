@@ -4,6 +4,9 @@ import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.repository.OrderRepository;
+import groom.backend.domain.payment.model.Payment;
+import groom.backend.domain.payment.model.enums.PaymentMethod;
+import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.interfaces.cart.persistence.CartItemJpaEntity;
 import groom.backend.interfaces.cart.persistence.SpringDataCartItemRepository;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
@@ -28,6 +31,7 @@ public class OrderApplicationService {
     private final SpringDataCartItemRepository cartItemRepository;
     private final SpringDataProductRepository productRepository;
     private final CouponIssueService couponIssueService;
+    private final PaymentRepository paymentRepository;
 
     @Transactional
     public Order createOrder(Long userId, Long couponId) {
@@ -122,6 +126,39 @@ public class OrderApplicationService {
         // Order 저장 (cascade로 OrderItem 저장)
         Order savedOrder = orderRepository.save(order);
 
+        // Payment 자동 생성 (PENDING 상태)
+        String orderName = createOrderName(savedOrder.getOrderItems());
+        Payment payment = Payment.builder()
+                .order(savedOrder)
+                .userId(userId)
+                .amount(savedOrder.getTotalAmount())
+                .orderName(orderName)
+                .method(PaymentMethod.CARD) // 기본값: 카드 결제
+                .build();
+
+        Payment savedPayment = paymentRepository.save(payment);
+
+        // Order에 Payment 연결
+        savedOrder.assignPayment(savedPayment);
+        orderRepository.save(savedOrder);
+
+        log.info("[PAYMENT_AUTO_CREATED] Payment automatically created - PaymentId: {}, OrderId: {}, Amount: {}",
+                savedPayment.getId(), savedOrder.getId(), savedPayment.getAmountValue());
+
         return savedOrder;
+    }
+
+    // 주문명 생성 헬퍼 메서드
+    private String createOrderName(List<OrderItem> orderItems) {
+        if (orderItems.isEmpty()) {
+            return "주문";
+        }
+
+        OrderItem firstItem = orderItems.get(0);
+        if (orderItems.size() == 1) {
+            return firstItem.getProductName();
+        }
+
+        return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
     }
 }
