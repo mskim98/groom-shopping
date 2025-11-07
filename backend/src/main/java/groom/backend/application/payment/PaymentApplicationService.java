@@ -127,6 +127,9 @@ public class PaymentApplicationService {
             // 비동기로 알림 처리 (응답 시간에 영향 없음)
             paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
 
+            // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
+            paymentNotificationService.clearCartItems(order);
+
             return payment;
 
         } catch (Exception e) {
@@ -174,6 +177,9 @@ public class PaymentApplicationService {
 
         // 비동기로 알림 처리 (응답 시간에 영향 없음)
         paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
+
+        // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
+        paymentNotificationService.clearCartItems(order);
 
         return payment;
     }
