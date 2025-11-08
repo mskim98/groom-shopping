@@ -6,6 +6,14 @@ import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.infrastructure.sse.SseService;
 import groom.backend.interfaces.notification.dto.request.BatchDeleteNotificationRequest;
 import groom.backend.interfaces.notification.dto.response.NotificationResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -25,6 +33,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/v1/notification")
 @RequiredArgsConstructor
+@Tag(name = "Notification", description = "알림 관련 API")
+@SecurityRequirement(name = "JWT")
 public class NotificationController {
 
     private final SseService sseService;
@@ -36,8 +46,18 @@ public class NotificationController {
      * @param authentication 인증 정보 (사용자 ID 추출용)
      * @return SseEmitter
      */
+    @Operation(
+            summary = "SSE 실시간 알림 스트림 연결",
+            description = "Server-Sent Events를 통해 실시간 알림을 수신합니다. 연결 후 알림이 발생하면 자동으로 전송됩니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "SSE 연결 성공",
+                    content = @Content(mediaType = MediaType.TEXT_EVENT_STREAM_VALUE)),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamNotifications(Authentication authentication) {
+    public SseEmitter streamNotifications(
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         log.info("[SSE_STREAM_REQUEST] userId={}, email={}", userId, userDetails.getUser().getEmail());
@@ -47,8 +67,19 @@ public class NotificationController {
     /**
      * 사용자의 모든 알림을 조회합니다.
      */
+    @Operation(
+            summary = "모든 알림 조회",
+            description = "현재 로그인한 사용자의 모든 알림을 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "알림 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = NotificationResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping
-    public ResponseEntity<List<NotificationResponse>> getNotifications(Authentication authentication) {
+    public ResponseEntity<List<NotificationResponse>> getNotifications(
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         List<Notification> notifications = notificationService.getNotifications(userId);
@@ -63,8 +94,19 @@ public class NotificationController {
     /**
      * 사용자의 읽지 않은 알림을 조회합니다.
      */
+    @Operation(
+            summary = "읽지 않은 알림 조회",
+            description = "현재 로그인한 사용자의 읽지 않은 알림만 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "읽지 않은 알림 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = NotificationResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping("/unread")
-    public ResponseEntity<List<NotificationResponse>> getUnreadNotifications(Authentication authentication) {
+    public ResponseEntity<List<NotificationResponse>> getUnreadNotifications(
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         List<Notification> notifications = notificationService.getUnreadNotifications(userId);
@@ -79,10 +121,20 @@ public class NotificationController {
     /**
      * 알림을 읽음 처리합니다.
      */
+    @Operation(
+            summary = "알림 읽음 처리",
+            description = "특정 알림을 읽음 처리합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "읽음 처리 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "알림을 찾을 수 없음")
+    })
     @PatchMapping("/{notificationId}/read")
     public ResponseEntity<Void> markAsRead(
+            @Parameter(description = "알림 ID", required = true, example = "1")
             @PathVariable Long notificationId,
-            Authentication authentication) {
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         notificationService.markAsRead(notificationId, userId);
@@ -92,8 +144,17 @@ public class NotificationController {
     /**
      * 사용자의 모든 알림을 읽음 처리합니다.
      */
+    @Operation(
+            summary = "모든 알림 읽음 처리",
+            description = "현재 로그인한 사용자의 모든 읽지 않은 알림을 읽음 처리합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "모든 알림 읽음 처리 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PatchMapping("/read-all")
-    public ResponseEntity<Void> markAllAsRead(Authentication authentication) {
+    public ResponseEntity<Void> markAllAsRead(
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         notificationService.markAllAsRead(userId);
@@ -103,10 +164,20 @@ public class NotificationController {
     /**
      * 알림을 삭제합니다.
      */
+    @Operation(
+            summary = "알림 삭제",
+            description = "특정 알림을 삭제합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "알림 삭제 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "알림을 찾을 수 없음")
+    })
     @DeleteMapping("/{notificationId}")
     public ResponseEntity<Void> deleteNotification(
+            @Parameter(description = "알림 ID", required = true, example = "1")
             @PathVariable Long notificationId,
-            Authentication authentication) {
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         notificationService.deleteNotification(notificationId, userId);
@@ -116,10 +187,24 @@ public class NotificationController {
     /**
      * 여러 알림을 일괄 삭제합니다.
      */
+    @Operation(
+            summary = "알림 일괄 삭제",
+            description = "여러 알림을 한 번에 삭제합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "알림 일괄 삭제 성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @DeleteMapping("/batch")
     public ResponseEntity<Void> deleteNotifications(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "삭제할 알림 ID 목록",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = BatchDeleteNotificationRequest.class))
+            )
             @RequestBody BatchDeleteNotificationRequest request,
-            Authentication authentication) {
+            @Parameter(hidden = true) Authentication authentication) {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         Long userId = userDetails.getUser().getId();
         notificationService.deleteNotifications(request.getNotificationIds(), userId);

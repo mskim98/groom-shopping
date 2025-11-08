@@ -7,6 +7,14 @@ import groom.backend.interfaces.cart.dto.response.CartItemResponse;
 import groom.backend.interfaces.cart.dto.response.CartResponse;
 import groom.backend.interfaces.product.dto.request.AddToCartRequest;
 import groom.backend.interfaces.product.dto.response.AddToCartResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -24,6 +32,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/v1/cart")
 @RequiredArgsConstructor
+@Tag(name = "Cart", description = "장바구니 관련 API")
+@SecurityRequirement(name = "JWT")
 public class CartController {
 
     private final CartApplicationService cartApplicationService;
@@ -31,9 +41,25 @@ public class CartController {
     /**
      * 장바구니에 제품을 추가합니다.
      */
+    @Operation(
+            summary = "장바구니에 제품 추가",
+            description = "장바구니에 제품을 추가합니다. 이미 존재하는 제품이면 수량이 증가합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "장바구니 추가 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = AddToCartResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/add")
     public ResponseEntity<AddToCartResponse> addToCart(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "장바구니 추가 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = AddToCartRequest.class))
+            )
             @RequestBody AddToCartRequest request) {
 
         if (userDetails == null || userDetails.getUser() == null) {
@@ -66,9 +92,19 @@ public class CartController {
     /**
      * 사용자의 장바구니에 담긴 모든 제품을 조회합니다.
      */
+    @Operation(
+            summary = "장바구니 조회",
+            description = "현재 로그인한 사용자의 장바구니에 담긴 모든 제품을 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "장바구니 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = CartResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping
     public ResponseEntity<CartResponse> getCart(
-            @AuthenticationPrincipal CustomUserDetails userDetails) {
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails) {
 
         if (userDetails == null || userDetails.getUser() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
@@ -110,9 +146,23 @@ public class CartController {
      * 수량을 지정하여 제거하며, 수량이 0이 되면 항목이 제거됩니다.
      * 하나라도 문제가 있으면 전체 실패 처리합니다.
      */
+    @Operation(
+            summary = "장바구니에서 제품 제거",
+            description = "장바구니에서 제품을 제거하거나 수량을 줄입니다. 하나 또는 여러 제품을 한 번에 처리할 수 있으며, 하나라도 문제가 있으면 전체가 실패합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "제품 제거 성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (제품이 장바구니에 없거나 수량 초과)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @DeleteMapping("/remove")
     public ResponseEntity<?> removeCartItems(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "제거할 제품 목록",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = RemoveCartItemsRequest.class))
+            )
             @RequestBody RemoveCartItemsRequest request) {
 
         if (userDetails == null || userDetails.getUser() == null) {
