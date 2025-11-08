@@ -5,6 +5,14 @@ import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.product.dto.request.PurchaseProductRequest;
 import groom.backend.interfaces.product.dto.response.PurchaseCartResponse;
 import groom.backend.interfaces.product.dto.response.PurchaseProductResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +28,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/v1/products")
 @RequiredArgsConstructor
+@Tag(name = "Product", description = "제품 구매 관련 API")
+@SecurityRequirement(name = "JWT")
 public class ProductController {
 
     private final ProductApplicationService productApplicationService;
@@ -30,9 +40,32 @@ public class ProductController {
      * body가 있으면 해당 제품을 구매합니다.
      * 재고 차감 후 임계값 도달 시 Kafka로 알림 이벤트를 발행합니다.
      */
+    @Operation(
+            summary = "제품 구매",
+            description = """
+                    제품을 구매합니다.
+                    - body가 없으면: 현재 사용자의 장바구니에 담긴 모든 제품을 구매합니다.
+                    - body가 있으면: 해당 제품을 구매합니다.
+                    재고 차감 후 임계값 도달 시 Kafka로 알림 이벤트를 발행합니다.
+                    """
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "구매 성공",
+                    content = {
+                            @Content(mediaType = "application/json",
+                                    schema = @Schema(oneOf = {PurchaseProductResponse.class, PurchaseCartResponse.class}))
+                    }),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (재고 부족 등)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/purchase")
     public ResponseEntity<?> purchaseProduct(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "구매 요청 (선택사항: 없으면 장바구니 전체 구매)",
+                    required = false,
+                    content = @Content(schema = @Schema(implementation = PurchaseProductRequest.class))
+            )
             @RequestBody(required = false) PurchaseProductRequest request) {
         
         // body가 없으면 장바구니 전체 구매
