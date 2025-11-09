@@ -10,6 +10,14 @@ import groom.backend.interfaces.raffle.dto.request.RaffleEntryRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -24,14 +32,34 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/raffles")
+@Tag(name = "Raffle", description = "추첨 관련 API")
+@SecurityRequirement(name = "JWT")
 public class RaffleController {
 
     private final RaffleApplicationService raffleApplicationService;
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleDrawApplicationService raffleDrawApplicationService;
 
+    @Operation(
+            summary = "추첨 생성",
+            description = "새로운 추첨을 생성합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 생성 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = RaffleResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping
-    public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody RaffleRequest raffleRequest) {
+    public ResponseEntity<RaffleResponse> createRaffle(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "추첨 생성 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = RaffleRequest.class))
+            )
+            @RequestBody RaffleRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -40,10 +68,29 @@ public class RaffleController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(
+            summary = "추첨 수정",
+            description = "기존 추첨의 정보를 수정합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 수정 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = RaffleResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
     @PutMapping("/{raffleId}")
-    public ResponseEntity<RaffleResponse> updateRaffle(@AuthenticationPrincipal(expression = "user") User user,
-                                                       @PathVariable Long raffleId,
-                                                       @RequestBody RaffleRequest raffleRequest) {
+    public ResponseEntity<RaffleResponse> updateRaffle(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "추첨 수정 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = RaffleRequest.class))
+            )
+            @RequestBody RaffleRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -52,9 +99,20 @@ public class RaffleController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(
+            summary = "추첨 삭제",
+            description = "추첨을 삭제합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "추첨 삭제 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
     @DeleteMapping("/{raffleId}")
-    public ResponseEntity<Void> deleteRaffle(@AuthenticationPrincipal(expression = "user") User user,
-                                             @PathVariable Long raffleId) {
+    public ResponseEntity<Void> deleteRaffle(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -64,10 +122,22 @@ public class RaffleController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(
+            summary = "추첨 검색",
+            description = "조건에 맞는 추첨 목록을 검색합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 검색 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = RaffleResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping
     public ResponseEntity<Page<RaffleResponse>> searchRaffles(
-            @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "검색 조건")
             @ModelAttribute RaffleSearchRequest cond,
+            @Parameter(description = "페이징 정보", example = "page=0&size=10&sort=createdAt,DESC")
             @PageableDefault(size = 10, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
 
         if (user == null || user.getEmail() == null) {
@@ -80,9 +150,22 @@ public class RaffleController {
         return ResponseEntity.ok(page);
     }
 
+    @Operation(
+            summary = "추첨 상세 조회",
+            description = "추첨 ID로 추첨 상세 정보를 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = RaffleResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
     @GetMapping("/{raffleId}")
-    public ResponseEntity<RaffleResponse> getRaffleDetails(@AuthenticationPrincipal(expression = "user") User user,
-                                                           @PathVariable Long raffleId) {
+    public ResponseEntity<RaffleResponse> getRaffleDetails(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -91,10 +174,27 @@ public class RaffleController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(
+            summary = "추첨 참여",
+            description = "추첨에 참여합니다. 추첨 티켓을 발급받습니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "201", description = "추첨 참여 성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
     @PostMapping("/{raffleId}/entries")
-    public ResponseEntity<Void> addToEntryCart(@AuthenticationPrincipal(expression = "user") User user,
-                                               @PathVariable Long raffleId,
-                                               @RequestBody @Valid RaffleEntryRequest entry) {
+    public ResponseEntity<Void> addToEntryCart(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "추첨 참여 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = RaffleEntryRequest.class))
+            )
+            @RequestBody @Valid RaffleEntryRequest entry) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -103,9 +203,20 @@ public class RaffleController {
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
+    @Operation(
+            summary = "추첨 실행",
+            description = "추첨을 실행하여 당첨자를 선정합니다. 당첨자에게 알림을 전송합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 실행 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
     @PostMapping("/{raffleId}/draws")
-    public ResponseEntity<Void> drawRaffleWinners(@AuthenticationPrincipal(expression = "user") User user,
-                                                  @PathVariable Long raffleId) {
+    public ResponseEntity<Void> drawRaffleWinners(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
