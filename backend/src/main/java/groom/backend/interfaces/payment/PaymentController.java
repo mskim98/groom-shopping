@@ -7,6 +7,14 @@ import groom.backend.interfaces.payment.dto.request.CancelPaymentRequest;
 import groom.backend.interfaces.payment.dto.request.ConfirmPaymentRequest;
 import groom.backend.interfaces.payment.dto.request.PreparePaymentRequest;
 import groom.backend.interfaces.payment.dto.response.PaymentResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -23,8 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
 @RestController
-@RequestMapping("/payments")
+@RequestMapping("/v1/payment")
 @RequiredArgsConstructor
+@Tag(name = "Payment", description = "결제 관련 API")
+@SecurityRequirement(name = "JWT")
 public class PaymentController {
 
     private final PaymentApplicationService paymentApplicationService;
@@ -32,9 +42,25 @@ public class PaymentController {
     /**
      * 결제 준비 - Order 기반으로 Payment 생성
      */
+    @Operation(
+            summary = "결제 준비",
+            description = "주문 기반으로 결제를 준비합니다. 결제 수단을 선택할 수 있습니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 준비 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/prepare")
     public ResponseEntity<PaymentResponse> preparePayment(
-            @AuthenticationPrincipal User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "결제 준비 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = PreparePaymentRequest.class))
+            )
             @RequestBody PreparePaymentRequest request) {
 
         log.info("[API_REQUEST] Prepare payment - UserId: {}, OrderId: {}",
@@ -55,9 +81,25 @@ public class PaymentController {
     /**
      * 결제 승인 - Toss Payments API 호출 후 상태 변경
      */
+    @Operation(
+            summary = "결제 승인",
+            description = "Toss Payments API를 호출하여 결제를 승인합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 승인 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/confirm")
     public ResponseEntity<PaymentResponse> confirmPayment(
-            @AuthenticationPrincipal User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "결제 승인 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = ConfirmPaymentRequest.class))
+            )
             @RequestBody ConfirmPaymentRequest request) {
 
         log.info("[API_REQUEST] Confirm payment - UserId: {}, OrderId: {}, PaymentKey: {}",
@@ -80,9 +122,25 @@ public class PaymentController {
     /**
      * 테스트용 결제 승인 (Toss API 호출 없이)
      */
+    @Operation(
+            summary = "테스트용 결제 승인",
+            description = "Toss API 호출 없이 테스트용으로 결제를 승인합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "테스트 결제 승인 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/confirm/test")
     public ResponseEntity<PaymentResponse> confirmPaymentForTest(
-            @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "테스트 결제 승인 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = ConfirmPaymentRequest.class))
+            )
             @RequestBody ConfirmPaymentRequest request) {
 
         log.info("[API_REQUEST] Test confirm payment - UserId: {}, OrderId: {}",
@@ -101,9 +159,25 @@ public class PaymentController {
     /**
      * 결제 취소
      */
+    @Operation(
+            summary = "결제 취소",
+            description = "결제를 취소합니다. 취소 사유를 입력할 수 있습니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 취소 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @PostMapping("/cancel")
     public ResponseEntity<PaymentResponse> cancelPayment(
-            @AuthenticationPrincipal User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "결제 취소 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = CancelPaymentRequest.class))
+            )
             @RequestBody CancelPaymentRequest request) {
 
         log.info("[API_REQUEST] Cancel payment - UserId: {}, PaymentId: {}, Reason: {}",
@@ -125,9 +199,21 @@ public class PaymentController {
     /**
      * 결제 조회
      */
+    @Operation(
+            summary = "결제 조회",
+            description = "결제 ID로 결제 정보를 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "결제를 찾을 수 없음")
+    })
     @GetMapping("/{paymentId}")
     public ResponseEntity<PaymentResponse> getPayment(
-            @AuthenticationPrincipal User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "결제 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID paymentId) {
 
         log.info("[API_REQUEST] Get payment - UserId: {}, PaymentId: {}",
@@ -142,9 +228,21 @@ public class PaymentController {
     /**
      * 주문의 결제 조회
      */
+    @Operation(
+            summary = "주문별 결제 조회",
+            description = "주문 ID로 해당 주문의 결제 정보를 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "결제를 찾을 수 없음")
+    })
     @GetMapping("/order/{orderId}")
     public ResponseEntity<PaymentResponse> getPaymentByOrderId(
-            @AuthenticationPrincipal User user,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "주문 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID orderId) {
 
         log.info("[API_REQUEST] Get payment by order - UserId: {}, OrderId: {}",
@@ -159,9 +257,19 @@ public class PaymentController {
     /**
      * 사용자의 결제 목록 조회
      */
+    @Operation(
+            summary = "내 결제 목록 조회",
+            description = "현재 로그인한 사용자의 모든 결제 내역을 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "결제 목록 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping("/my")
     public ResponseEntity<List<PaymentResponse>> getMyPayments(
-            @AuthenticationPrincipal User user) {
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user) {
 
         log.info("[API_REQUEST] Get my payments - UserId: {}", user.getId());
 
