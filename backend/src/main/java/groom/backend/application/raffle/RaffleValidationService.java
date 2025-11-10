@@ -169,14 +169,6 @@ public class RaffleValidationService {
         }
     }
 
-
-    // 요청의 상태 누락 시 기본값 적용
-    public void normalizeStatus(RaffleRequest request) {
-        if (request != null && request.getStatus() == null) {
-            request.setStatus(RaffleStatus.DRAFT);
-        }
-    }
-
     // 응모 한도 검증
     // Order 서비스에서 사용 (변경시 주의요망)
     public void validateUserEntryLimit(Raffle raffle, Long userId, int additionalCount) {

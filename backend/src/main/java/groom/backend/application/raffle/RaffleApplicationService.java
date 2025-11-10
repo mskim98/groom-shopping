@@ -59,9 +59,6 @@ public class RaffleApplicationService {
         // 추첨 상품 중복 검사
         raffleValidationService.ensureUniqueRaffleProductId(request.getRaffleProductId());
 
-        // 상태 값 정규화 (미입력 시 DRAFT로 설정)
-        raffleValidationService.normalizeStatus(request);
-
         Raffle raffle = new Raffle(
                 null,
                 request.getRaffleProductId(),
@@ -73,7 +70,7 @@ public class RaffleApplicationService {
                 request.getEntryStartAt(),
                 request.getEntryEndAt(),
                 request.getRaffleDrawAt(),
-                request.getStatus(),
+                RaffleStatus.DRAFT,
                 null,
                 null
         );

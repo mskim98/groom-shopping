@@ -1,8 +1,8 @@
 package groom.backend.interfaces.raffle.dto.request;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import groom.backend.domain.raffle.enums.RaffleStatus;
-import jakarta.validation.constraints.*;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -22,7 +22,6 @@ public class RaffleUpdateRequest {
     private String title;
     @Size(max= 2000)
     private String description;
-    private RaffleStatus status;
     @Min(1)
     private Integer winnersCount;
     @Min(1)
