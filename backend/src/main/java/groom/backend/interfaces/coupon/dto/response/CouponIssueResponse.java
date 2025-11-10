@@ -1,6 +1,6 @@
 package groom.backend.interfaces.coupon.dto.response;
 
-import groom.backend.domain.coupon.entity.CouponIssue;
+import groom.backend.domain.coupon.model.entity.CouponIssue;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 

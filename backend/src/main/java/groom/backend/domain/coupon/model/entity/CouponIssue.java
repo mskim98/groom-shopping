@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.entity;
+package groom.backend.domain.coupon.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;

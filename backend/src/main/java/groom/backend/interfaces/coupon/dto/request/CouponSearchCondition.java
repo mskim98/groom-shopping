@@ -1,6 +1,6 @@
 package groom.backend.interfaces.coupon.dto.request;
 
-import groom.backend.domain.coupon.enums.CouponType;
+import groom.backend.domain.coupon.model.enums.CouponType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
 import org.springframework.format.annotation.DateTimeFormat;

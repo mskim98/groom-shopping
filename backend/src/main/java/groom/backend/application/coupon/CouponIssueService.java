@@ -3,9 +3,13 @@ package groom.backend.application.coupon;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
-import groom.backend.domain.coupon.entity.Coupon;
-import groom.backend.domain.coupon.entity.CouponIssue;
-import groom.backend.domain.coupon.enums.CouponType;
+import groom.backend.domain.coupon.mapper.CouponContextMapper;
+import groom.backend.domain.coupon.model.entity.Coupon;
+import groom.backend.domain.coupon.model.entity.CouponIssue;
+import groom.backend.domain.coupon.model.enums.CouponType;
+import groom.backend.domain.coupon.model.vo.DiscountContext;
+import groom.backend.domain.coupon.policy.DiscountStrategy;
+import groom.backend.domain.coupon.policy.DiscountStrategyFactory;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
@@ -93,19 +97,11 @@ public class CouponIssueService {
     // 쿠폰 검증
     checkCouponUsable(couponIssue, userId);
 
+    DiscountStrategy discountStrategy = DiscountStrategyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+    DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
 
     // 할인율 계산 로직
-    // TODO : 정책 리팩토링
-    switch(couponIssue.getCoupon().getType()) {
-      case CouponType.DISCOUNT -> discount = couponIssue.getCoupon().getAmount();
-      case CouponType.PERCENT -> {
-        double rate = couponIssue.getCoupon().getAmount() / 100.0;  // 정수 → 실수 변환
-        discount = (int) Math.floor((cost * rate) / 100) * 100; // 백원 단위 절삭
-      }
-    }
-
-    // 사용 가능 여부 및 할인 금액 반환
-    return discount;
+    return discountStrategy.calculateDiscount(context);
   }
 
   // 쿠폰 사용 확정 메서드

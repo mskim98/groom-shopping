@@ -1,7 +1,7 @@
 package groom.backend.domain.coupon.repository;
 
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
-import groom.backend.domain.coupon.entity.Coupon;
+import groom.backend.domain.coupon.model.entity.Coupon;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;

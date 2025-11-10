@@ -2,8 +2,8 @@ package groom.backend.application.coupon;
 
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
-import groom.backend.domain.coupon.entity.Coupon;
-import groom.backend.domain.coupon.enums.CouponType;
+import groom.backend.domain.coupon.model.entity.Coupon;
+import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;

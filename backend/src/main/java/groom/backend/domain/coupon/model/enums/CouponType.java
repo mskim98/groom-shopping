@@ -1,4 +1,4 @@
-package groom.backend.domain.coupon.enums;
+package groom.backend.domain.coupon.model.enums;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
