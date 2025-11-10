@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/raffles")
+@RequestMapping("/v1/raffles")
 @Tag(name = "Raffle", description = "추첨 관련 API")
 @SecurityRequirement(name = "JWT")
 public class RaffleController {
