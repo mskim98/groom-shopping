@@ -81,7 +81,7 @@ public class RaffleDrawApplicationService {
         }
 
         // 증정 상품 재고 차감 ( 재고 검증은?)
-        productApplicationService.reduceStock(raffle.getWinnerProductId(), 1);
+        productApplicationService.reduceStock(raffle.getWinnerProductId(), result);
 
         // 추첨 완료 후 추첨 상태 업데이트
         raffle.updateStatus(RaffleStatus.DRAWN);
