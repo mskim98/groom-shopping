@@ -8,6 +8,8 @@ public class CouponContextMapper {
     return DiscountContext.builder()
             .cost(cost)
             .amount(coupon.getAmount())
+            .maximumDiscount(coupon.getMaximumDiscount())
+            .minimumCost(coupon.getMinimumCost())
             .build();
   }
 }

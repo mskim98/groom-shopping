@@ -28,6 +28,10 @@ public class Coupon {
 
   private Integer amount;
 
+  private Integer maximumDiscount;
+
+  private Integer minimumCost;
+
   @Builder.Default
   private Boolean isActive = true;
 
