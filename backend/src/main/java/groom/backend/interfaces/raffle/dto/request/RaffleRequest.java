@@ -1,7 +1,6 @@
 package groom.backend.interfaces.raffle.dto.request;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import groom.backend.domain.raffle.enums.RaffleStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -15,7 +14,6 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@RaffleDateRange
 @Getter
 @Setter
 @NoArgsConstructor
@@ -39,8 +37,6 @@ public class RaffleRequest {
     @Schema(description = "추첨 설명", example = "추첨 설명입니다")
     private String description;
 
-    @Schema(description = "추첨 상태", example = "DRAFT")
-    private RaffleStatus status;
     @NotNull
     @Min(1)
     @Schema(description = "당첨자 수", example = "10", required = true)
