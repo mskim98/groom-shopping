@@ -8,8 +8,7 @@ import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.entity.CouponIssue;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.model.vo.DiscountContext;
-import groom.backend.domain.coupon.policy.DiscountStrategy;
-import groom.backend.domain.coupon.policy.DiscountStrategyFactory;
+import groom.backend.domain.coupon.policy.*;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
@@ -19,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -83,12 +83,18 @@ public class CouponIssueService {
     return couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now()).stream().map(CouponIssueResponse::from).collect(Collectors.toList());
   }
 
-  // 쿠폰 사용을 위한 할인 금액 조회
-  // 사용 가능 여부 반환 시 사용하지 못할 경우 exception 던짐
-  // 쿠폰 미조회 : Not Found
-  // 정책적 검증 실패 (사용자 불일치, 사용기간 만료 등) : Forbidden
+  /**
+   * 쿠폰 사용을 위한 할인 금액 조회
+   * 사용 가능 여부 반환 시 사용하지 못할 경우 exception 던짐
+   * 쿠폰 미조회 : Not Found
+   * 정책적 검증 실패 (사용자 불일치, 사용기간 만료 등) : Forbidden
+   * @param couponId
+   * @param userId
+   * @param cost
+   * @return
+   */
+
   public Integer calculateDiscount(Long couponId, Long userId, Integer cost) {
-    // TODO : 여러 쿠폰 사용 가능하도록 개선
     Integer discount = 0;
 
     // 쿠폰 조회
@@ -102,6 +108,36 @@ public class CouponIssueService {
 
     // 할인율 계산 로직
     return discountStrategy.calculateDiscount(context);
+  }
+
+  public Integer calculateDiscount(List<Long> couponIdList, Long userId, Integer cost) {
+    // couponId를 in 쿼리로 조회
+    List<CouponIssue> couponIssueList = couponIssueRepository.findByCouponIdInAndUserId(couponIdList, userId);
+
+    // 정액 할인
+    List<DiscountContext> amount = new ArrayList<>();
+    // 비율 할인
+    List<DiscountContext> percent = new ArrayList<>();
+
+    for(CouponIssue couponIssue : couponIssueList) {
+      // 쿠폰 검증
+      DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
+
+      checkCouponUsable(couponIssue, userId);
+      DiscountStrategy discountStrategy = DiscountStrategyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+      // 단일 쿠폰인지 검증, 하나라도 단일 사용 전용 쿠폰 존재 시 실패
+      if(discountStrategy instanceof DiscountSingleStrategy)
+        throw new BusinessException(ErrorCode.INVALID_PARAMETER, "단일 사용 전용 쿠폰은 여러 개 사용할 수 없습니다.");
+      else if (discountStrategy instanceof DiscountAmountMultiStrategy)
+        amount.add(context);
+      else if (discountStrategy instanceof DiscountPercentMultiStrategy)
+        percent.add(context);
+    }
+
+    DiscountMultiStrategy discountPercentMultiStrategy = DiscountStrategyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
+    DiscountMultiStrategy discountAmountMultiStrategy = DiscountStrategyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
+
+    return discountPercentMultiStrategy.calculateMultiDiscount(percent) + discountAmountMultiStrategy.calculateMultiDiscount(amount);
   }
 
   // 쿠폰 사용 확정 메서드
