@@ -39,6 +39,7 @@ public class PaymentApplicationService {
     private final RaffleValidationService raffleValidationService;
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
+    private final PaymentNotificationService paymentNotificationService;
 
     /**
      * 결제 준비 - Order 기반으로 Payment 생성
@@ -114,14 +115,20 @@ public class PaymentApplicationService {
             order.changeStatus(OrderStatus.CONFIRMED);
             orderRepository.save(order);
 
-            // 재고 차감
-            reduceProductStock(order);
+            // 재고 차감 및 차감된 상품 ID 수집
+            List<UUID> reducedProductIds = reduceProductStock(order);
 
             // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
             processTicketProducts(order);
 
             log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
                     payment.getId(), orderId);
+
+            // 비동기로 알림 처리 (응답 시간에 영향 없음)
+            paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
+
+            // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
+            paymentNotificationService.clearCartItems(order);
 
             return payment;
 
@@ -159,14 +166,20 @@ public class PaymentApplicationService {
         order.changeStatus(OrderStatus.CONFIRMED);
         orderRepository.save(order);
 
+        // 재고 차감 및 차감된 상품 ID 수집
+        List<UUID> reducedProductIds = reduceProductStock(order);
+
         // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
         processTicketProducts(order);
 
-        // 재고 차감
-        reduceProductStock(order);
-
         log.info("[TEST_PAYMENT_CONFIRM_SUCCESS] Test payment confirmed - PaymentId: {}, OrderId: {}",
                 payment.getId(), orderId);
+
+        // 비동기로 알림 처리 (응답 시간에 영향 없음)
+        paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
+
+        // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
+        paymentNotificationService.clearCartItems(order);
 
         return payment;
     }
@@ -248,7 +261,9 @@ public class PaymentApplicationService {
         return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
     }
 
-    private void reduceProductStock(Order order) {
+    private List<UUID> reduceProductStock(Order order) {
+        List<UUID> reducedProductIds = new java.util.ArrayList<>();
+
         for (OrderItem orderItem : order.getOrderItems()) {
             Product product = productRepository.findById(orderItem.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException(
@@ -257,9 +272,14 @@ public class PaymentApplicationService {
             product.decreaseStock(orderItem.getQuantity());
             productRepository.save(product);
 
+            // 차감된 상품 ID 수집
+            reducedProductIds.add(product.getId());
+
             log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, Remaining: {}",
                     product.getId(), orderItem.getQuantity(), product.getStock());
         }
+
+        return reducedProductIds;
     }
 
     private void restoreProductStock(Order order) {
@@ -307,37 +327,8 @@ public class PaymentApplicationService {
             // 사용자 응모 한도 검증 (전체 수량에 대해 한 번만)
             raffleValidationService.validateUserEntryLimit(raffle, userId, quantity);
 
-            // 티켓 번호 범위 할당 (Pessimistic Lock으로 동시성 제어)
-            Long startTicketNumber = 1l;
-
-            log.info(
-                    "[TICKET_NUMBER_ALLOCATED] Ticket number range allocated - RaffleId: {}, StartNumber: {}, Count: {}",
-                    raffle.getRaffleId(), startTicketNumber, quantity);
-
-            // 할당된 번호로 티켓 생성
-            for (int i = 0; i < quantity; i++) {
-                Long ticketNumber = startTicketNumber + i;
-
-                // 각 티켓 생성 전 응모 한도 재검증 (동시성 제어)
-                raffleValidationService.validateUserEntryLimit(raffle, userId, 1);
-
-                Boolean created =true;
-
-                if (created) {
-                    log.info(
-                            "[RAFFLE_TICKET_CREATED] Raffle ticket created - RaffleId: {}, UserId: {}, TicketNumber: {}, Count: {}/{}",
-                            raffle.getRaffleId(), userId, ticketNumber, i + 1, quantity);
-                } else {
-                    log.error(
-                            "[RAFFLE_TICKET_FAILED] Failed to create raffle ticket - RaffleId: {}, UserId: {}, TicketNumber: {}, Count: {}/{}",
-                            raffle.getRaffleId(), userId, ticketNumber, i + 1, quantity);
-                    throw new RuntimeException("Raffle 티켓 생성에 실패했습니다.");
-                }
-            }
-
-            log.info(
-                    "[TICKET_PRODUCT_PROCESS_SUCCESS] All tickets created - ProductId: {}, RaffleId: {}, UserId: {}, TotalCount: {}",
-                    product.getId(), raffle.getRaffleId(), userId, quantity);
+            // 티켓생성
+            raffleTicketApplicationService.createTickets(raffle, userId, quantity);
         }
     }
 }

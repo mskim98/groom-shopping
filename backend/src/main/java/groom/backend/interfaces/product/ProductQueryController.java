@@ -4,6 +4,13 @@ import groom.backend.common.response.ApiResponse;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.service.ProductQueryService;
 import groom.backend.interfaces.product.dto.response.ProductResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -18,12 +25,25 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/product")
 @RequiredArgsConstructor
+@Tag(name = "Product Query", description = "제품 조회 API")
+@SecurityRequirement(name = "JWT")
 public class ProductQueryController {
 
     private final ProductQueryService productQueryService;
 
+    @Operation(
+            summary = "제품 목록 조회",
+            description = "페이징 처리된 제품 목록을 조회합니다."
+    )
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "제품 목록 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ProductResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
     @GetMapping
     public ApiResponse<Page<ProductResponse>> findAllProducts(
+            @Parameter(description = "페이징 정보", example = "page=0&size=20&sort=id,DESC")
             @PageableDefault(
                     size = 20,
                     sort = "id",
@@ -37,8 +57,21 @@ public class ProductQueryController {
         return ApiResponse.success(products);
     }
 
+    @Operation(
+            summary = "제품 상세 조회",
+            description = "제품 ID로 제품 상세 정보를 조회합니다."
+    )
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "제품 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ProductResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+    })
     @GetMapping("/{id}")
-    public ApiResponse<ProductResponse> findById(@PathVariable UUID id) {
+    public ApiResponse<ProductResponse> findById(
+            @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
+            @PathVariable UUID id) {
         Product product = productQueryService.findById(id);
 
         ProductResponse productResponse = ProductResponse.from(product);

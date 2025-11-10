@@ -46,7 +46,10 @@ public class SwaggerConfig {
 
     return new OpenAPI()
             .addSecurityItem(securityRequirement)
-            .components(components);
+            .components(components)
+            .addServersItem(new io.swagger.v3.oas.models.servers.Server()
+                    .url("/api")
+                    .description("API Server"));
   }
 
 }
