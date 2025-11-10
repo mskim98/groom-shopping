@@ -3,12 +3,17 @@ package groom.backend.application.raffle;
 import groom.backend.application.cart.CartApplicationService;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.entity.RaffleTicket;
-import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 추첨 티켓(Raffle Ticket) 관련 비즈니스 로직을 처리하는 서비스 클래스
+ *
+ * 1. 사용자가 응모 하면 장바구니에 응모 상품을 담는다.
+ * 2. 결제 완료 후 티켓을 생성한다.
+ */
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,25 +22,31 @@ import java.util.List;
 public class RaffleTicketApplicationService {
 
     private final RaffleTicketAllocationService allocationService;
-    private final RaffleRepository raffleRepository;
     private final RaffleTicketRepository raffleTicketRepo;
     private final RaffleValidationService validationService;
     private final CartApplicationService cartApplicationService;
 
     // 응모 장바구니에 저장
+    @Transactional
     public void addToEntryCart(Long raffleId, Long userId, int count) {
-        Raffle raffle = raffleRepository.findById(raffleId)
-                .orElseThrow(() -> new IllegalStateException("해당 ID의 추첨이 존재하지 않습니다."));
+        Raffle raffle = validationService.findById(raffleId);
+        // 상품 존재 및 상태 ,재고 검증 (add To Cart 내부에서 처리함)
+        /*
+        RaffleValidationCriteria criteria = RaffleValidationCriteria.builder()
+                .raffleProductId(raffle.getRaffleProductId())
+                .build();
+        validationService.validateProductsForRaffle(criteria);
+        */
 
-        // TODO : 응모 상품 존재 여부 조회
-
-        // 응모 가능 여부 검증 (응모 기간, 상태 )
+        // 응모 가능 여부 검증 (응모 기간, 상태)
         validationService.validateRaffleForEntry(raffle);
 
         // 사용자 응모 한도 검증
         validationService.validateUserEntryLimit(raffle, userId, count);
-        // TODO 장바구니 로직 추가 - 실제 티켓은 결제 완료 후 생성
+        // 장바구니에 응모 상품 추가
+        // TODO : 예외 발생 시 처리 방식 확인 필요
         cartApplicationService.addToCart(userId, raffle.getRaffleProductId(), count);
+
     }
 
     // 결제 완료 후 호출 - 티켓 생성
