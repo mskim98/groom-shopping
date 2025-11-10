@@ -53,7 +53,6 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
     @PostMapping
-    public ResponseEntity<RaffleResponse> createRaffle(@AuthenticationPrincipal(expression = "user") User user , @RequestBody @Valid RaffleRequest raffleRequest) {
     public ResponseEntity<RaffleResponse> createRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
@@ -90,16 +89,13 @@ public class RaffleController {
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
                     description = "추첨 수정 요청",
                     required = true,
-                    content = @Content(schema = @Schema(implementation = RaffleRequest.class))
+                    content = @Content(schema = @Schema(implementation = RaffleUpdateRequest.class))
             )
-            @RequestBody RaffleRequest raffleRequest) {
-    public ResponseEntity<RaffleResponse> updateRaffle(@AuthenticationPrincipal(expression = "user") User user,
-                                                       @PathVariable Long raffleId,
-                                                       @RequestBody @Valid RaffleUpdateRequest raffleRequest) {
+            @RequestBody @Valid RaffleUpdateRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-            equ
+
         RaffleResponse response = raffleApplicationService.updateRaffle(user, raffleId, raffleRequest);
         return ResponseEntity.ok(response);
     }

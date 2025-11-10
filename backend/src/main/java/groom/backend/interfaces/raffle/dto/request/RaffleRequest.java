@@ -39,7 +39,7 @@ public class RaffleRequest {
     @Schema(description = "추첨 설명", example = "추첨 설명입니다")
     private String description;
 
-    @Schema(description = "추첨 상태", example = "OPEN")
+    @Schema(description = "추첨 상태", example = "DRAFT")
     private RaffleStatus status;
     @NotNull
     @Min(1)
