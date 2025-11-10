@@ -6,7 +6,7 @@ import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
-import groom.backend.domain.coupon.entity.Coupon;
+import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;

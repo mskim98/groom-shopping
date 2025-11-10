@@ -3,9 +3,9 @@ package groom.backend.application.coupon;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
-import groom.backend.domain.coupon.entity.Coupon;
-import groom.backend.domain.coupon.entity.CouponIssue;
-import groom.backend.domain.coupon.enums.CouponType;
+import groom.backend.domain.coupon.model.entity.Coupon;
+import groom.backend.domain.coupon.model.entity.CouponIssue;
+import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
@@ -95,7 +95,6 @@ public class CouponIssueService {
 
 
     // 할인율 계산 로직
-    // TODO : 정책 리팩토링
     switch(couponIssue.getCoupon().getType()) {
       case CouponType.DISCOUNT -> discount = couponIssue.getCoupon().getAmount();
       case CouponType.PERCENT -> {
