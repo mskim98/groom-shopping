@@ -4,7 +4,7 @@ import org.springframework.stereotype.Component;
 
 // 비율 할인 정책
 @Component
-public class DiscountPercentStrategy implements DiscountMultiStrategy {
+public class DiscountPercentMultiStrategy implements DiscountMultiStrategy {
   @Override
   public int calculateDiscount(int cost, int amount) {
     double rate = amount / 100.0;
