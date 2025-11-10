@@ -2,6 +2,8 @@ package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.coupon.CouponService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
@@ -173,8 +175,7 @@ public class CouponController {
     // 분 단위 이내만 허용
     if (diff.toMinutes() >= 1) {
       log.warn("Time difference exceeded: {} seconds", diff.toSeconds());
-      return ResponseEntity.status(HttpStatus.FORBIDDEN)
-              .build();
+      throw new BusinessException(ErrorCode.INVALID_PARAMETER, "잘못된 요청입니다.");
     }
 
     // 쿠폰 발급
