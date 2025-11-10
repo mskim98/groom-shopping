@@ -136,7 +136,7 @@ public class RaffleApplicationService {
     // 개별 변경 여부 확인 메서드
     private boolean isWinnersCountChanged(Raffle raffle, RaffleUpdateRequest request) {
         return request.getWinnersCount() != null
-                && raffle.getWinnersCount() != request.getWinnersCount();
+                && raffle.getWinnersCount().equals(request.getWinnersCount());
     }
 
     @Transactional
