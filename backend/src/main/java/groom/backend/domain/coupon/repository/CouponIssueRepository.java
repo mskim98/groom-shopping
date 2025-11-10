@@ -13,5 +13,5 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
   List<CouponIssue> findCouponIssueByUserId(Long userId);
   List<CouponIssue> findByUserIdAndIsActiveTrueAndDeletedAtAfter(Long userId, LocalDateTime currentDate);
   Optional<CouponIssue> findByCouponIdAndUserId(Long couponId, Long userId);
-  List<CouponIssue> findByCouponIdInAndUserId(Long couponId, Long userId);
+  List<CouponIssue> findByCouponIdInAndUserId(List<Long> couponId, Long userId);
 }
