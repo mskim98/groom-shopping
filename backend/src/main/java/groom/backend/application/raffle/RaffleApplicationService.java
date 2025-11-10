@@ -115,26 +115,26 @@ public class RaffleApplicationService {
     }
 
     // 상품 아이디 또는 당첨자 수 변경 여부 확인
-    private Boolean isAnyProductOrCountChanged(Raffle raffle, RaffleUpdateRequest request) {
+    private boolean isAnyProductOrCountChanged(Raffle raffle, RaffleUpdateRequest request) {
         return isRaffleProductChanged(raffle, request)
                 || isWinnerProductChanged(raffle, request)
                 || isWinnersCountChanged(raffle, request);
     }
 
     // 개별 변경 여부 확인 메서드
-    private Boolean isRaffleProductChanged(Raffle raffle, RaffleUpdateRequest request) {
+    private boolean isRaffleProductChanged(Raffle raffle, RaffleUpdateRequest request) {
         return request.getRaffleProductId() != null
                 && !raffle.getRaffleProductId().equals(request.getRaffleProductId());
     }
 
     // 개별 변경 여부 확인 메서드
-    private Boolean isWinnerProductChanged(Raffle raffle, RaffleUpdateRequest request) {
+    private boolean isWinnerProductChanged(Raffle raffle, RaffleUpdateRequest request) {
         return request.getWinnerProductId() != null
                 && !raffle.getWinnerProductId().equals(request.getWinnerProductId());
     }
 
     // 개별 변경 여부 확인 메서드
-    private Boolean isWinnersCountChanged(Raffle raffle, RaffleUpdateRequest request) {
+    private boolean isWinnersCountChanged(Raffle raffle, RaffleUpdateRequest request) {
         return request.getWinnersCount() != null
                 && raffle.getWinnersCount() != request.getWinnersCount();
     }
