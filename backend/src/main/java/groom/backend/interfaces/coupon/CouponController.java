@@ -2,6 +2,8 @@ package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.coupon.CouponService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
@@ -37,7 +39,7 @@ import java.util.List;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/coupon")
+@RequestMapping("/v1/coupon")
 public class CouponController {
   private final CouponService couponService;
   private final CouponIssueService couponIssueService;
@@ -156,7 +158,7 @@ public class CouponController {
           @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
           @AuthenticationPrincipal(expression = "user") User user,
           @Parameter(description = "클라이언트 기준 UTC 시간", required = true, example = "Wed, 06 Nov 2025 15:00:00 GMT")
-          @RequestHeader("Date") Instant clientInstant,
+          @RequestHeader("Request-Date") Instant clientInstant,
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId) {
 
@@ -173,8 +175,7 @@ public class CouponController {
     // 분 단위 이내만 허용
     if (diff.toMinutes() >= 1) {
       log.warn("Time difference exceeded: {} seconds", diff.toSeconds());
-      return ResponseEntity.status(HttpStatus.FORBIDDEN)
-              .build();
+      throw new BusinessException(ErrorCode.INVALID_PARAMETER, "잘못된 요청입니다.");
     }
 
     // 쿠폰 발급
