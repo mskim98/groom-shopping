@@ -92,7 +92,7 @@ public class CouponIssueService {
     Integer discount = 0;
 
     // 쿠폰 조회
-    CouponIssue couponIssue = couponIssueRepository.findById(couponId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
+    CouponIssue couponIssue = couponIssueRepository.findByCouponIdAndUserId(couponId, userId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
 
     // 쿠폰 검증
     checkCouponUsable(couponIssue, userId);

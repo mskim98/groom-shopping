@@ -6,10 +6,12 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> {
   List<CouponIssue> findCouponIssueByUserId(Long userId);
   List<CouponIssue> findByUserIdAndIsActiveTrueAndDeletedAtAfter(Long userId, LocalDateTime currentDate);
-  List<CouponIssue> findByCouponIdAndUserId(Long couponId, Long userId);
+  Optional<CouponIssue> findByCouponIdAndUserId(Long couponId, Long userId);
+  List<CouponIssue> findByCouponIdInAndUserId(Long couponId, Long userId);
 }
