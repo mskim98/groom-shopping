@@ -6,9 +6,11 @@ import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
+import groom.backend.interfaces.raffle.dto.request.RaffleEntryRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -92,12 +94,12 @@ public class RaffleController {
     @PostMapping("/{raffleId}/entries")
     public ResponseEntity<Void> addToEntryCart(@AuthenticationPrincipal(expression = "user") User user,
                                                @PathVariable Long raffleId,
-                                               @RequestParam(defaultValue = "1") int count) {
+                                               @RequestBody @Valid RaffleEntryRequest entry) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), count);
+        raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), entry.getCount());
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 

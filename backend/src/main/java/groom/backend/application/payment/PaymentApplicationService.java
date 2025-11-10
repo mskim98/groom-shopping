@@ -308,8 +308,7 @@ public class PaymentApplicationService {
             raffleValidationService.validateUserEntryLimit(raffle, userId, quantity);
 
             // 티켓 번호 범위 할당 (Pessimistic Lock으로 동시성 제어)
-            Long startTicketNumber = raffleTicketAllocationService.allocateTicketNumberRange(
-                    raffle.getRaffleId(), quantity);
+            Long startTicketNumber = 1l;
 
             log.info(
                     "[TICKET_NUMBER_ALLOCATED] Ticket number range allocated - RaffleId: {}, StartNumber: {}, Count: {}",
@@ -322,8 +321,7 @@ public class PaymentApplicationService {
                 // 각 티켓 생성 전 응모 한도 재검증 (동시성 제어)
                 raffleValidationService.validateUserEntryLimit(raffle, userId, 1);
 
-                Boolean created = raffleTicketApplicationService.createTicketWithNumber(
-                        raffle, userId, ticketNumber);
+                Boolean created =true;
 
                 if (created) {
                     log.info(

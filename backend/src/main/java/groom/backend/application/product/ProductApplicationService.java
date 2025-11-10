@@ -226,6 +226,51 @@ public class ProductApplicationService {
     }
 
     /**
+     * 사용자의 장바구니에서 모든 제품을 제거합니다.
+     * 구매 로직 없이 장바구니 제거만 수행합니다.
+     *
+     * @param userId 사용자 ID
+     */
+    @Transactional
+    public void clearCartItems(Long userId) {
+        long clearStartTime = System.currentTimeMillis();
+        log.info("[CART_CLEAR_START] userId={}, timestamp={}", userId, clearStartTime);
+
+        try {
+            // 1. 사용자의 장바구니 항목 조회
+            List<CartItemJpaEntity> cartItems = cartItemRepository.findByUserId(userId);
+
+            if (cartItems.isEmpty()) {
+                log.info("[CART_CLEAR_NO_ITEMS] userId={}", userId);
+                return;
+            }
+
+            int deletedCount = 0;
+
+            // 2. 모든 장바구니 항목 삭제
+            for (CartItemJpaEntity cartItem : cartItems) {
+                UUID productId = cartItem.getProductId();
+                cartItemRepository.delete(cartItem);
+                deletedCount++;
+                log.info("[CART_ITEM_DELETED] userId={}, productId={}, cartItemId={}", 
+                        userId, productId, cartItem.getId());
+            }
+
+            long clearEndTime = System.currentTimeMillis();
+            long clearDuration = clearEndTime - clearStartTime;
+
+            log.info("[CART_CLEAR_COMPLETE] userId={}, totalItems={}, deletedCount={}, duration={}ms",
+                    cartItems.size(), deletedCount, clearDuration);
+
+        } catch (Exception e) {
+            long errorDuration = System.currentTimeMillis() - clearStartTime;
+            log.error("[CART_CLEAR_FAILED] userId={}, duration={}ms, error={}", 
+                    userId, errorDuration, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
      * 구매 결과를 담는 내부 클래스
      */
     public static class PurchaseResult {

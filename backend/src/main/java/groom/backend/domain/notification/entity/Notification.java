@@ -37,6 +37,21 @@ public class Notification {
     }
 
     /**
+     * 제품명을 포함한 알림을 생성합니다.
+     *
+     * @param userId 사용자 ID
+     * @param productId 제품 ID
+     * @param productName 제품명
+     * @param currentStock 현재 재고
+     * @param thresholdValue 임계값
+     * @return Notification 객체
+     */
+    public static Notification create(Long userId, UUID productId, String productName, Integer currentStock, Integer thresholdValue) {
+        String message = String.format("%s의 재고가 %d개로 얼마 남지 않았어요", productName, currentStock);
+        return new Notification(null, currentStock, thresholdValue, message, false, LocalDateTime.now(), userId, productId);
+    }
+
+    /**
      * 실시간 알림 전송용 Notification 객체를 생성합니다.
      * DB에 저장하고 SSE 전송도 수행합니다.
      * 

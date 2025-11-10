@@ -1,5 +1,6 @@
 package groom.backend.application.raffle;
 
+import groom.backend.application.cart.CartApplicationService;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.entity.RaffleTicket;
 import groom.backend.domain.raffle.repository.RaffleRepository;
@@ -7,6 +8,9 @@ import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -16,6 +20,7 @@ public class RaffleTicketApplicationService {
     private final RaffleRepository raffleRepository;
     private final RaffleTicketRepository raffleTicketRepo;
     private final RaffleValidationService validationService;
+    private final CartApplicationService cartApplicationService;
 
     // 응모 장바구니에 저장
     public void addToEntryCart(Long raffleId, Long userId, int count) {
@@ -30,25 +35,33 @@ public class RaffleTicketApplicationService {
         // 사용자 응모 한도 검증
         validationService.validateUserEntryLimit(raffle, userId, count);
         // TODO 장바구니 로직 추가 - 실제 티켓은 결제 완료 후 생성
-
+        cartApplicationService.addToCart(userId, raffle.getRaffleProductId(), count);
     }
 
     // 결제 완료 후 호출 - 티켓 생성
     @Transactional
-    public Boolean createTicket(Raffle raffle, Long userId) {
-        // allocateNextTicketNumber 내부에서 PESSIMISTIC_WRITE로 카운터를 잠그고 증가시킴
-        Long ticketNumber = allocationService.allocateNextTicketNumber(raffle.getRaffleId());
+    public boolean createTickets(Raffle raffle, Long userId, int quantity) {
 
-        RaffleTicket ticket = new RaffleTicket(
-                null,
-                raffle.getRaffleId(),
-                userId,
-                ticketNumber,
-                null
-        );
+        // 1) 연속된 티켓 번호 범위를 원자적으로 확보
+        // allocateTicketRange 는 DB에서 PESSIMISTIC_WRITE 또는 단일 업데이트로 current 값을 증가시켜
+        // 시작(start)과 끝(end) 번호 범위를 반환합니다. 이 호출은 동시성 문제(번호 중복/누락)를 방지합니다.
+        TicketRange range = allocationService.allocateTicketRange(raffle.getRaffleId(), quantity);
 
-        RaffleTicket saved = raffleTicketRepo.save(ticket);
-        return saved != null;
+        if (range == null || range.size() != quantity) {
+            return false;
+        }
+
+        // 2) 확보한 티켓 번호 범위로 RaffleTicket 엔티티를 생성
+        List<RaffleTicket> toSave = new ArrayList<>(quantity);
+        for (long i = range.start(); i <= range.end(); i++) {
+            // RaffleTicket 생성
+            RaffleTicket ticket = new RaffleTicket(null, raffle.getRaffleId(), userId, i, null);
+            toSave.add(ticket);
+        }
+
+        // saveAll로 한 번에 저장 (JPA는 내부적으로 여러 insert 실행)
+        List<RaffleTicket> saved = raffleTicketRepo.saveAll(toSave);
+        return saved.size() == toSave.size();
     }
 
 }

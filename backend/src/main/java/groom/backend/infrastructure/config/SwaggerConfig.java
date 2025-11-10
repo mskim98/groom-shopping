@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Configuration;
                         모든 인증이 필요한 API 호출 시 Authorization 헤더에 자동으로 토큰이 추가됩니다.
         
                         - 토큰 형식: Bearer {JWT}
-                        - 인증이 필요한 API: `/api/v1/**`
+                        - 인증이 필요한 API: `/api/**`
                         - 인증 없이 접근 가능한 경로: `/auth/**`, `/swagger-ui/**`
         
                         ⚠️ Swagger 설정은 문서용이며, 실제 인증 검증은 Spring Security에서 수행됩니다.

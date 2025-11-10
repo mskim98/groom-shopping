@@ -147,18 +147,7 @@ public class CouponController {
           @ApiResponse(responseCode = "201", description = "쿠폰 발급 성공",
                   content = @Content(schema = @Schema(implementation = CouponIssueResponse.class))),
           @ApiResponse(responseCode = "403", description = "시간 오차 초과 (요청 거부)",
-                  content = @Content(schema = @Schema(implementation = ErrorResponse.class),
-                          examples = @ExampleObject(
-                                  name = "Time Difference Exceeded",
-                                  value = """
-                  {
-                    "status": 403,
-                    "code": "TIME_OUT_OF_SYNC",
-                    "message": "클라이언트와 서버 간의 시간차가 허용 범위를 초과했습니다.",
-                    "timestamp": "2025-11-06T15:25:42"
-                  }
-                  """
-                          ))),
+                  content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰",
                   content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
   })
