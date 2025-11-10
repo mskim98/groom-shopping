@@ -60,7 +60,7 @@ public class RaffleController {
                     required = true,
                     content = @Content(schema = @Schema(implementation = RaffleRequest.class))
             )
-            @RequestBody @Vaild RaffleRequest raffleRequest) {
+            @RequestBody @Valid RaffleRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
