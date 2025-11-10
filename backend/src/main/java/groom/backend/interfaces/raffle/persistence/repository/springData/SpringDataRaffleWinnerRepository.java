@@ -14,17 +14,22 @@ import java.util.List;
 public interface SpringDataRaffleWinnerRepository extends JpaRepository<RaffleWinnerJpaEntity, Long> {
     @Modifying
     @Query(value = ""
+            // 1단계: 모든 티켓에 난수 부여
             + "WITH tickets_random AS ( "
             + "  SELECT raffle_ticket_id AS ticket_id, user_id, random() AS rnd "
             + "  FROM raffle_tickets "
             + "  WHERE raffle_id = :#{#cond.raffleId} "
-            + "), best_per_user AS ( "  // 각 사용자별로 가장 유리한(최소) rnd 값을 가진 티켓만 남김 -> 티켓 수가 많을수록 최소값이 더 유리할 확률이 높아짐
+            + "), best_per_user AS ( "
+            // 2단계: 각 사용자별로 가장 유리한(최소) rnd 값만 선택
+            // 티켓이 많을수록 최소값이 작을 확률 높음 = 가중치 효과
             + "  SELECT DISTINCT ON (user_id) ticket_id, user_id, rnd "
             + "  FROM tickets_random "
             + "  ORDER BY user_id, rnd "
-            + "), picked AS ( " // 사용자별 최소 rnd들 중에서 상위 N명(가장 작은 rnd)을 선택
+            + "), picked AS ( "
+            // 3단계: 사용자별 최소 rnd 중에서 상위 N명 선택
             + "  SELECT ticket_id, user_id, rnd FROM best_per_user ORDER BY rnd LIMIT :#{#cond.numberOfWinners} "
             + ") "
+            // 4단계: 당첨자 테이블에 저장
             + "INSERT INTO raffle_winners (raffle_ticket_id, rank, status, created_at, updated_at) "
             + "SELECT ticket_id, row_number() OVER (ORDER BY rnd), 'RESERVED' ,NOW(), NOW()"
             + "FROM picked",
