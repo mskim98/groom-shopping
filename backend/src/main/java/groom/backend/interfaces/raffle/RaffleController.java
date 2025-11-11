@@ -29,6 +29,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -45,7 +46,8 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 생성",
-            description = "새로운 추첨을 생성합니다."
+            description = "ADMIN 권한을 가진 사용자가 새로운 추첨을 생성합니다.",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 생성 성공",
@@ -54,6 +56,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    @PreAuthorize("hasRole('ADMIN')")
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
