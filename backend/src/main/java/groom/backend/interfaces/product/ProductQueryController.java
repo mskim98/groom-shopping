@@ -35,9 +35,7 @@ public class ProductQueryController {
             description = "페이징 처리된 제품 목록을 조회하여 Page 형태로 반환합니다."
     )
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "제품 목록 조회 성공",
-                    content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = ProductResponse.class))),
+            @ApiResponse(responseCode = "200", description = "제품 목록 조회 성공"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
     @GetMapping
@@ -83,9 +81,7 @@ public class ProductQueryController {
             description = "제품의 조건, 필터링 및 정렬 기능을 사용하여 검색하여 Page 형태로 반환합니다."
     )
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "제품 조회 성공",
-            content = @Content(mediaType = "application/json",
-                    schema = @Schema(implementation = ProductResponse.class))),
+            @ApiResponse(responseCode = "200", description = "제품 조회 성공"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
     @GetMapping("/search")
