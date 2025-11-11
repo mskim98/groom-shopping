@@ -1,0 +1,321 @@
+// Use /api/v1 for Next.js rewrites (development)
+// This avoids CORS issues by proxying through Next.js server
+// For Docker production, set NEXT_PUBLIC_API_URL to http://backend:8080/api/v1
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+interface RequestOptions extends RequestInit {
+  requireAuth?: boolean;
+}
+
+export async function apiRequest<T>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const { requireAuth = false, headers = {}, ...restOptions } = options;
+
+  const token = getAccessToken();
+  
+  const requestHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...headers as Record<string, string>,
+  };
+
+  if (requireAuth && token) {
+    requestHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...restOptions,
+    headers: requestHeaders,
+  });
+
+  if (response.status === 401 && requireAuth) {
+    // Try to refresh token
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      // Retry the request
+      const newToken = getAccessToken();
+      if (newToken) {
+        requestHeaders['Authorization'] = `Bearer ${newToken}`;
+      }
+      const retryResponse = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...restOptions,
+        headers: requestHeaders,
+      });
+
+      if (!retryResponse.ok) {
+        const errorData = await retryResponse.json().catch(() => ({}));
+        const errorMessage = errorData?.message || `API Error: ${retryResponse.status}`;
+        throw new Error(errorMessage);
+      }
+
+      return retryResponse.json();
+    } else {
+      // Redirect to login
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      throw new Error('인증이 필요합니다. 다시 로그인해주세요.');
+    }
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData?.message || `요청 실패: ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+export function getAccessToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('accessToken');
+}
+
+export function setAccessToken(token: string): void {
+  localStorage.setItem('accessToken', token);
+}
+
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('refreshToken');
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem('refreshToken', token);
+}
+
+export function clearTokens(): void {
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+}
+
+export async function refreshAccessToken(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      setAccessToken(data.accessToken);
+      if (data.refreshToken) {
+        setRefreshToken(data.refreshToken);
+      }
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    return false;
+  }
+}
+
+// Auth API
+export const authApi = {
+  login: (email: string, password: string) =>
+    apiRequest<{ accessToken: string; refreshToken: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  
+  signup: (email: string, password: string, name: string) =>
+    apiRequest<{ accessToken: string; refreshToken: string }>('/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, name }),
+    }),
+  
+  logout: () =>
+    apiRequest('/auth/logout', {
+      method: 'POST',
+      requireAuth: true,
+    }),
+};
+
+// Product API
+export const productApi = {
+  getProducts: (page = 0, size = 20, sort = 'id,desc') =>
+    apiRequest<{
+      content: any[];
+      totalElements: number;
+      totalPages: number;
+      number: number;
+    }>(`/product?page=${page}&size=${size}&sort=${sort}`),
+  
+  getProduct: (id: string) =>
+    apiRequest<any>(`/product/${id}`),
+  
+  createProduct: (data: any) =>
+    apiRequest('/product', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  updateProduct: (id: string, data: any) =>
+    apiRequest(`/product/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  deleteProduct: (id: string) =>
+    apiRequest(`/product/${id}`, {
+      method: 'DELETE',
+      requireAuth: true,
+    }),
+};
+
+// Cart API
+export const cartApi = {
+  getCart: () =>
+    apiRequest<{ items: any[] }>('/cart', {
+      requireAuth: true,
+    }),
+  
+  addToCart: (productId: string, quantity: number) =>
+    apiRequest('/cart/add', {
+      method: 'POST',
+      body: JSON.stringify({ productId, quantity }),
+      requireAuth: true,
+    }),
+  
+  removeFromCart: (productId: string) =>
+    apiRequest('/cart/remove', {
+      method: 'DELETE',
+      body: JSON.stringify({ productId }),
+      requireAuth: true,
+    }),
+};
+
+// Coupon API
+export const couponApi = {
+  getCoupons: (page = 0, size = 20) =>
+    apiRequest<{
+      content: any[];
+      totalElements: number;
+      totalPages: number;
+    }>(`/coupon?page=${page}&size=${size}`, {
+      requireAuth: true,
+    }),
+  
+  getCoupon: (id: string) =>
+    apiRequest<any>(`/coupon/${id}`, {
+      requireAuth: true,
+    }),
+  
+  createCoupon: (data: any) =>
+    apiRequest('/coupon', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  updateCoupon: (id: string, data: any) =>
+    apiRequest(`/coupon/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  deleteCoupon: (id: string) =>
+    apiRequest(`/coupon/${id}`, {
+      method: 'DELETE',
+      requireAuth: true,
+    }),
+  
+  issueCoupon: (couponId: string, userId: string) =>
+    apiRequest(`/coupon/issue/${couponId}`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+      requireAuth: true,
+    }),
+};
+
+// Raffle API
+export const raffleApi = {
+  getRaffles: (page = 0, size = 20) =>
+    apiRequest<{
+      content: any[];
+      totalElements: number;
+      totalPages: number;
+    }>(`/raffles?page=${page}&size=${size}`),
+  
+  getRaffle: (id: string) =>
+    apiRequest<any>(`/raffles/${id}`),
+  
+  createRaffle: (data: any) =>
+    apiRequest('/raffles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  deleteRaffle: (id: string) =>
+    apiRequest(`/raffles/${id}`, {
+      method: 'DELETE',
+      requireAuth: true,
+    }),
+  
+  executeRaffle: (id: string) =>
+    apiRequest(`/raffles/${id}/draws`, {
+      method: 'POST',
+      requireAuth: true,
+    }),
+  
+  getParticipants: (id: string, page = 0, size = 20) =>
+    apiRequest<{
+      content: any[];
+      totalElements: number;
+    }>(`/raffles/${id}/participants?page=${page}&size=${size}`, {
+      requireAuth: true,
+    }),
+  
+  getResult: (id: string) =>
+    apiRequest<any>(`/raffles/${id}/result`, {
+      requireAuth: true,
+    }),
+  
+  enterRaffle: (id: string, entries: number) =>
+    apiRequest(`/raffles/${id}/enter`, {
+      method: 'POST',
+      body: JSON.stringify({ entries }),
+      requireAuth: true,
+    }),
+};
+
+// Order API
+export const orderApi = {
+  createOrder: (data: any) =>
+    apiRequest('/order', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+  
+  getOrders: () =>
+    apiRequest<any[]>('/order', {
+      requireAuth: true,
+    }),
+};
+
+// Payment API
+export const paymentApi = {
+  getMyPayments: () =>
+    apiRequest<any[]>('/payment/my', {
+      requireAuth: true,
+    }),
+  
+  getPayment: (id: string) =>
+    apiRequest<any>(`/payment/${id}`, {
+      requireAuth: true,
+    }),
+};
