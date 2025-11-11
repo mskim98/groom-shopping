@@ -1,6 +1,7 @@
 package groom.backend.interfaces.product.persistence;
 
 import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.model.criteria.ProductSearchCondition;
 import groom.backend.domain.product.repository.ProductQueryRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -36,5 +37,10 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
     public Optional<Product> findById(UUID id) {
         return jpaProductRepository.findById(id);
     }
+
+  @Override
+  public Page<Product> findByCondition(ProductSearchCondition condition, Pageable pageable) {
+    return null;
+  }
 }
 
