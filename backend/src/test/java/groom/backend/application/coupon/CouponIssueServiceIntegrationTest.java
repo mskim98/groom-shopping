@@ -10,6 +10,7 @@ import groom.backend.domain.coupon.model.entity.CouponIssue;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import groom.backend.interfaces.auth.persistence.UserJpaEntity;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
@@ -41,7 +42,7 @@ class CouponIssueServiceIntegrationTest {
     private CouponIssueService couponIssueService;
 
     @Autowired
-    private CouponService couponService;
+    private CouponCommonService couponCommonService;
 
     @Autowired
     private CouponRepository couponRepository;

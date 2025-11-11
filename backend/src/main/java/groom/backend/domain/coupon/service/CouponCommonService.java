@@ -1,4 +1,4 @@
-package groom.backend.application.coupon;
+package groom.backend.domain.coupon.service;
 
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class CouponService {
+public class CouponCommonService {
   private final CouponRepository couponRepository;
 
 
