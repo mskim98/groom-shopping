@@ -86,8 +86,7 @@ public class ProductQueryController {
             @ApiResponse(responseCode = "200", description = "제품 조회 성공",
             content = @Content(mediaType = "application/json",
                     schema = @Schema(implementation = ProductResponse.class))),
-            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
-            @ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
     @GetMapping("/search")
     public ResponseEntity<Page<ProductResponse>> findByCondition(
