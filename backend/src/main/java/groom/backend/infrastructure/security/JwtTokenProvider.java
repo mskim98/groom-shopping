@@ -77,16 +77,20 @@ public class JwtTokenProvider {
             return true;
         } catch (ExpiredJwtException e) {
             log.warn("만료된 JWT 토큰입니다.");
+            throw new ExpiredJwtException(e.getHeader(), e.getClaims(), "만료된 토큰입니다.");
         } catch (UnsupportedJwtException e) {
             log.warn("지원되지 않는 JWT 토큰입니다.");
+            throw new JwtException("인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
         } catch (MalformedJwtException e) {
             log.warn("잘못된 JWT 토큰입니다.");
+            throw new JwtException("인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
         } catch (SignatureException e) {
             log.warn("JWT 서명이 일치하지 않습니다.");
+            throw new JwtException("인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
         } catch (IllegalArgumentException e) {
             log.warn("JWT 토큰이 비어있습니다.");
+            throw new JwtException("인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
         }
-        return false;
     }
 
     private Claims getClaims(String token) {
