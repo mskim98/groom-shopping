@@ -59,8 +59,8 @@ POST /payments/confirm/test
 ```java
 @PostMapping("/confirm/test")
 public ResponseEntity<PaymentResponse> confirmPaymentForTest(
-    @AuthenticationPrincipal(expression = "user") User user,
-    @RequestBody ConfirmPaymentRequest request)
+        @AuthenticationPrincipal(expression = "user") User user,
+        @RequestBody ConfirmPaymentRequest request)
 ```
 
 **입력:**
@@ -77,7 +77,7 @@ public ResponseEntity<PaymentResponse> confirmPaymentForTest(
 ##### 2-1. Payment 조회
 ```java
 Payment payment = paymentRepository.findByOrderId(orderId)
-    .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
+        .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
 ```
 
 **초기 Payment 상태:**
@@ -140,26 +140,26 @@ List<UUID> reducedProductIds = reduceProductStock(order);
 **재고 차감 로직 (PaymentApplicationService.java:252-271):**
 ```java
 private List<UUID> reduceProductStock(Order order) {
-    List<UUID> reducedProductIds = new ArrayList<>();
+  List<UUID> reducedProductIds = new ArrayList<>();
 
-    for (OrderItem orderItem : order.getOrderItems()) {
-        // 1. Product 조회
-        Product product = productRepository.findById(orderItem.getProductId())
+  for (OrderItem orderItem : order.getOrderItems()) {
+    // 1. Product 조회
+    Product product = productRepository.findById(orderItem.getProductId())
             .orElseThrow(() -> new IllegalArgumentException(
-                "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
+                    "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
 
-        // 2. 재고 차감
-        product.decreaseStock(orderItem.getQuantity());
-        productRepository.save(product);
+    // 2. 재고 차감
+    product.decreaseStock(orderItem.getQuantity());
+    productRepository.save(product);
 
-        // 3. 차감된 상품 ID 수집 (알림용)
-        reducedProductIds.add(product.getId());
+    // 3. 차감된 상품 ID 수집 (알림용)
+    reducedProductIds.add(product.getId());
 
-        log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, Remaining: {}",
+    log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, Remaining: {}",
             product.getId(), orderItem.getQuantity(), product.getStock());
-    }
+  }
 
-    return reducedProductIds;
+  return reducedProductIds;
 }
 ```
 
@@ -181,13 +181,13 @@ AFTER:
 **재고 차감 검증 (Product.decreaseStock → Stock.decrease):**
 ```java
 public Stock decrease(Integer amount) {
-    if (amount <= 0) {
-        throw new IllegalArgumentException("감소할 수량은 양수여야 합니다.");
-    }
-    if (this.amount < amount) {
-        throw new IllegalArgumentException("재고가 부족합니다.");
-    }
-    return new Stock(this.amount - amount);
+  if (amount <= 0) {
+    throw new IllegalArgumentException("감소할 수량은 양수여야 합니다.");
+  }
+  if (this.amount < amount) {
+    throw new IllegalArgumentException("재고가 부족합니다.");
+  }
+  return new Stock(this.amount - amount);
 }
 ```
 
@@ -201,34 +201,34 @@ processTicketProducts(order);
 **처리 로직 (PaymentApplicationService.java:289-324):**
 ```java
 private void processTicketProducts(Order order) {
-    Long userId = order.getUserId();
+  Long userId = order.getUserId();
 
-    for (OrderItem orderItem : order.getOrderItems()) {
-        Product product = productRepository.findById(orderItem.getProductId())
+  for (OrderItem orderItem : order.getOrderItems()) {
+    Product product = productRepository.findById(orderItem.getProductId())
             .orElseThrow(() -> new IllegalArgumentException(
-                "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
+                    "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
 
-        // TICKET 카테고리가 아니면 건너뛰기
-        if (product.getCategory() != ProductCategory.TICKET) {
-            continue;
-        }
-
-        // Raffle 조회
-        Raffle raffle = raffleRepository.findByRaffleProductId(product.getId())
-            .orElseThrow(() -> new IllegalStateException(
-                "해당 상품에 대한 추첨 정보를 찾을 수 없습니다: " + product.getId()));
-
-        // 추첨 상태 검증
-        raffleValidationService.validateRaffleForEntry(raffle);
-
-        int quantity = orderItem.getQuantity();
-
-        // 사용자 응모 한도 검증
-        raffleValidationService.validateUserEntryLimit(raffle, userId, quantity);
-
-        // 티켓 생성 (Redis 원자적 번호 할당 + DB 저장)
-        raffleTicketApplicationService.createTickets(raffle, userId, quantity);
+    // TICKET 카테고리가 아니면 건너뛰기
+    if (product.getCategory() != ProductCategory.TICKET) {
+      continue;
     }
+
+    // Raffle 조회
+    Raffle raffle = raffleRepository.findByRaffleProductId(product.getId())
+            .orElseThrow(() -> new IllegalStateException(
+                    "해당 상품에 대한 추첨 정보를 찾을 수 없습니다: " + product.getId()));
+
+    // 추첨 상태 검증
+    raffleValidationService.validateRaffleForEntry(raffle);
+
+    int quantity = orderItem.getQuantity();
+
+    // 사용자 응모 한도 검증
+    raffleValidationService.validateUserEntryLimit(raffle, userId, quantity);
+
+    // 티켓 생성 (Redis 원자적 번호 할당 + DB 저장)
+    raffleTicketApplicationService.createTickets(raffle, userId, quantity);
+  }
 }
 ```
 
@@ -270,20 +270,20 @@ paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
 ```java
 @Async("notificationExecutor")
 public void sendStockReducedNotifications(List<UUID> productIds) {
-    log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - ProductIds: {}", productIds);
+  log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - ProductIds: {}", productIds);
 
-    try {
-        // 재고 임계값 알림 전송 (팀원 구현 메서드 호출)
-        notificationApplicationService.createAndSendNotificationsForProducts(productIds);
+  try {
+    // 재고 임계값 알림 전송 (팀원 구현 메서드 호출)
+    notificationApplicationService.createAndSendNotificationsForProducts(productIds);
 
-        log.info("[NOTIFICATION_ASYNC_SUCCESS] Stock reduced notifications sent successfully - ProductIds: {}",
-                productIds);
+    log.info("[NOTIFICATION_ASYNC_SUCCESS] Stock reduced notifications sent successfully - ProductIds: {}",
+            productIds);
 
-    } catch (Exception e) {
-        // 알림 실패해도 결제는 성공 상태 유지
-        log.error("[NOTIFICATION_ASYNC_FAILED] Failed to send stock reduced notifications - ProductIds: {}, Error: {}",
-                productIds, e.getMessage(), e);
-    }
+  } catch (Exception e) {
+    // 알림 실패해도 결제는 성공 상태 유지
+    log.error("[NOTIFICATION_ASYNC_FAILED] Failed to send stock reduced notifications - ProductIds: {}, Error: {}",
+            productIds, e.getMessage(), e);
+  }
 }
 ```
 
@@ -303,32 +303,32 @@ paymentNotificationService.clearCartItems(order);
 ```java
 @Async("notificationExecutor")
 public void clearCartItems(Order order) {
-    Long userId = order.getUserId();
-    List<OrderItem> orderItems = order.getOrderItems();
+  Long userId = order.getUserId();
+  List<OrderItem> orderItems = order.getOrderItems();
 
-    log.info("[CART_CLEAR_ASYNC_START] Clearing cart items - UserId: {}, OrderId: {}, ItemCount: {}",
-            userId, order.getId(), orderItems.size());
+  log.info("[CART_CLEAR_ASYNC_START] Clearing cart items - UserId: {}, OrderId: {}, ItemCount: {}",
+          userId, order.getId(), orderItems.size());
 
-    try {
-        // OrderItem을 CartItemToRemove로 변환
-        List<CartItemToRemove> itemsToRemove = orderItems.stream()
-                .map(orderItem -> new CartItemToRemove(
-                        orderItem.getProductId(),
-                        orderItem.getQuantity()
-                ))
-                .collect(Collectors.toList());
+  try {
+    // OrderItem을 CartItemToRemove로 변환
+    List<CartItemToRemove> itemsToRemove = orderItems.stream()
+            .map(orderItem -> new CartItemToRemove(
+                    orderItem.getProductId(),
+                    orderItem.getQuantity()
+            ))
+            .collect(Collectors.toList());
 
-        // 장바구니에서 제거
-        cartApplicationService.removeCartItems(userId, itemsToRemove);
+    // 장바구니에서 제거
+    cartApplicationService.removeCartItems(userId, itemsToRemove);
 
-        log.info("[CART_CLEAR_ASYNC_SUCCESS] Cart items cleared successfully - UserId: {}, OrderId: {}, ItemCount: {}",
-                userId, order.getId(), itemsToRemove.size());
+    log.info("[CART_CLEAR_ASYNC_SUCCESS] Cart items cleared successfully - UserId: {}, OrderId: {}, ItemCount: {}",
+            userId, order.getId(), itemsToRemove.size());
 
-    } catch (Exception e) {
-        // 장바구니 비우기 실패해도 결제는 성공 상태 유지
-        log.error("[CART_CLEAR_ASYNC_FAILED] Failed to clear cart items - UserId: {}, OrderId: {}, Error: {}",
-                userId, order.getId(), e.getMessage(), e);
-    }
+  } catch (Exception e) {
+    // 장바구니 비우기 실패해도 결제는 성공 상태 유지
+    log.error("[CART_CLEAR_ASYNC_FAILED] Failed to clear cart items - UserId: {}, OrderId: {}, Error: {}",
+            userId, order.getId(), e.getMessage(), e);
+  }
 }
 ```
 
@@ -421,16 +421,16 @@ return payment;
 @EnableAsync
 public class AsyncConfig {
 
-    @Bean(name = "notificationExecutor")
-    public Executor notificationExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);          // 기본 스레드 수
-        executor.setMaxPoolSize(10);          // 최대 스레드 수
-        executor.setQueueCapacity(100);       // 큐 크기
-        executor.setThreadNamePrefix("notification-async-");
-        executor.initialize();
-        return executor;
-    }
+  @Bean(name = "notificationExecutor")
+  public Executor notificationExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(5);          // 기본 스레드 수
+    executor.setMaxPoolSize(10);          // 최대 스레드 수
+    executor.setQueueCapacity(100);       // 큐 크기
+    executor.setThreadNamePrefix("notification-async-");
+    executor.initialize();
+    return executor;
+  }
 }
 ```
 
@@ -466,9 +466,9 @@ POST /payments/confirm
 #### 1. Toss Payments API 호출 (PaymentApplicationService.java:96-106)
 ```java
 TossPaymentConfirmRequest request = new TossPaymentConfirmRequest(
-    paymentKey,
-    orderId.toString(),
-    amount
+        paymentKey,
+        orderId.toString(),
+        amount
 );
 TossPaymentResponse response = tossPaymentClient.confirmPayment(request);
 ```
@@ -512,13 +512,13 @@ payment.approve(response.getPaymentKey(), response.getTransactionKey());
 #### 3. 예외 처리
 ```java
 try {
-    // Toss API 호출 및 결제 승인
-} catch (Exception e) {
-    // 결제 실패 처리
-    payment.fail("PAYMENT_FAILED", e.getMessage());
-    paymentRepository.save(payment);
+        // Toss API 호출 및 결제 승인
+        } catch (Exception e) {
+        // 결제 실패 처리
+        payment.fail("PAYMENT_FAILED", e.getMessage());
+        paymentRepository.save(payment);
     throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
-}
+        }
 ```
 
 **실패 시 Payment 상태:**
@@ -628,22 +628,22 @@ try {
 ```java
 @Transactional
 public Payment confirmPaymentForTest(UUID orderId) {
-    // 1. Payment 승인
-    // 2. Order 상태 변경
-    // 3. 재고 차감
-    // 4. TICKET 발행
-    // ← 여기까지 단일 트랜잭션 (예외 발생 시 모두 롤백)
+  // 1. Payment 승인
+  // 2. Order 상태 변경
+  // 3. 재고 차감
+  // 4. TICKET 발행
+  // ← 여기까지 단일 트랜잭션 (예외 발생 시 모두 롤백)
 }
 
 // 비동기 처리는 별도 트랜잭션
 @Async
 public void sendStockReducedNotifications(...) {
-    // 독립적인 트랜잭션 (실패해도 결제는 성공)
+  // 독립적인 트랜잭션 (실패해도 결제는 성공)
 }
 
 @Async
 public void clearCartItems(...) {
-    // 독립적인 트랜잭션 (실패해도 결제는 성공)
+  // 독립적인 트랜잭션 (실패해도 결제는 성공)
 }
 ```
 
@@ -674,17 +674,17 @@ Product findByIdForUpdate(UUID id);
 **재고 복구 로직 (PaymentApplicationService.java:273-285):**
 ```java
 private void restoreProductStock(Order order) {
-    for (OrderItem orderItem : order.getOrderItems()) {
-        Product product = productRepository.findById(orderItem.getProductId())
+  for (OrderItem orderItem : order.getOrderItems()) {
+    Product product = productRepository.findById(orderItem.getProductId())
             .orElseThrow(() -> new IllegalArgumentException(
-                "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
+                    "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
 
-        product.increaseStock(orderItem.getQuantity());
-        productRepository.save(product);
+    product.increaseStock(orderItem.getQuantity());
+    productRepository.save(product);
 
-        log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}, Current: {}",
+    log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}, Current: {}",
             product.getId(), orderItem.getQuantity(), product.getStock());
-    }
+  }
 }
 ```
 

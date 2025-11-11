@@ -55,3 +55,4 @@ public class ProductJpaEntity {
     private LocalDateTime updatedAt;
 }
 
+

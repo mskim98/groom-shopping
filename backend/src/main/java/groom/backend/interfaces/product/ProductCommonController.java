@@ -1,6 +1,5 @@
 package groom.backend.interfaces.product;
 
-import groom.backend.common.response.ApiResponse;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.service.ProductCommonService;
 import groom.backend.interfaces.product.dto.request.CreateProductRequest;
@@ -10,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,6 +17,7 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,7 +29,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/product")
+@RequestMapping("/v1/product")
 @RequiredArgsConstructor
 @Tag(name = "Product Management", description = "제품 관리 API (생성, 수정, 삭제, 재고 관리)")
 @SecurityRequirement(name = "JWT")
@@ -41,15 +42,15 @@ public class ProductCommonController {
             description = "새로운 제품을 생성합니다."
     )
     @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "제품 생성 성공",
+            @ApiResponse(responseCode = "201", description = "제품 생성 성공",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ProductResponse.class))),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "잘못된 요청"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<ProductResponse> createProduct(
+    public ResponseEntity<ProductResponse> createProduct(
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
                     description = "제품 생성 요청",
                     required = true,
@@ -60,7 +61,7 @@ public class ProductCommonController {
         Product product = productService.createProduct(request);
         ProductResponse productResponse = ProductResponse.from(product);
 
-        return ApiResponse.success(productResponse, "상품이 정상적으로 등록되었습니다.");
+        return ResponseEntity.ok(productResponse);
     }
 
     @Operation(
@@ -68,15 +69,15 @@ public class ProductCommonController {
             description = "기존 제품의 정보를 수정합니다."
     )
     @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "제품 수정 성공",
+            @ApiResponse(responseCode = "200", description = "제품 수정 성공",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ProductResponse.class))),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "잘못된 요청"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
     })
     @PatchMapping("/{id}")
-    public ApiResponse<ProductResponse> updateProduct(
+    public ResponseEntity<ProductResponse> updateProduct(
             @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID id,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
@@ -89,7 +90,7 @@ public class ProductCommonController {
         Product product = productService.updateProduct(id, request);
         ProductResponse productResponse = ProductResponse.from(product);
 
-        return ApiResponse.success(productResponse, "상품이 수정되었습니다.");
+        return ResponseEntity.ok(productResponse);
     }
 
     @Operation(
@@ -97,15 +98,15 @@ public class ProductCommonController {
             description = "제품의 재고를 증가시킵니다."
     )
     @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재고 증가 성공",
+            @ApiResponse(responseCode = "200", description = "재고 증가 성공",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ProductResponse.class))),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "잘못된 요청"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
     })
     @PatchMapping("/{id}/stock/increase")
-    public ApiResponse<ProductResponse> increaseStock(
+    public ResponseEntity<ProductResponse> increaseStock(
             @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID id,
             @Parameter(description = "증가할 수량", required = true, example = "10")
@@ -113,7 +114,7 @@ public class ProductCommonController {
 
         Product product = productService.increaseStock(id, amount);
         ProductResponse productResponse = ProductResponse.from(product);
-        return ApiResponse.success(productResponse, "재고가 증가되었습니다.");
+        return ResponseEntity.ok(productResponse);
     }
 
     @Operation(
@@ -121,15 +122,15 @@ public class ProductCommonController {
             description = "제품의 재고를 감소시킵니다."
     )
     @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재고 감소 성공",
+            @ApiResponse(responseCode = "200", description = "재고 감소 성공",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ProductResponse.class))),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "잘못된 요청 (재고 부족 등)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (재고 부족 등)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
     })
     @PatchMapping("/{id}/stock/decrease")
-    public ApiResponse<ProductResponse> decreaseStock(
+    public ResponseEntity<ProductResponse> decreaseStock(
             @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID id,
             @Parameter(description = "감소할 수량", required = true, example = "5")
@@ -137,7 +138,7 @@ public class ProductCommonController {
 
         Product product = productService.decreaseStock(id, amount);
         ProductResponse productResponse = ProductResponse.from(product);
-        return ApiResponse.success(productResponse, "재고가 감소되었습니다.");
+        return ResponseEntity.ok(productResponse);
     }
 
     @Operation(
@@ -145,16 +146,16 @@ public class ProductCommonController {
             description = "제품을 삭제합니다."
     )
     @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "제품 삭제 성공"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
+            @ApiResponse(responseCode = "200", description = "제품 삭제 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "제품을 찾을 수 없음")
     })
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.OK)
-    public ApiResponse<Void> deleteProduct(
+    public ResponseEntity<Void> deleteProduct(
             @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID id) {
         productService.deleteProduct(id);
-        return ApiResponse.success(null, "상품이 삭제되었습니다.");
+        return ResponseEntity.ok().build();
     }
 }

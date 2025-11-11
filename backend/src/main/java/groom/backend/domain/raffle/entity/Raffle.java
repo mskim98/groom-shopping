@@ -1,7 +1,7 @@
 package groom.backend.domain.raffle.entity;
 
 import groom.backend.domain.raffle.enums.RaffleStatus;
-import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
+import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -17,8 +17,8 @@ public class Raffle {
     private UUID winnerProductId;
     private String title;
     private String description;
-    private int winnersCount;
-    private int maxEntriesPerUser;
+    private Integer winnersCount;
+    private Integer maxEntriesPerUser;
     private LocalDateTime entryStartAt;
     private LocalDateTime entryEndAt;
     private LocalDateTime raffleDrawAt;
@@ -26,7 +26,7 @@ public class Raffle {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
-    public void updateRaffle(RaffleRequest request) {
+    public void updateRaffle(RaffleUpdateRequest request) {
         if(request.getTitle() != null) {
             this.title = request.getTitle();
         }
@@ -39,10 +39,10 @@ public class Raffle {
         if(request.getWinnerProductId() != null) {
             this.winnerProductId = request.getWinnerProductId();
         }
-        if(request.getWinnersCount() > 0) {
+        if(request.getWinnersCount() != null) {
             this.winnersCount = request.getWinnersCount();
         }
-        if(request.getMaxEntriesPerUser() > 0) {
+        if(request.getMaxEntriesPerUser() != null) {
             this.maxEntriesPerUser = request.getMaxEntriesPerUser();
         }
         if(request.getEntryStartAt() != null) {
