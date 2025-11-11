@@ -26,7 +26,7 @@ import java.util.List;
  */
 @Slf4j
 @RestController
-@RequestMapping("/v1/products")
+@RequestMapping("/v1/product")
 @RequiredArgsConstructor
 @Tag(name = "Product", description = "제품 구매 관련 API")
 @SecurityRequirement(name = "JWT")
