@@ -4,9 +4,13 @@ import groom.backend.domain.product.model.criteria.ProductSearchCondition;
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.*;
 import org.springframework.data.domain.Sort;
 
 @Schema(description = "제품 생성 요청 DTO")
+@ToString
+@Setter
+@NoArgsConstructor
 public class ProductSearchRequest {
   // 검색 조건
   String name;
