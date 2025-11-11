@@ -52,6 +52,8 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
 
     /**
      * 검색 조건에 맞춰 검색/정렬/필터링 기능을 제공합니다.
+     * 첫 번째 쿼리에서 결과를 얻어내고, 두 번째 쿼리를 통해 Page 형태로 가공할 수 있도록 결과를 카운팅합니다.
+     * TODO : page 구성으로 인해 count 쿼리를 시앻하여 DB I/O가 총 두 번 시행됨.
      * @param condition
      * @param pageable
      * @return
@@ -74,23 +76,21 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
 
       // 가격 범위
       if (condition.getMinPrice() != null) {
-        predicates.add(cb.greaterThanOrEqualTo(product.get("price").get("amount"), condition.getMinPrice()));
+        predicates.add(cb.greaterThanOrEqualTo(product.get("price"), condition.getMinPrice()));
       }
       if (condition.getMaxPrice() != null) {
-        predicates.add(cb.lessThanOrEqualTo(product.get("price").get("amount"), condition.getMaxPrice()));
+        predicates.add(cb.lessThanOrEqualTo(product.get("price"), condition.getMaxPrice()));
       }
-
-      cq.where(predicates.toArray(new Predicate[0]));
 
       // 필터링 조건
       // 상태
       if (condition.getStatus() != null) {
-        predicates.add(cb.equal(product.get("status"), condition.getStatus()));
+        predicates.add(cb.equal(product.get("status"), condition.getStatus().name()));
       }
 
       // 카테고리
       if (condition.getCategory() != null) {
-        predicates.add(cb.equal(product.get("category"), condition.getCategory()));
+        predicates.add(cb.equal(product.get("category"), condition.getCategory().name()));
       }
 
       cq.where(predicates.toArray(new Predicate[0]));
@@ -105,7 +105,7 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
       }
 
       if (priceDir != null) {
-        orders.add(priceDir.isAscending() ? cb.asc(product.get("price").get("amount")) : cb.desc(product.get("price").get("amount")));
+        orders.add(priceDir.isAscending() ? cb.asc(product.get("price")) : cb.desc(product.get("price")));
       }
 
       // 기본 정렬 (id desc)
@@ -124,8 +124,28 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
       // count 쿼리
       CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
       Root<ProductJpaEntity> countRoot = countQuery.from(ProductJpaEntity.class);
+
+      // 새로운 Predicate 빌드 (같은 로직이지만 countRoot 기준)
+      List<Predicate> countPredicates = new ArrayList<>();
+
+      if (condition.getName() != null && !condition.getName().isBlank()) {
+        countPredicates.add(cb.like(cb.lower(countRoot.get("name")), "%" + condition.getName().toLowerCase() + "%"));
+      }
+      if (condition.getMinPrice() != null) {
+        countPredicates.add(cb.greaterThanOrEqualTo(countRoot.get("price"), condition.getMinPrice()));
+      }
+      if (condition.getMaxPrice() != null) {
+        countPredicates.add(cb.lessThanOrEqualTo(countRoot.get("price"), condition.getMaxPrice()));
+      }
+      if (condition.getStatus() != null) {
+        countPredicates.add(cb.equal(countRoot.get("status"), condition.getStatus().name()));
+      }
+      if (condition.getCategory() != null) {
+        countPredicates.add(cb.equal(countRoot.get("category"), condition.getCategory().name()));
+      }
+
       countQuery.select(cb.count(countRoot))
-              .where(predicates.toArray(new Predicate[0]));
+              .where(countPredicates.toArray(new Predicate[0]));
       Long total = em.createQuery(countQuery).getSingleResult();
 
       // Page 반환
