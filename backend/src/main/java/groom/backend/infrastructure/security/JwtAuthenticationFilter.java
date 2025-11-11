@@ -83,8 +83,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             String token = resolveToken(request);
 
-            if(StringUtils.hasText(token)) {
-                if(jwtTokenProvider.validateToken(token)) {
+            if (StringUtils.hasText(token)) {
+                if (jwtTokenProvider.validateToken(token)) {
                     Authentication authentication = jwtTokenProvider.getAuthentication(token);
 
                     ((AbstractAuthenticationToken) authentication)
@@ -102,11 +102,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "EXPIRED_TOKEN", "세션이 만료되었습니다. 다시 로그인해 주세요.");
             return;
         } catch (JwtException | IllegalArgumentException e) {
-            // JWT 관련 예외는 AuthenticationEntryPoint로 위임하여 401 처리
+            // JWT 관련 예외는 이 필터에서 직접 401 응답으로 처리함
             setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TOKEN", e.getMessage());
             return;
         } catch (Exception e) {
-            // 기타 예외도 엔트리포인트로 처리하거나 별도로 로깅/응답 처리
+            // 기타 예외는 이 필터에서 직접 401 응답을 반환하여 처리합니다.
             setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", "인증 처리 중 오류가 발생했습니다.");
             return;
         }
@@ -120,7 +120,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         response.setStatus(status);
         response.setCharacterEncoding(java.nio.charset.StandardCharsets.UTF_8.name());
         response.setContentType("application/json;charset=UTF-8");
-
 
         ErrorResponse errorResponse = ErrorResponse.of(status, code, message);
         byte[] bytes = LOCAL_OBJECT_MAPPER.writeValueAsBytes(errorResponse);
