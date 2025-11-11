@@ -3,6 +3,8 @@ package groom.backend.interfaces.raffle;
 import groom.backend.application.raffle.RaffleApplicationService;
 import groom.backend.application.raffle.RaffleDrawApplicationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
@@ -62,7 +64,7 @@ public class RaffleController {
             )
             @RequestBody @Valid RaffleRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         RaffleResponse response = raffleApplicationService.createRaffle(user, raffleRequest);
@@ -93,7 +95,7 @@ public class RaffleController {
             )
             @RequestBody @Valid RaffleUpdateRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         RaffleResponse response = raffleApplicationService.updateRaffle(user, raffleId, raffleRequest);
@@ -115,7 +117,7 @@ public class RaffleController {
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         raffleApplicationService.deleteRaffle(user, raffleId);
@@ -135,17 +137,12 @@ public class RaffleController {
     })
     @GetMapping
     public ResponseEntity<Page<RaffleResponse>> searchRaffles(
-            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
             @Parameter(description = "검색 조건")
             @ModelAttribute RaffleSearchRequest cond,
             @Parameter(description = "페이징 정보", example = "page=0&size=10&sort=createdAt,DESC")
             @PageableDefault(size = 10, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
 
-        if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-
-// 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
+        // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
         RaffleSearchCriteria criteria = RaffleSearchMapper.toCriteria(cond);
         Page<RaffleResponse> page = raffleApplicationService.searchRaffles(criteria, pageable);
         return ResponseEntity.ok(page);
@@ -168,7 +165,7 @@ public class RaffleController {
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
@@ -197,7 +194,7 @@ public class RaffleController {
             )
             @RequestBody @Valid RaffleEntryRequest entry) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), entry.getCount());
@@ -219,7 +216,7 @@ public class RaffleController {
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
         if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
         // 추첨 실행
         raffleDrawApplicationService.drawRaffleWinners(user, raffleId);

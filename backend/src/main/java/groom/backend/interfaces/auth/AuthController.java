@@ -1,6 +1,8 @@
 package groom.backend.interfaces.auth;
 
 import groom.backend.application.auth.service.AuthApplicationService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
@@ -18,7 +20,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -89,7 +90,7 @@ public class AuthController {
             @AuthenticationPrincipal CustomUserDetails user
     ) {
         if (user == null || user.getUser() == null || user.getUser().getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         authService.logout(user.getUser().getEmail());
@@ -112,7 +113,7 @@ public class AuthController {
             @RequestBody UserUpdateRequest userUpdateRequest
     ) {
         if (user == null || user.getUser() == null || user.getUser().getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         UserUpdateResponse response = authService.updateUser(user.getUser().getId(), userUpdateRequest);
