@@ -137,17 +137,12 @@ public class RaffleController {
     })
     @GetMapping
     public ResponseEntity<Page<RaffleResponse>> searchRaffles(
-            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
             @Parameter(description = "검색 조건")
             @ModelAttribute RaffleSearchRequest cond,
             @Parameter(description = "페이징 정보", example = "page=0&size=10&sort=createdAt,DESC")
             @PageableDefault(size = 10, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
 
-        if (user == null || user.getEmail() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-
-// 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
+        // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
         RaffleSearchCriteria criteria = RaffleSearchMapper.toCriteria(cond);
         Page<RaffleResponse> page = raffleApplicationService.searchRaffles(criteria, pageable);
         return ResponseEntity.ok(page);
