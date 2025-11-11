@@ -2,6 +2,8 @@ package groom.backend.application.raffle;
 
 import groom.backend.application.notification.NotificationApplicationService;
 import groom.backend.application.product.ProductApplicationService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
@@ -47,7 +49,7 @@ public class RaffleDrawApplicationService {
         // 실제 참가자 수 조회
         int entryCount = ticketRepository.countDistinctUserByRaffleId(raffle.getRaffleId());
         if (entryCount == 0) {
-            throw new IllegalStateException("응모자가 없어 당첨자 추첨을 진행할 수 없습니다.");
+            throw new BusinessException(ErrorCode.RAFFLE_NO_PARTICIPANTS);
         }
 
         // 이미 추첨된 당첨자 수 조회
@@ -55,7 +57,7 @@ public class RaffleDrawApplicationService {
         int numberOfWinnersToDraw = (raffle.getWinnersCount() - currentWinnerCount);
 
         if (numberOfWinnersToDraw <= 0) {
-            throw new IllegalStateException("이미 모든 당첨자가 추첨되었습니다.");
+            throw new BusinessException(ErrorCode.RAFFLE_ALL_WINNERS_DRAWN);
         }
 
         // 당첨자 추첨
@@ -69,7 +71,7 @@ public class RaffleDrawApplicationService {
         // 결과값이 실제 응모자 수 또는 요청된 당첨자 수 중 작은 값과 일치하는지 확인
         int expected = Math.min(entryCount, numberOfWinnersToDraw);
         if (result != expected) {
-            throw new IllegalStateException("당첨자 추첨에 실패했습니다. 다시 시도해주세요.");
+            throw new BusinessException(ErrorCode.RAFFLE_DRAW_FAILED);
         }
 
 

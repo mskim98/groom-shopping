@@ -1,5 +1,7 @@
 package groom.backend.application.raffle;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
@@ -89,7 +91,7 @@ public class RaffleApplicationService {
 
         // 상태 검증 - 진행중이거나 종료된 추첨은 수정 불가
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
-            throw new IllegalStateException("진행중이거나 종료된 추첨은 수정할 수 없습니다.");
+            throw new BusinessException(ErrorCode.RAFFLE_NOT_EDITABLE);
         }
 
         // 요청 날짜 검증 (응모일, 추첨일)
@@ -147,7 +149,8 @@ public class RaffleApplicationService {
         Raffle raffle = raffleValidationService.findById(raffleId);
 
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
-            throw new IllegalStateException("진행중이거나 종료된 추첨은 삭제할 수 없습니다.");
+            throw new BusinessException(ErrorCode.RAFFLE_CANNOT_BE_DELETED);
+
         }
 
         raffleRepository.deleteById(raffle.getRaffleId());
@@ -158,7 +161,7 @@ public class RaffleApplicationService {
     @Transactional
     public Raffle findByRaffleProductId(UUID raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId)
-                .orElseThrow(() -> new IllegalStateException("해당 상품으로 등록된 추첨이 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.RAFFLE_NOT_FOUND_FOR_PRODUCT));
     }
 
 

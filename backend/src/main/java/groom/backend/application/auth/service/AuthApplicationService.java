@@ -1,5 +1,7 @@
 package groom.backend.application.auth.service;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.repository.RefreshTokenRepository;
 import groom.backend.domain.auth.repository.UserRepository;
@@ -39,7 +41,7 @@ public class AuthApplicationService {
         String email = request.getEmail().toLowerCase().trim();
 
         if (userRepo.existsByEmail(email)) {
-            throw new IllegalArgumentException("Email already registered");
+            throw new BusinessException(ErrorCode.EMAIL_DUPLICATION);
         }
 
         // TODO 객체 생성 팩토리 메서드로 변경 고려
@@ -94,7 +96,7 @@ public class AuthApplicationService {
         String refreshToken = request.getRefreshToken();
 
         if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new IllegalArgumentException("유효하지 않은 리프레시 토큰입니다.");
+            throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN); // 리프레시 토큰이 유효하지 않음
         }
 
         String email = jwtTokenProvider.getEmail(refreshToken);
@@ -102,11 +104,11 @@ public class AuthApplicationService {
                                             .orElseThrow(() -> new IllegalArgumentException("저장된 리프레시 토큰을 찾을 수 없습니다."));
 
         if (!storedRefreshToken.equals(refreshToken)) {
-            throw new IllegalArgumentException("리프레시 토큰이 일치하지 않습니다.");
+            throw new BusinessException(ErrorCode.MISMATCH_REFRESH_TOKEN); // refreash token 불일치
         }
 
         User user = userRepo.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         String newAccessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
 
@@ -118,7 +120,7 @@ public class AuthApplicationService {
     @Transactional
     public UserUpdateResponse updateUser(Long id, UserUpdateRequest request) {
         User user = userRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         user.updateUser(request.getName(), request.getRole(), request.getGrade());
 
