@@ -10,7 +10,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ImageWithFallback } from '@/components/figma/ImageWithFallback';
 
 interface Product {
-  id: string;
+  productId: string;
   name: string;
   description: string;
   price: number;
@@ -66,7 +66,7 @@ export default function ProductsPage() {
       
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {products.map((product) => (
-          <Link key={product.id} href={`/products/${product.id}`}>
+          <Link key={product.productId} href={`/products/${product.productId}`}>
             <Card className="h-full hover:shadow-lg transition-shadow cursor-pointer">
               <div className="aspect-square relative overflow-hidden">
                 <ImageWithFallback

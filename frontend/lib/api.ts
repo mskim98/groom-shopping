@@ -76,8 +76,16 @@ export async function apiRequest<T>(
     throw new Error(errorMessage);
   }
 
-  const result: ApiResponse<T> = await response.json();
-  return result.data;
+  const result = await response.json();
+
+  // ApiResponse 형식 (success 필드가 있는 경우)
+  if (typeof result === 'object' && result !== null && 'success' in result) {
+    const apiResult: ApiResponse<T> = result;
+    return apiResult.data;
+  }
+
+  // ApiResponse 래퍼 없이 직접 데이터를 반환하는 경우
+  return result as T;
 }
 
 export function getAccessToken(): string | null {

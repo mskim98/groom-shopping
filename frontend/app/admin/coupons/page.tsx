@@ -17,9 +17,12 @@ import { toast } from 'sonner';
 interface Coupon {
   id: string;
   name: string;
-  discountType: string;
-  discountValue: number;
-  expiresAt?: string;
+  description?: string;
+  quantity?: number;
+  amount: number;
+  type: string;
+  expireDate?: string;
+  isActive?: boolean;
 }
 
 export default function AdminCouponsPage() {
@@ -34,9 +37,11 @@ export default function AdminCouponsPage() {
   
   const [formData, setFormData] = useState({
     name: '',
-    discountType: 'PERCENTAGE',
-    discountValue: 0,
-    expiresAt: '',
+    description: '',
+    quantity: 100,
+    amount: 0,
+    type: 'PERCENT',
+    expireDate: '',
   });
 
   useEffect(() => {
@@ -114,9 +119,11 @@ export default function AdminCouponsPage() {
     setEditingCoupon(coupon);
     setFormData({
       name: coupon.name,
-      discountType: coupon.discountType,
-      discountValue: coupon.discountValue,
-      expiresAt: coupon.expiresAt || '',
+      description: coupon.description || '',
+      quantity: coupon.quantity || 100,
+      amount: coupon.amount,
+      type: coupon.type,
+      expireDate: coupon.expireDate || '',
     });
   };
 
@@ -128,9 +135,11 @@ export default function AdminCouponsPage() {
   const resetForm = () => {
     setFormData({
       name: '',
-      discountType: 'PERCENTAGE',
-      discountValue: 0,
-      expiresAt: '',
+      description: '',
+      quantity: 100,
+      amount: 0,
+      type: 'PERCENT',
+      expireDate: '',
     });
   };
 
@@ -160,39 +169,59 @@ export default function AdminCouponsPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="discountType">할인 타입</Label>
+                <Label htmlFor="description">쿠폰 설명</Label>
+                <Input
+                  id="description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="쿠폰 설명을 입력하세요"
+                />
+              </div>
+              <div>
+                <Label htmlFor="quantity">발급 수량</Label>
+                <Input
+                  id="quantity"
+                  type="number"
+                  value={formData.quantity}
+                  onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="type">할인 타입</Label>
                 <Select
-                  value={formData.discountType}
-                  onValueChange={(value) => setFormData({ ...formData, discountType: value })}
+                  value={formData.type}
+                  onValueChange={(value) => setFormData({ ...formData, type: value })}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="PERCENTAGE">퍼센트 할인</SelectItem>
-                    <SelectItem value="FIXED">정액 할인</SelectItem>
+                    <SelectItem value="PERCENT">퍼센트 할인</SelectItem>
+                    <SelectItem value="AMOUNT">정액 할인</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label htmlFor="discountValue">
-                  할인 값 {formData.discountType === 'PERCENTAGE' ? '(%)' : '(원)'}
+                <Label htmlFor="amount">
+                  할인 값 {formData.type === 'PERCENT' ? '(%)' : '(원)'}
                 </Label>
                 <Input
-                  id="discountValue"
+                  id="amount"
                   type="number"
-                  value={formData.discountValue}
-                  onChange={(e) => setFormData({ ...formData, discountValue: parseInt(e.target.value) })}
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: parseInt(e.target.value) })}
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="expiresAt">만료일</Label>
+                <Label htmlFor="expireDate">만료일</Label>
                 <Input
-                  id="expiresAt"
-                  type="datetime-local"
-                  value={formData.expiresAt}
-                  onChange={(e) => setFormData({ ...formData, expiresAt: e.target.value })}
+                  id="expireDate"
+                  type="date"
+                  value={formData.expireDate}
+                  onChange={(e) => setFormData({ ...formData, expireDate: e.target.value })}
+                  required
                 />
               </div>
               <Button type="submit" className="w-full">등록</Button>
@@ -218,15 +247,15 @@ export default function AdminCouponsPage() {
                 <TableRow key={coupon.id}>
                   <TableCell>{coupon.name}</TableCell>
                   <TableCell>
-                    {coupon.discountType === 'PERCENTAGE' ? '퍼센트 할인' : '정액 할인'}
+                    {coupon.type === 'PERCENT' ? '퍼센트 할인' : '정액 할인'}
                   </TableCell>
                   <TableCell>
-                    {coupon.discountType === 'PERCENTAGE'
-                      ? `${coupon.discountValue}%`
-                      : `${coupon.discountValue.toLocaleString()}원`}
+                    {coupon.type === 'PERCENT'
+                      ? `${coupon.amount}%`
+                      : `${coupon.amount.toLocaleString()}원`}
                   </TableCell>
                   <TableCell>
-                    {coupon.expiresAt ? new Date(coupon.expiresAt).toLocaleDateString() : '-'}
+                    {coupon.expireDate ? new Date(coupon.expireDate).toLocaleDateString() : '-'}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
@@ -265,39 +294,59 @@ export default function AdminCouponsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="edit-discountType">할인 타입</Label>
+              <Label htmlFor="edit-description">쿠폰 설명</Label>
+              <Input
+                id="edit-description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="쿠폰 설명을 입력하세요"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-quantity">발급 수량</Label>
+              <Input
+                id="edit-quantity"
+                type="number"
+                value={formData.quantity}
+                onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-type">할인 타입</Label>
               <Select
-                value={formData.discountType}
-                onValueChange={(value) => setFormData({ ...formData, discountType: value })}
+                value={formData.type}
+                onValueChange={(value) => setFormData({ ...formData, type: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PERCENTAGE">퍼센트 할인</SelectItem>
-                  <SelectItem value="FIXED">정액 할인</SelectItem>
+                  <SelectItem value="PERCENT">퍼센트 할인</SelectItem>
+                  <SelectItem value="AMOUNT">정액 할인</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label htmlFor="edit-discountValue">
-                할인 값 {formData.discountType === 'PERCENTAGE' ? '(%)' : '(원)'}
+              <Label htmlFor="edit-amount">
+                할인 값 {formData.type === 'PERCENT' ? '(%)' : '(원)'}
               </Label>
               <Input
-                id="edit-discountValue"
+                id="edit-amount"
                 type="number"
-                value={formData.discountValue}
-                onChange={(e) => setFormData({ ...formData, discountValue: parseInt(e.target.value) })}
+                value={formData.amount}
+                onChange={(e) => setFormData({ ...formData, amount: parseInt(e.target.value) })}
                 required
               />
             </div>
             <div>
-              <Label htmlFor="edit-expiresAt">만료일</Label>
+              <Label htmlFor="edit-expireDate">만료일</Label>
               <Input
-                id="edit-expiresAt"
-                type="datetime-local"
-                value={formData.expiresAt}
-                onChange={(e) => setFormData({ ...formData, expiresAt: e.target.value })}
+                id="edit-expireDate"
+                type="date"
+                value={formData.expireDate}
+                onChange={(e) => setFormData({ ...formData, expireDate: e.target.value })}
+                required
               />
             </div>
             <Button type="submit" className="w-full">수정</Button>

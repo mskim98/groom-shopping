@@ -16,7 +16,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Product {
-  id: string;
+  productId: string;
   name: string;
   description: string;
   price: number;
@@ -65,7 +65,9 @@ export default function AdminProductsPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await productApi.createProduct(formData);
+      // Remove imageUrl from create request as it's not in CreateProductRequest
+      const { imageUrl, ...createData } = formData;
+      await productApi.createProduct(createData);
       toast.success('상품이 등록되었습니다.');
       setIsCreateOpen(false);
       resetForm();
@@ -78,9 +80,11 @@ export default function AdminProductsPage() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct) return;
-    
+
     try {
-      await productApi.updateProduct(editingProduct.id, formData);
+      // Remove imageUrl from update request as it's not in UpdateProductRequest
+      const { imageUrl, ...updateData } = formData;
+      await productApi.updateProduct(editingProduct.productId, updateData);
       toast.success('상품이 수정되었습니다.');
       setEditingProduct(null);
       resetForm();
@@ -92,9 +96,9 @@ export default function AdminProductsPage() {
 
   const handleDelete = async () => {
     if (!deleteProduct) return;
-    
+
     try {
-      await productApi.deleteProduct(deleteProduct.id);
+      await productApi.deleteProduct(deleteProduct.productId);
       toast.success('상품이 삭제되었습니다.');
       setDeleteProduct(null);
       loadProducts();
@@ -226,7 +230,7 @@ export default function AdminProductsPage() {
             </TableHeader>
             <TableBody>
               {products.map((product) => (
-                <TableRow key={product.id}>
+                <TableRow key={product.productId}>
                   <TableCell>{product.name}</TableCell>
                   <TableCell>
                     {product.category === 'GENERAL' && '일반 품목'}

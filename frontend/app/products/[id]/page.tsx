@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import { ImageWithFallback } from '@/components/figma/ImageWithFallback';
 
 interface Product {
-  id: string;
+  productId: string;
   name: string;
   description: string;
   price: number;

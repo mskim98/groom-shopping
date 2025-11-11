@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { raffleApi, getAccessToken } from '@/lib/api';
+import { raffleApi, productApi, getAccessToken } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Play, Eye } from 'lucide-react';
+import { Plus, Play, Eye, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Raffle {
@@ -30,12 +30,24 @@ interface Raffle {
   raffleDrawAt: string;
 }
 
+interface Product {
+  productId: string;
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  category: 'GENERAL' | 'TICKET' | 'RAFFLE';
+}
+
 export default function AdminRafflesPage() {
   const router = useRouter();
   const [raffles, setRaffles] = useState<Raffle[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [executeRaffle, setExecuteRaffle] = useState<Raffle | null>(null);
-  
+  const [products, setProducts] = useState<Product[]>([]);
+  const [ticketProducts, setTicketProducts] = useState<Product[]>([]);
+  const [raffleProducts, setRaffleProducts] = useState<Product[]>([]);
+
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -55,6 +67,7 @@ export default function AdminRafflesPage() {
       return;
     }
     loadRaffles();
+    loadProducts();
   }, [router]);
 
   const loadRaffles = async () => {
@@ -63,6 +76,17 @@ export default function AdminRafflesPage() {
       setRaffles(response.content);
     } catch (error) {
       toast.error('추첨 목록을 불러오는데 실패했습니다.');
+    }
+  };
+
+  const loadProducts = async () => {
+    try {
+      const response = await productApi.getProducts(0, 100);
+      setProducts(response.content);
+      setTicketProducts(response.content.filter((p: Product) => p.category === 'TICKET'));
+      setRaffleProducts(response.content.filter((p: Product) => p.category === 'RAFFLE'));
+    } catch (error) {
+      toast.error('상품 목록을 불러오는데 실패했습니다.');
     }
   };
 
@@ -162,22 +186,79 @@ export default function AdminRafflesPage() {
                   required
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div>
-                  <Label htmlFor="raffleProductId">추첨 티켓 상품 ID</Label>
-                  <Input
-                    id="raffleProductId"
-                    value={formData.raffleProductId}
-                    onChange={(e) => setFormData({ ...formData, raffleProductId: e.target.value })}
-                  />
+                  <Label className="mb-2 block">추첨 티켓 상품 (TICKET 카테고리)</Label>
+                  <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto border rounded-md p-3">
+                    {ticketProducts.map((product) => (
+                      <Card
+                        key={product.productId}
+                        className={`cursor-pointer transition-all ${
+                          formData.raffleProductId === product.productId
+                            ? 'border-primary border-2 bg-primary/5'
+                            : 'hover:border-primary/50'
+                        }`}
+                        onClick={() => setFormData({ ...formData, raffleProductId: product.productId })}
+                      >
+                        <CardHeader className="p-3">
+                          <div className="flex items-start justify-between">
+                            <CardTitle className="text-sm">{product.name}</CardTitle>
+                            {formData.raffleProductId === product.productId && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </div>
+                        </CardHeader>
+                        <CardContent className="p-3 pt-0">
+                          <p className="text-xs text-muted-foreground line-clamp-2">
+                            {product.description}
+                          </p>
+                          <p className="text-xs mt-2">가격: {product.price.toLocaleString()}원</p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {ticketProducts.length === 0 && (
+                      <p className="text-sm text-muted-foreground col-span-2 text-center py-4">
+                        TICKET 카테고리 상품이 없습니다.
+                      </p>
+                    )}
+                  </div>
                 </div>
+
                 <div>
-                  <Label htmlFor="winnerProductId">증정 상품 ID</Label>
-                  <Input
-                    id="winnerProductId"
-                    value={formData.winnerProductId}
-                    onChange={(e) => setFormData({ ...formData, winnerProductId: e.target.value })}
-                  />
+                  <Label className="mb-2 block">증정 상품 (RAFFLE 카테고리)</Label>
+                  <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto border rounded-md p-3">
+                    {raffleProducts.map((product) => (
+                      <Card
+                        key={product.productId}
+                        className={`cursor-pointer transition-all ${
+                          formData.winnerProductId === product.productId
+                            ? 'border-primary border-2 bg-primary/5'
+                            : 'hover:border-primary/50'
+                        }`}
+                        onClick={() => setFormData({ ...formData, winnerProductId: product.productId })}
+                      >
+                        <CardHeader className="p-3">
+                          <div className="flex items-start justify-between">
+                            <CardTitle className="text-sm">{product.name}</CardTitle>
+                            {formData.winnerProductId === product.productId && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </div>
+                        </CardHeader>
+                        <CardContent className="p-3 pt-0">
+                          <p className="text-xs text-muted-foreground line-clamp-2">
+                            {product.description}
+                          </p>
+                          <p className="text-xs mt-2">가격: {product.price.toLocaleString()}원</p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {raffleProducts.length === 0 && (
+                      <p className="text-sm text-muted-foreground col-span-2 text-center py-4">
+                        RAFFLE 카테고리 상품이 없습니다.
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">

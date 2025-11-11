@@ -22,8 +22,8 @@ interface CartItem {
 interface Coupon {
   id: string;
   name: string;
-  discountType: string;
-  discountValue: number;
+  type: string;
+  amount: number;
 }
 
 export default function CartPage() {
@@ -81,10 +81,10 @@ export default function CartPage() {
     if (selectedCoupon) {
       const coupon = coupons.find(c => c.id === selectedCoupon);
       if (coupon) {
-        if (coupon.discountType === 'PERCENTAGE') {
-          discount = subtotal * (coupon.discountValue / 100);
+        if (coupon.type === 'PERCENT') {
+          discount = subtotal * (coupon.amount / 100);
         } else {
-          discount = coupon.discountValue;
+          discount = coupon.amount;
         }
       }
     }
@@ -187,9 +187,9 @@ export default function CartPage() {
                       {coupons.map((coupon) => (
                         <SelectItem key={coupon.id} value={coupon.id}>
                           {coupon.name} (
-                          {coupon.discountType === 'PERCENTAGE'
-                            ? `${coupon.discountValue}%`
-                            : `${coupon.discountValue.toLocaleString()}원`}
+                          {coupon.type === 'PERCENT'
+                            ? `${coupon.amount}%`
+                            : `${coupon.amount.toLocaleString()}원`}
                           )
                         </SelectItem>
                       ))}
