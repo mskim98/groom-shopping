@@ -7,6 +7,16 @@ interface RequestOptions extends RequestInit {
   requireAuth?: boolean;
 }
 
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestOptions = {}
@@ -14,7 +24,7 @@ export async function apiRequest<T>(
   const { requireAuth = false, headers = {}, ...restOptions } = options;
 
   const token = getAccessToken();
-  
+
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     ...headers as Record<string, string>,
@@ -45,11 +55,12 @@ export async function apiRequest<T>(
 
       if (!retryResponse.ok) {
         const errorData = await retryResponse.json().catch(() => ({}));
-        const errorMessage = errorData?.message || `API Error: ${retryResponse.status}`;
+        const errorMessage = errorData?.message || errorData?.error?.message || `API Error: ${retryResponse.status}`;
         throw new Error(errorMessage);
       }
 
-      return retryResponse.json();
+      const retryResult: ApiResponse<T> = await retryResponse.json();
+      return retryResult.data;
     } else {
       // Redirect to login
       if (typeof window !== 'undefined') {
@@ -61,11 +72,12 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    const errorMessage = errorData?.message || `요청 실패: ${response.status}`;
+    const errorMessage = errorData?.message || errorData?.error?.message || `요청 실패: ${response.status}`;
     throw new Error(errorMessage);
   }
 
-  return response.json();
+  const result: ApiResponse<T> = await response.json();
+  return result.data;
 }
 
 export function getAccessToken(): string | null {
@@ -162,7 +174,7 @@ export const productApi = {
   
   updateProduct: (id: string, data: any) =>
     apiRequest(`/product/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
       requireAuth: true,
     }),

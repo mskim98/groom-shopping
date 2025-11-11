@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -20,6 +21,7 @@ interface Product {
   description: string;
   price: number;
   stock: number;
+  category: 'GENERAL' | 'TICKET' | 'RAFFLE';
   imageUrl?: string;
 }
 
@@ -36,6 +38,7 @@ export default function AdminProductsPage() {
     description: '',
     price: 0,
     stock: 0,
+    category: 'GENERAL' as 'GENERAL' | 'TICKET' | 'RAFFLE',
     imageUrl: '',
   });
 
@@ -107,6 +110,7 @@ export default function AdminProductsPage() {
       description: product.description,
       price: product.price,
       stock: product.stock,
+      category: product.category,
       imageUrl: product.imageUrl || '',
     });
   };
@@ -117,6 +121,7 @@ export default function AdminProductsPage() {
       description: '',
       price: 0,
       stock: 0,
+      category: 'GENERAL',
       imageUrl: '',
     });
   };
@@ -176,6 +181,24 @@ export default function AdminProductsPage() {
                 />
               </div>
               <div>
+                <Label htmlFor="category">카테고리</Label>
+                <Select
+                  value={formData.category}
+                  onValueChange={(value: 'GENERAL' | 'TICKET' | 'RAFFLE') =>
+                    setFormData({ ...formData, category: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="카테고리 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GENERAL">일반 품목</SelectItem>
+                    <SelectItem value="TICKET">추첨 티켓</SelectItem>
+                    <SelectItem value="RAFFLE">증정 상품</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
                 <Label htmlFor="imageUrl">이미지 URL</Label>
                 <Input
                   id="imageUrl"
@@ -195,6 +218,7 @@ export default function AdminProductsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>상품명</TableHead>
+                <TableHead>카테고리</TableHead>
                 <TableHead>가격</TableHead>
                 <TableHead>재고</TableHead>
                 <TableHead>작업</TableHead>
@@ -204,6 +228,11 @@ export default function AdminProductsPage() {
               {products.map((product) => (
                 <TableRow key={product.id}>
                   <TableCell>{product.name}</TableCell>
+                  <TableCell>
+                    {product.category === 'GENERAL' && '일반 품목'}
+                    {product.category === 'TICKET' && '추첨 티켓'}
+                    {product.category === 'RAFFLE' && '증정 상품'}
+                  </TableCell>
                   <TableCell>{product.price.toLocaleString()}원</TableCell>
                   <TableCell>{product.stock}개</TableCell>
                   <TableCell>
@@ -267,6 +296,24 @@ export default function AdminProductsPage() {
                 onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) })}
                 required
               />
+            </div>
+            <div>
+              <Label htmlFor="edit-category">카테고리</Label>
+              <Select
+                value={formData.category}
+                onValueChange={(value: 'GENERAL' | 'TICKET' | 'RAFFLE') =>
+                  setFormData({ ...formData, category: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="카테고리 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GENERAL">일반 품목</SelectItem>
+                  <SelectItem value="TICKET">추첨 티켓</SelectItem>
+                  <SelectItem value="RAFFLE">증정 상품</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label htmlFor="edit-imageUrl">이미지 URL</Label>
