@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/product")
+@RequestMapping("/v1/product")
 @RequiredArgsConstructor
 @Tag(name = "Product Management", description = "제품 관리 API (생성, 수정, 삭제, 재고 관리)")
 @SecurityRequirement(name = "JWT")

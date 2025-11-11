@@ -3,7 +3,6 @@ package groom.backend.interfaces.product.dto.request;
 import groom.backend.domain.product.model.criteria.ProductSearchCondition;
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
-import groom.backend.domain.product.model.vo.Price;
 import io.swagger.v3.oas.annotations.media.Schema;
 import org.springframework.data.domain.Sort;
 
