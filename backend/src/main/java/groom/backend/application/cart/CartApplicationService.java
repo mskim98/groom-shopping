@@ -369,6 +369,131 @@ public class CartApplicationService {
     }
 
     /**
+     * 장바구니 제품 수량을 증가시킵니다.
+     * 재고량을 확인하여 재고량을 초과하지 않도록 합니다.
+     *
+     * @param userId 사용자 ID
+     * @param productId 제품 ID
+     * @return 수량 변경 결과
+     */
+    @Transactional
+    public CartQuantityUpdateResult increaseQuantity(Long userId, UUID productId) {
+        log.info("[CART_INCREASE_QUANTITY_START] userId={}, productId={}", userId, productId);
+
+        // 1. 사용자의 장바구니 조회
+        CartJpaEntity cart = cartRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+
+        // 2. 장바구니 항목 조회
+        CartItemJpaEntity cartItem = cartItemRepository.findByCartIdAndProductId(cart.getId(), productId)
+                .orElseThrow(() -> new IllegalArgumentException("해당 제품이 장바구니에 존재하지 않습니다."));
+
+        // 3. 제품 정보 조회 및 재고 확인
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+
+        if (!product.getIsActive()) {
+            throw new IllegalArgumentException("판매 중지된 제품입니다.");
+        }
+
+        // 4. 현재 수량 및 재고 확인
+        int currentQuantity = cartItem.getQuantity();
+        int productStock = product.getStock();
+        int newQuantity = currentQuantity + 1;
+
+        // 5. 재고 확인 (장바구니 수량이 재고량을 초과할 수 없음)
+        if (newQuantity > productStock) {
+            throw new IllegalArgumentException(
+                    String.format("재고가 부족합니다. 현재 재고: %d개, 장바구니 수량: %d개", 
+                            productStock, currentQuantity));
+        }
+
+        // 6. 수량 증가
+        cartItem.setQuantity(newQuantity);
+        cartItemRepository.save(cartItem);
+
+        log.info("[CART_INCREASE_QUANTITY_SUCCESS] userId={}, productId={}, oldQuantity={}, newQuantity={}, stock={}",
+                userId, productId, currentQuantity, newQuantity, productStock);
+
+        return new CartQuantityUpdateResult(productId, newQuantity, productStock);
+    }
+
+    /**
+     * 장바구니 제품 수량을 감소시킵니다.
+     * 수량이 1이면 감소하지 않고, 2 이상이면 1개 감소시킵니다.
+     * 수량이 0이 되면 항목을 제거합니다.
+     *
+     * @param userId 사용자 ID
+     * @param productId 제품 ID
+     * @return 수량 변경 결과 (isRemoved: true면 제거됨)
+     */
+    @Transactional
+    public CartQuantityUpdateResult decreaseQuantity(Long userId, UUID productId) {
+        log.info("[CART_DECREASE_QUANTITY_START] userId={}, productId={}", userId, productId);
+
+        // 1. 사용자의 장바구니 조회
+        CartJpaEntity cart = cartRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+
+        // 2. 장바구니 항목 조회
+        CartItemJpaEntity cartItem = cartItemRepository.findByCartIdAndProductId(cart.getId(), productId)
+                .orElseThrow(() -> new IllegalArgumentException("해당 제품이 장바구니에 존재하지 않습니다."));
+
+        // 3. 제품 정보 조회
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+
+        // 4. 현재 수량 확인
+        int currentQuantity = cartItem.getQuantity();
+
+        // 5. 수량이 1이면 감소하지 않음
+        if (currentQuantity <= 1) {
+            log.info("[CART_DECREASE_QUANTITY_MIN] userId={}, productId={}, quantity={}, cannot decrease below 1",
+                    userId, productId, currentQuantity);
+            throw new IllegalArgumentException("수량은 1개 이상이어야 합니다. 삭제하려면 삭제 버튼을 사용하세요.");
+        }
+
+        // 6. 수량 감소
+        int newQuantity = currentQuantity - 1;
+        cartItem.setQuantity(newQuantity);
+        cartItemRepository.save(cartItem);
+
+        log.info("[CART_DECREASE_QUANTITY_SUCCESS] userId={}, productId={}, oldQuantity={}, newQuantity={}, stock={}",
+                userId, productId, currentQuantity, newQuantity, product.getStock());
+
+        return new CartQuantityUpdateResult(productId, newQuantity, product.getStock(), false);
+    }
+
+    /**
+     * 수량 변경 결과를 담는 내부 클래스
+     */
+    public static class CartQuantityUpdateResult {
+        private final UUID productId;
+        private final Integer quantity;
+        private final Integer stock;
+        private final Boolean isRemoved;
+
+        public CartQuantityUpdateResult(UUID productId, Integer quantity, Integer stock) {
+            this.productId = productId;
+            this.quantity = quantity;
+            this.stock = stock;
+            this.isRemoved = false;
+        }
+
+        public CartQuantityUpdateResult(UUID productId, Integer quantity, Integer stock, Boolean isRemoved) {
+            this.productId = productId;
+            this.quantity = quantity;
+            this.stock = stock;
+            this.isRemoved = isRemoved;
+        }
+
+        public UUID getProductId() { return productId; }
+        public Integer getQuantity() { return quantity; }
+        public Integer getStock() { return stock; }
+        public Boolean getIsRemoved() { return isRemoved; }
+    }
+
+    /**
      * 제거할 제품 정보를 담는 내부 클래스
      */
     public static class CartItemToRemove {

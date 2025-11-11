@@ -240,9 +240,9 @@ POST /api/payments/cancel
 - Order 상태 변경 (PENDING → CONFIRMED)
 - Product 재고 차감
 - **TICKET 카테고리 상품 자동 처리:**
-  - 상품이 TICKET 카테고리인 경우 Raffle 티켓 자동 생성
-  - 응모 가능 여부 검증 (기간, 상태, 한도)
-  - 수량만큼 raffle_tickets 테이블에 레코드 생성
+    - 상품이 TICKET 카테고리인 경우 Raffle 티켓 자동 생성
+    - 응모 가능 여부 검증 (기간, 상태, 한도)
+    - 수량만큼 raffle_tickets 테이블에 레코드 생성
 
 ---
 

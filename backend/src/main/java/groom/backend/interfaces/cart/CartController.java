@@ -3,8 +3,10 @@ package groom.backend.interfaces.cart;
 import groom.backend.application.cart.CartApplicationService;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.cart.dto.request.RemoveCartItemsRequest;
+import groom.backend.interfaces.cart.dto.request.UpdateCartQuantityRequest;
 import groom.backend.interfaces.cart.dto.response.CartItemResponse;
 import groom.backend.interfaces.cart.dto.response.CartResponse;
+import groom.backend.interfaces.cart.dto.response.UpdateCartQuantityResponse;
 import groom.backend.interfaces.product.dto.request.AddToCartRequest;
 import groom.backend.interfaces.product.dto.response.AddToCartResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -197,6 +199,116 @@ public class CartController {
             return ResponseEntity.badRequest().body(java.util.Map.of(
                     "error", e.getMessage()
             ));
+        }
+    }
+
+    /**
+     * 장바구니 제품 수량을 증가시킵니다.
+     * 재고량을 확인하여 재고량을 초과하지 않도록 합니다.
+     */
+    @Operation(
+            summary = "장바구니 제품 수량 증가",
+            description = "장바구니에 담긴 제품의 수량을 1개 증가시킵니다. 재고량을 확인하여 재고량을 초과하지 않도록 합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "수량 증가 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = UpdateCartQuantityResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (재고 부족 등)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
+    @PatchMapping("/increase-quantity")
+    public ResponseEntity<UpdateCartQuantityResponse> increaseQuantity(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "수량 증가 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = UpdateCartQuantityRequest.class))
+            )
+            @RequestBody UpdateCartQuantityRequest request) {
+
+        if (userDetails == null || userDetails.getUser() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        if (request == null || request.getProductId() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Long userId = userDetails.getUser().getId();
+
+        try {
+            CartApplicationService.CartQuantityUpdateResult result = 
+                    cartApplicationService.increaseQuantity(userId, request.getProductId());
+
+            UpdateCartQuantityResponse response = UpdateCartQuantityResponse.builder()
+                    .productId(result.getProductId())
+                    .quantity(result.getQuantity())
+                    .stock(result.getStock())
+                    .message("수량이 증가되었습니다.")
+                    .build();
+
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(UpdateCartQuantityResponse.builder()
+                    .productId(request.getProductId())
+                    .message(e.getMessage())
+                    .build());
+        }
+    }
+
+    /**
+     * 장바구니 제품 수량을 감소시킵니다.
+     * 수량이 1이면 감소하지 않고, 2 이상이면 1개 감소시킵니다.
+     */
+    @Operation(
+            summary = "장바구니 제품 수량 감소",
+            description = "장바구니에 담긴 제품의 수량을 1개 감소시킵니다. 수량이 1이면 감소하지 않습니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "수량 감소 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = UpdateCartQuantityResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (수량이 1개 이하 등)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+    })
+    @PatchMapping("/decrease-quantity")
+    public ResponseEntity<UpdateCartQuantityResponse> decreaseQuantity(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "수량 감소 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = UpdateCartQuantityRequest.class))
+            )
+            @RequestBody UpdateCartQuantityRequest request) {
+
+        if (userDetails == null || userDetails.getUser() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        if (request == null || request.getProductId() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Long userId = userDetails.getUser().getId();
+
+        try {
+            CartApplicationService.CartQuantityUpdateResult result = 
+                    cartApplicationService.decreaseQuantity(userId, request.getProductId());
+
+            UpdateCartQuantityResponse response = UpdateCartQuantityResponse.builder()
+                    .productId(result.getProductId())
+                    .quantity(result.getQuantity())
+                    .stock(result.getStock())
+                    .message("수량이 감소되었습니다.")
+                    .build();
+
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(UpdateCartQuantityResponse.builder()
+                    .productId(request.getProductId())
+                    .message(e.getMessage())
+                    .build());
         }
     }
 

@@ -48,8 +48,8 @@ POST /orders
 ```java
 @PostMapping("/orders")
 public ResponseEntity<OrderResponse> createOrder(
-    @AuthenticationPrincipal(expression = "user") User user,
-    @RequestBody CreateOrderRequest request)
+        @AuthenticationPrincipal(expression = "user") User user,
+        @RequestBody CreateOrderRequest request)
 ```
 
 **입력 데이터:**
@@ -65,7 +65,7 @@ public ResponseEntity<OrderResponse> createOrder(
 List<CartItemJpaEntity> cartItemProducts = cartItemRepository.findByUserId(userId);
 
 if (cartItemProducts.isEmpty()) {
-    throw new IllegalArgumentException("장바구니가 비어있습니다.");
+        throw new IllegalArgumentException("장바구니가 비어있습니다.");
 }
 ```
 
@@ -101,8 +101,8 @@ userId (Long)
 ##### 2-2. ProductId 추출
 ```java
 List<UUID> productIds = cartItemProducts.stream()
-    .map(CartItemJpaEntity::getProductId)
-    .toList();
+        .map(CartItemJpaEntity::getProductId)
+        .toList();
 ```
 
 **추출된 productIds:**
@@ -120,7 +120,7 @@ List<UUID> productIds = cartItemProducts.stream()
 List<ProductJpaEntity> products = productRepository.findByIdIn(productIds);
 
 if (products.size() != productIds.size()) {
-    throw new IllegalArgumentException("일부 상품 정보를 찾을 수 없습니다.");
+        throw new IllegalArgumentException("일부 상품 정보를 찾을 수 없습니다.");
 }
 ```
 
@@ -163,9 +163,9 @@ productIds (List<UUID>)
 ##### 2-4. Order 기본 객체 생성
 ```java
 Order order = Order.builder()
-    .userId(userId)
-    .couponId(couponId)
-    .build();
+        .userId(userId)
+        .couponId(couponId)
+        .build();
 ```
 
 **초기 Order 상태:**
@@ -189,50 +189,50 @@ Order order = Order.builder()
 
 ```java
 for (CartItemJpaEntity cartItem : cartItemProducts) {
-    UUID productId = cartItem.getProductId();
-    Integer quantity = cartItem.getQuantity();
+UUID productId = cartItem.getProductId();
+Integer quantity = cartItem.getQuantity();
 
-    // 상품 조회
-    ProductJpaEntity product = productMap.get(productId);
+// 상품 조회
+ProductJpaEntity product = productMap.get(productId);
 
     if (product == null) {
         throw new IllegalArgumentException("상품을 찾을 수 없습니다: " + productId);
     }
 
-    // 상품 상태 확인
-    if (!product.getIsActive()) {
+            // 상품 상태 확인
+            if (!product.getIsActive()) {
         throw new IllegalArgumentException(
-            String.format("상품을 구매할 수 없습니다: %s", product.getName())
+        String.format("상품을 구매할 수 없습니다: %s", product.getName())
         );
-    }
+        }
 
-    // 재고 확인 (차감은 하지 않음!)
-    if (product.getStock() < quantity) {
+        // 재고 확인 (차감은 하지 않음!)
+        if (product.getStock() < quantity) {
         throw new IllegalArgumentException(
-            String.format("재고가 부족합니다. 상품: %s, 요청: %d, 재고: %d",
-                product.getName(),
-                quantity,
-                product.getStock())
+        String.format("재고가 부족합니다. 상품: %s, 요청: %d, 재고: %d",
+        product.getName(),
+quantity,
+        product.getStock())
         );
-    }
+        }
 
-    // OrderItem 생성 (주문 시점의 상품 정보 스냅샷)
-    OrderItem orderItem = OrderItem.builder()
+// OrderItem 생성 (주문 시점의 상품 정보 스냅샷)
+OrderItem orderItem = OrderItem.builder()
         .productId(product.getId())
         .productName(product.getName())
         .price(product.getPrice())
         .quantity(quantity)
         .build();
 
-    // Order에 OrderItem 추가
+// Order에 OrderItem 추가
     order.addOrderItem(orderItem);
 
     log.info("OrderItem added - Product: {}, Quantity: {}, Price: {}, Subtotal: {}",
-        orderItem.getProductName(),
+             orderItem.getProductName(),
         orderItem.getQuantity(),
         orderItem.getPrice(),
         orderItem.getSubtotal());
-}
+        }
 ```
 
 **검증 항목:**
@@ -277,13 +277,13 @@ order.calculateAmounts();
 **Order.calculateAmounts() 로직:**
 ```java
 public void calculateAmounts() {
-    // 1. 주문 아이템들의 소계 합산
-    this.subTotal = orderItems.stream()
-        .mapToInt(OrderItem::getSubtotal)
-        .sum();
+  // 1. 주문 아이템들의 소계 합산
+  this.subTotal = orderItems.stream()
+          .mapToInt(OrderItem::getSubtotal)
+          .sum();
 
-    // 2. 최종 금액 = 소계 - 할인 금액
-    this.totalAmount = this.subTotal - this.discountAmount;
+  // 2. 최종 금액 = 소계 - 할인 금액
+  this.totalAmount = this.subTotal - this.discountAmount;
 }
 ```
 
@@ -301,9 +301,9 @@ public void calculateAmounts() {
 ##### 2-7. 쿠폰 할인 적용 (선택사항)
 ```java
 if (couponId != null) {
-    Integer discountAmount = couponIssueService.calculateDiscount(
+Integer discountAmount = couponIssueService.calculateDiscount(
         couponId, userId, order.getSubTotal()
-    );
+);
     order.setDiscountAmount(discountAmount);
     log.info("Coupon applied - couponId: {}, discountAmount: {}", couponId, discountAmount);
 }
@@ -396,12 +396,12 @@ OrderItem (order_items 테이블, cascade 저장):
 String orderName = createOrderName(savedOrder.getOrderItems());
 
 Payment payment = Payment.builder()
-    .order(savedOrder)
-    .userId(userId)
-    .amount(savedOrder.getTotalAmount())
-    .orderName(orderName)
-    .method(PaymentMethod.CARD)  // 기본값: 카드 결제
-    .build();
+        .order(savedOrder)
+        .userId(userId)
+        .amount(savedOrder.getTotalAmount())
+        .orderName(orderName)
+        .method(PaymentMethod.CARD)  // 기본값: 카드 결제
+        .build();
 
 Payment savedPayment = paymentRepository.save(payment);
 ```
@@ -409,17 +409,17 @@ Payment savedPayment = paymentRepository.save(payment);
 **주문명 생성 로직:**
 ```java
 private String createOrderName(List<OrderItem> orderItems) {
-    if (orderItems.isEmpty()) {
-        return "주문";
-    }
+  if (orderItems.isEmpty()) {
+    return "주문";
+  }
 
-    OrderItem firstItem = orderItems.get(0);
-    if (orderItems.size() == 1) {
-        return firstItem.getProductName();  // "맥북 프로"
-    }
+  OrderItem firstItem = orderItems.get(0);
+  if (orderItems.size() == 1) {
+    return firstItem.getProductName();  // "맥북 프로"
+  }
 
-    return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
-    // "맥북 프로 외 1건"
+  return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
+  // "맥북 프로 외 1건"
 }
 ```
 
@@ -797,7 +797,7 @@ totalAmount = 6000000 - 600000 = 5400000
 **재고 확인만 수행:**
 ```java
 if (product.getStock() < quantity) {
-    throw new IllegalArgumentException("재고가 부족합니다.");
+        throw new IllegalArgumentException("재고가 부족합니다.");
 }
 // ✅ 검증만 하고 재고는 차감하지 않음
 ```
@@ -818,7 +818,7 @@ reduceProductStock(order);
 
 // 내부 로직
 product.decreaseStock(orderItem.getQuantity());
-productRepository.save(product);
+        productRepository.save(product);
 ```
 
 **이유:**
@@ -882,8 +882,8 @@ T4. 주문 확정 (CONFIRMED)
 ```java
 @Transactional
 public Order createOrder(Long userId, Long couponId) {
-    // 이 메서드 전체가 하나의 트랜잭션
-    // 중간에 예외 발생 시 모든 변경사항 롤백
+  // 이 메서드 전체가 하나의 트랜잭션
+  // 중간에 예외 발생 시 모든 변경사항 롤백
 }
 ```
 
@@ -914,8 +914,8 @@ public Order createOrder(Long userId, Long couponId) {
 3. **재고 차감** (실제 stock 감소)
 4. TICKET 상품의 경우 Raffle 티켓 생성
 5. **비동기 처리** (결제 응답 후 백그라운드에서 실행):
-   - 재고 임계값 알림 전송
-   - 장바구니 비우기 (주문한 상품만 제거)
+  - 재고 임계값 알림 전송
+  - 장바구니 비우기 (주문한 상품만 제거)
 
 ---
 
