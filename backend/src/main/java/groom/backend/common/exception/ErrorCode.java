@@ -52,8 +52,8 @@ public enum ErrorCode {
     // 요청/검증 관련
     REQUEST_IS_NULL                     (HttpStatus.BAD_REQUEST, "요청 값이 null입니다."),
     INVALID_RAFFLE_STATUS               (HttpStatus.BAD_REQUEST, "유효하지 않은 추첨 상태입니다."),
-    RAFFLE_REQUIRED_DATES               (HttpStatus.BAD_REQUEST, "응모 시작일, 응모 종료일, 추첨일은 반드시 입력해야 합니다."),
     INVALID_RAFFLE_DATES                (HttpStatus.BAD_REQUEST, "응모일과 추첨일이 올바르지 않습니다."),
+    RAFFLE_REQUIRED_DATES               (HttpStatus.BAD_REQUEST, "응모 시작일, 응모 종료일, 추첨일은 반드시 입력해야 합니다."),
 
     // 리소스 없음(Not Found)
     PRODUCT_NOT_FOUND                   (HttpStatus.NOT_FOUND, "해당 상품을 찾을 수 없습니다."),
@@ -65,9 +65,14 @@ public enum ErrorCode {
     RAFFLE_ALREADY_EXISTS               (HttpStatus.CONFLICT, "이미 존재하는 추첨입니다."),
 
     // 상품 상태 / 재고
+    RAFFLE_PRODUCT_NOT_FOUND          (HttpStatus.NOT_FOUND, "추첨 상품을 찾을 수 없습니다."),
+    WINNER_PRODUCT_NOT_FOUND          (HttpStatus.NOT_FOUND, "증정 상품을 찾을 수 없습니다."),
     RAFFLE_PRODUCT_NOT_ACTIVE           (HttpStatus.BAD_REQUEST, "추첨 상품이 비활성화 상태입니다."),
-    WINNER_PRODUCT_NOT_ACTIVE           (HttpStatus.BAD_REQUEST, " 증정 상품이 비활성화 상태입니다."),
-    INSUFFICIENT_PRODUCT_STOCK          (HttpStatus.BAD_REQUEST, "해당 상품의 재고가 부족합니다."),
+    WINNER_PRODUCT_NOT_ACTIVE           (HttpStatus.BAD_REQUEST, "증정 상품이 비활성화 상태입니다."),
+    INSUFFICIENT_RAFFLE_PRODUCT_STOCK          (HttpStatus.BAD_REQUEST, "추첨 상품의 재고가 부족합니다."),
+    INSUFFICIENT_WINNER_PRODUCT_STOCK          (HttpStatus.BAD_REQUEST, "증정 상품의 재고가 부족합니다."),
+    INVALID_RAFFLE_PRODUCT_TYPE          (HttpStatus.BAD_REQUEST, "추첨 상품용이 아닙니다."),
+    INVALID_WINNER_PRODUCT_TYPE          (HttpStatus.BAD_REQUEST, "증정 상품용이 아닙니다."),
 
     // 응모(입력) 관련
     RAFFLE_ENTRY_LIMIT_EXCEEDED         (HttpStatus.BAD_REQUEST, "응모 한도를 초과하였습니다."),

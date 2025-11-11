@@ -150,7 +150,6 @@ public class RaffleApplicationService {
 
         if(raffle.getStatus() != RaffleStatus.DRAFT) {
             throw new BusinessException(ErrorCode.RAFFLE_CANNOT_BE_DELETED);
-
         }
 
         raffleRepository.deleteById(raffle.getRaffleId());

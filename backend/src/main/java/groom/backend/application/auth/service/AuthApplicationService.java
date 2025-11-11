@@ -96,15 +96,15 @@ public class AuthApplicationService {
         String refreshToken = request.getRefreshToken();
 
         if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN); // 리프레시 토큰이 유효하지 않음
+            throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
         String email = jwtTokenProvider.getEmail(refreshToken);
         String storedRefreshToken = refreshTokenRepository.findByEmail(email)
-                                            .orElseThrow(() -> new IllegalArgumentException("저장된 리프레시 토큰을 찾을 수 없습니다."));
+                                            .orElseThrow(() -> new BusinessException(ErrorCode.NO_REFRESH_TOKEN));
 
         if (!storedRefreshToken.equals(refreshToken)) {
-            throw new BusinessException(ErrorCode.MISMATCH_REFRESH_TOKEN); // refreash token 불일치
+            throw new BusinessException(ErrorCode.MISMATCH_REFRESH_TOKEN);
         }
 
         User user = userRepo.findByEmail(email)

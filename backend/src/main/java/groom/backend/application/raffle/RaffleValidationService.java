@@ -47,7 +47,7 @@ public class RaffleValidationService {
 
             // 상품 활성화 상태 및 판매 상태 확인
             if (product.getIsActive() == Boolean.FALSE || product.getStatus() != ProductStatus.AVAILABLE) {
-                ErrorCode errorCode ="winnerProductId".equals(fieldName) ? ErrorCode.WINNER_PRODUCT_NOT_ACTIVE : ErrorCode.RAFFLE_PRODUCT_NOT_ACTIVE;
+                final ErrorCode errorCode = "winnerProductId".equals(fieldName) ? ErrorCode.WINNER_PRODUCT_NOT_ACTIVE : ErrorCode.RAFFLE_PRODUCT_NOT_ACTIVE;
 
                 throw new BusinessException(errorCode);
             }
@@ -55,24 +55,27 @@ public class RaffleValidationService {
             if ("winnerProductId".equals(fieldName)) {
                 // 증정 상품의 재고 확인
                 if (product.getStock() < winnerCount) {
-                    throw new IllegalStateException("증정 상품의 재고가 부족합니다.");
+                    throw new BusinessException(ErrorCode.INSUFFICIENT_WINNER_PRODUCT_STOCK);
                 }
 
                 if (product.getCategory() != ProductCategory.RAFFLE) {
-                    throw new IllegalStateException("증정 상품용이 아닙니다.");
+                    throw new BusinessException(ErrorCode.INVALID_WINNER_PRODUCT_TYPE);
+
                 }
             } else {
                 // 추첨 상품의 재고 확인
                 if (product.getStock() < 1) {
-                    throw new IllegalStateException("추첨 상품의 재고가 부족합니다.");
+                    throw new BusinessException(ErrorCode.INSUFFICIENT_RAFFLE_PRODUCT_STOCK);
                 }
 
                 if (product.getCategory() != ProductCategory.TICKET) {
-                    throw new IllegalStateException("추첨 티켓 상품이 아닙니다.");
+                    throw new BusinessException(ErrorCode.INVALID_RAFFLE_PRODUCT_TYPE);
                 }
             }
         } catch (ResponseStatusException ex) { // 상품이 존재하지 않는 경우
-            throw new IllegalStateException(fieldName + "에 해당하는 상품이 존재하지 않습니다.");
+            final ErrorCode errorCode = "winnerProductId".equals(fieldName) ? ErrorCode.WINNER_PRODUCT_NOT_FOUND : ErrorCode.RAFFLE_PRODUCT_NOT_FOUND;
+
+            throw new BusinessException(errorCode);
         }
     }
 
@@ -138,11 +141,11 @@ public class RaffleValidationService {
             throw new BusinessException(ErrorCode.RAFFLE_REQUIRED_DATES);
         }
         if (request.getEntryEndAt().isBefore(request.getEntryStartAt())) {
-            //응모 종료일은 응모 시작일 이후여야 합니다.
+            // 응모 종료일은 응모 시작일 이후여야 합니다.
             throw new BusinessException(ErrorCode.RAFFLE_END_DATE_AFTER_START_DATE);
         }
         if (request.getRaffleDrawAt().isBefore(request.getEntryEndAt())) {
-            //추첨일은 응모 종료일 이후여야 합니다.
+            // 추첨일은 응모 종료일 이후여야 합니다.
             throw new BusinessException(ErrorCode.RAFFLE_DRAW_DATE_AFTER_END_DATE);
         }
     }
@@ -181,7 +184,6 @@ public class RaffleValidationService {
     public void validateUserEntryLimit(Raffle raffle, Long userId, int additionalCount) {
         int currentCount = getEntryCount(raffle, userId);
         if ((currentCount + additionalCount) > raffle.getMaxEntriesPerUser()) {
-            //응모 한도를 초과하였습니다.
             throw new BusinessException(ErrorCode.RAFFLE_ENTRY_LIMIT_EXCEEDED);
         }
     }
