@@ -8,10 +8,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
-import groom.backend.interfaces.raffle.dto.request.RaffleEntryRequest;
-import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
-import groom.backend.interfaces.raffle.dto.request.RaffleSearchRequest;
-import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
+import groom.backend.interfaces.raffle.dto.request.*;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,6 +26,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -45,7 +43,8 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 생성",
-            description = "새로운 추첨을 생성합니다."
+            description = "ADMIN 권한을 가진 사용자가 새로운 추첨을 생성합니다.",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 생성 성공",
@@ -54,6 +53,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    @PreAuthorize("hasRole('ADMIN')")
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -224,5 +224,34 @@ public class RaffleController {
         raffleDrawApplicationService.sendRaffleWinnersNotification(raffleId);
 
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(
+            summary = "추첨 상태 변경",
+            description = "ADMIN 권한을 가진 사용자가 추첨 상태를 변경 할수 있다",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "추첨 실행 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
+    })
+    //@CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @PatchMapping("/{raffleId}/status")
+    public ResponseEntity<RaffleResponse> updateRaffleStatus(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "추첨 ID", required = true, example = "1")
+            @PathVariable Long raffleId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "추첨 상태 업데이트 요청",
+                    required = true,
+                    content = @Content(schema = @Schema(implementation = RaffleStatusUpdateRequest.class))
+            )
+            @RequestBody @Valid RaffleStatusUpdateRequest raffleRequest) {
+        if (user == null || user.getEmail() == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+        RaffleResponse response = raffleApplicationService.updateRaffleStatus(user, raffleId, raffleRequest);
+        return ResponseEntity.ok(response);
     }
 }
