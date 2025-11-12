@@ -1,7 +1,6 @@
 package groom.backend.domain.coupon.service;
 
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.kafka.CouponDelayProducer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
