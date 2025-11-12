@@ -1,5 +1,7 @@
 package groom.backend.application.notification;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.notification.entity.Notification;
 import groom.backend.domain.notification.repository.NotificationRepository;
 import groom.backend.domain.product.model.Product;
@@ -55,7 +57,8 @@ public class NotificationApplicationService {
         try {
             // 1. 제품 정보 조회 (제품명 포함)
             Product product = productRepository.findById(productId)
-                    .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다: " + productId));
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, 
+                            "제품을 찾을 수 없습니다: " + productId));
             String productName = product.getName() != null ? product.getName() : "제품";
 
             // 2. 해당 제품을 장바구니에 담은 사용자 조회
@@ -69,7 +72,7 @@ public class NotificationApplicationService {
                 log.info("[NOTIFICATION_NO_USERS] productId={}, productName={}", productId, productName);
                 return;
             }
-
+            // TODO: 다른 방법도 고안
             // 3. 사용자 수에 따라 배치 저장 또는 개별 저장 선택
             long parallelStartTime = System.currentTimeMillis();
             

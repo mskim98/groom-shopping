@@ -80,15 +80,26 @@ public class NotificationController {
     @GetMapping
     public ResponseEntity<List<NotificationResponse>> getNotifications(
             @Parameter(hidden = true) Authentication authentication) {
-        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
-        Long userId = userDetails.getUser().getId();
-        List<Notification> notifications = notificationService.getNotifications(userId);
-        
-        List<NotificationResponse> responses = notifications.stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
-        
-        return ResponseEntity.ok(responses);
+        try {
+            CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+            Long userId = userDetails.getUser().getId();
+            log.info("[GET_NOTIFICATIONS] userId={}", userId);
+            
+            List<Notification> notifications = notificationService.getNotifications(userId);
+            log.info("[GET_NOTIFICATIONS] notificationCount={}", notifications.size());
+            
+            List<NotificationResponse> responses = notifications.stream()
+                    .filter(notification -> notification != null)
+                    .map(this::toResponse)
+                    .filter(response -> response != null)
+                    .collect(Collectors.toList());
+            
+            log.info("[GET_NOTIFICATIONS_SUCCESS] userId={}, responseCount={}", userId, responses.size());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            log.error("[GET_NOTIFICATIONS_ERROR]", e);
+            throw e;
+        }
     }
 
     /**
@@ -212,16 +223,27 @@ public class NotificationController {
     }
 
     private NotificationResponse toResponse(Notification notification) {
-        return NotificationResponse.builder()
-                .id(notification.getId())
-                .currentStock(notification.getCurrentStock())
-                .thresholdValue(notification.getThresholdValue())
-                .message(notification.getMessage())
-                .isRead(notification.getIsRead())
-                .createdAt(notification.getCreatedAt())
-                .userId(notification.getUserId())
-                .productId(notification.getProductId())
-                .build();
+        try {
+            if (notification == null) {
+                log.warn("[TO_RESPONSE] notification is null");
+                return null;
+            }
+            
+            return NotificationResponse.builder()
+                    .id(notification.getId())
+                    .currentStock(notification.getCurrentStock())
+                    .thresholdValue(notification.getThresholdValue())
+                    .message(notification.getMessage())
+                    .isRead(notification.getIsRead())
+                    .createdAt(notification.getCreatedAt())
+                    .userId(notification.getUserId())
+                    .productId(notification.getProductId())
+                    .build();
+        } catch (Exception e) {
+            log.error("[TO_RESPONSE_ERROR] notificationId={}, error={}", 
+                    notification != null ? notification.getId() : "null", e.getMessage(), e);
+            throw e;
+        }
     }
 }
 

@@ -22,9 +22,17 @@ public class Notification {
         this.thresholdValue = thresholdValue;
         this.message = message;
         this.isRead = isRead != null ? isRead : false;
-        this.createdAt = createdAt;
+        this.createdAt = createdAt != null ? createdAt : LocalDateTime.now();
         this.userId = userId;
         this.productId = productId;
+        
+        // 필수 필드 검증
+        if (userId == null) {
+            throw new IllegalArgumentException("userId cannot be null");
+        }
+        if (productId == null) {
+            throw new IllegalArgumentException("productId cannot be null");
+        }
     }
 
     public void markAsRead() {

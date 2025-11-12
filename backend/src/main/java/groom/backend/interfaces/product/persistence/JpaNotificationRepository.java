@@ -85,6 +85,9 @@ public class JpaNotificationRepository implements NotificationRepository {
     }
 
     private Notification toDomain(NotificationJpaEntity e) {
+        if (e == null) {
+            return null;
+        }
         return new Notification(
                 e.getId(),
                 e.getCurrentStock(),

@@ -1,5 +1,7 @@
 package groom.backend.application.cart;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.infrastructure.cart.RedisCartRepository;
@@ -75,19 +77,20 @@ public class CartApplicationService {
 
         // 1. 사용자 확인
         UserJpaEntity user = userJpaRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         // 2. 제품 확인
         Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
         if (!product.getIsActive()) {
-            throw new IllegalArgumentException("판매 중지된 제품입니다.");
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_ACTIVE);
         }
 
         // 3. 재고 확인
         if (product.getStock() < quantity) {
-            throw new IllegalArgumentException("재고가 부족합니다. 현재 재고: " + product.getStock());
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, 
+                    "재고가 부족합니다. 현재 재고: " + product.getStock());
         }
 
         // 4. 사용자의 장바구니 찾기 또는 생성
@@ -110,7 +113,8 @@ public class CartApplicationService {
 
             // 재고 확인 (기존 수량 + 새로 추가할 수량)
             if (product.getStock() < newQuantity) {
-                throw new IllegalArgumentException("재고가 부족합니다. 현재 재고: " + product.getStock() + ", 장바구니 수량: " + oldQuantity);
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, 
+                        "재고가 부족합니다. 현재 재고: " + product.getStock() + ", 장바구니 수량: " + oldQuantity);
             }
 
             cartItem.setQuantity(newQuantity);
@@ -376,11 +380,12 @@ public class CartApplicationService {
 
         // 1. 사용자의 장바구니 조회
         CartJpaEntity cart = cartRepository.findByUserId(userId)
-                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
 
         // 2. 사전 검증: 모든 항목을 검증하고 하나라도 문제가 있으면 예외 발생
         List<CartItemJpaEntity> cartItemsToProcess = new java.util.ArrayList<>();
-        String validationError = null;
+        ErrorCode validationErrorCode = null;
+        String detailMessage = null;
 
         for (CartItemToRemove item : itemsToRemove) {
             UUID productId = item.getProductId();
@@ -388,7 +393,7 @@ public class CartApplicationService {
 
             // 수량 검증
             if (quantity == null || quantity < 1) {
-                validationError = "제거할 수량은 1 이상이어야 합니다.";
+                validationErrorCode = ErrorCode.INVALID_REMOVE_QUANTITY;
                 break;
             }
 
@@ -397,7 +402,8 @@ public class CartApplicationService {
                     .orElse(null);
 
             if (cartItem == null) {
-                validationError = "해당 제품이 장바구니에 존재하지 않습니다.";
+                validationErrorCode = ErrorCode.CART_ITEM_NOT_FOUND;
+                detailMessage = "제품 ID: " + productId;
                 break;
             }
 
@@ -408,7 +414,8 @@ public class CartApplicationService {
 
             // 수량 검증 (장바구니에 있는 수량보다 많이 제거할 수 없음)
             if (quantity > currentQuantity) {
-                validationError = "장바구니의 제품보다 수량이 큽니다.";
+                validationErrorCode = ErrorCode.CART_QUANTITY_EXCEEDED;
+                detailMessage = "장바구니 수량: " + currentQuantity + ", 요청 수량: " + quantity;
                 break;
             }
 
@@ -417,9 +424,10 @@ public class CartApplicationService {
         }
 
         // 3. 하나라도 검증 실패하면 전체 실패 (트랜잭션 롤백)
-        if (validationError != null) {
-            log.error("[CART_REMOVE_VALIDATION_FAILED] userId={}, error={}", userId, validationError);
-            throw new IllegalArgumentException(validationError);
+        if (validationErrorCode != null) {
+            log.error("[CART_REMOVE_VALIDATION_FAILED] userId={}, errorCode={}, detail={}", 
+                    userId, validationErrorCode, detailMessage);
+            throw new BusinessException(validationErrorCode, detailMessage);
         }
 
         // 4. 모든 검증 통과 - 실제 제거 처리
@@ -491,18 +499,18 @@ public class CartApplicationService {
 
         // 1. 사용자의 장바구니 조회
         CartJpaEntity cart = cartRepository.findByUserId(userId)
-                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
 
         // 2. 장바구니 항목 조회
         CartItemJpaEntity cartItem = cartItemRepository.findByCartIdAndProductId(cart.getId(), productId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 제품이 장바구니에 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND));
 
         // 3. 제품 정보 조회 및 재고 확인
         Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
         if (!product.getIsActive()) {
-            throw new IllegalArgumentException("판매 중지된 제품입니다.");
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_ACTIVE);
         }
 
         // 4. 현재 수량 및 재고 확인
@@ -512,7 +520,7 @@ public class CartApplicationService {
 
         // 5. 재고 확인 (장바구니 수량이 재고량을 초과할 수 없음)
         if (newQuantity > productStock) {
-            throw new IllegalArgumentException(
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
                     String.format("재고가 부족합니다. 현재 재고: %d개, 장바구니 수량: %d개", 
                             productStock, currentQuantity));
         }
@@ -550,15 +558,15 @@ public class CartApplicationService {
 
         // 1. 사용자의 장바구니 조회
         CartJpaEntity cart = cartRepository.findByUserId(userId)
-                .orElseThrow(() -> new IllegalArgumentException("장바구니가 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
 
         // 2. 장바구니 항목 조회
         CartItemJpaEntity cartItem = cartItemRepository.findByCartIdAndProductId(cart.getId(), productId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 제품이 장바구니에 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND));
 
         // 3. 제품 정보 조회
         Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
 
         // 4. 현재 수량 확인
         int currentQuantity = cartItem.getQuantity();
@@ -567,7 +575,8 @@ public class CartApplicationService {
         if (currentQuantity <= 1) {
             log.info("[CART_DECREASE_QUANTITY_MIN] userId={}, productId={}, quantity={}, cannot decrease below 1",
                     userId, productId, currentQuantity);
-            throw new IllegalArgumentException("수량은 1개 이상이어야 합니다. 삭제하려면 삭제 버튼을 사용하세요.");
+            throw new BusinessException(ErrorCode.CART_QUANTITY_MINIMUM, 
+                    "수량은 1개 이상이어야 합니다. 삭제하려면 삭제 버튼을 사용하세요.");
         }
 
         // 6. 수량 감소
