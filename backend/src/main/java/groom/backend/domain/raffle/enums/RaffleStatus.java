@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum RaffleStatus {
     DRAFT("초안"),
+    READY("준비완료"),
     ACTIVE("활성"),
     CLOSED("종료"),
     DRAWN("추첨완료"),
