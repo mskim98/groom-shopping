@@ -236,7 +236,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
-    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    //@CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PatchMapping("/{raffleId}/status")
     public ResponseEntity<RaffleResponse> updateRaffleStatus(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
