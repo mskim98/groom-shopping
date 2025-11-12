@@ -247,7 +247,7 @@ public class RaffleController {
                     required = true,
                     content = @Content(schema = @Schema(implementation = RaffleStatusUpdateRequest.class))
             )
-            @RequestBody RaffleStatusUpdateRequest raffleRequest) {
+            @RequestBody @Valid RaffleStatusUpdateRequest raffleRequest) {
         if (user == null || user.getEmail() == null) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
