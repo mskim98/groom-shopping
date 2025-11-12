@@ -2,6 +2,7 @@ package groom.backend.application.cart;
 
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.repository.ProductRepository;
+import groom.backend.infrastructure.cart.RedisCartRepository;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import groom.backend.interfaces.auth.persistence.UserJpaEntity;
 import groom.backend.interfaces.cart.persistence.CartItemJpaEntity;
@@ -14,7 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 장바구니 관련 비즈니스 로직을 처리하는 Application Service입니다.
@@ -28,6 +31,7 @@ public class CartApplicationService {
     private final SpringDataCartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final SpringDataUserRepository userJpaRepository;
+    private final RedisCartRepository redisCartRepository;
 
     /**
      * 장바구니 추가 결과를 담는 내부 클래스
@@ -123,9 +127,18 @@ public class CartApplicationService {
             log.info("[CART_NEW_ITEM] userId={}, productId={}, quantity={}", userId, productId, quantity);
         }
 
-        // 6. 저장
+        // 6. DB 저장
         CartItemJpaEntity savedCartItem = cartItemRepository.save(cartItem);
         CartJpaEntity savedCart = cartRepository.save(cart);
+
+        // 7. Redis에 동시 저장 (Write-Through 패턴)
+        try {
+            redisCartRepository.addOrUpdateItem(userId, productId, savedCartItem.getQuantity(), savedCartItem.getId());
+            log.debug("[CART_REDIS_SAVED] userId={}, productId={}, quantity={}", userId, productId, savedCartItem.getQuantity());
+        } catch (Exception e) {
+            // Redis 저장 실패해도 DB는 저장되었으므로 로그만 남김
+            log.warn("[CART_REDIS_SAVE_FAILED] userId={}, productId={}, error={}", userId, productId, e.getMessage());
+        }
 
         log.info("[CART_ADD_SUCCESS] cartId={}, cartItemId={}, userId={}, productId={}, quantity={}",
                 savedCart.getId(), savedCartItem.getId(), userId, productId, savedCartItem.getQuantity());
@@ -135,6 +148,7 @@ public class CartApplicationService {
 
     /**
      * 사용자의 장바구니에 담긴 모든 제품을 조회합니다.
+     * Read-Through 패턴: Redis 우선 조회, 없으면 DB에서 조회 후 Redis에 캐싱
      *
      * @param userId 사용자 ID
      * @return 장바구니 정보
@@ -143,7 +157,16 @@ public class CartApplicationService {
     public CartViewResult getCartItems(Long userId) {
         log.info("[CART_VIEW_START] userId={}", userId);
 
-        // 1. 사용자의 장바구니 조회
+        // 1. Redis에서 먼저 조회 시도 (Read-Through 패턴)
+        Map<UUID, RedisCartRepository.CartItemData> redisItems = redisCartRepository.getAllItems(userId);
+        
+        if (!redisItems.isEmpty()) {
+            log.debug("[CART_VIEW_REDIS_HIT] userId={}, itemCount={}", userId, redisItems.size());
+            return buildCartViewResultFromRedis(userId, redisItems);
+        }
+
+        // 2. Redis에 없으면 DB에서 조회
+        log.debug("[CART_VIEW_REDIS_MISS] userId={}, loading from DB", userId);
         CartJpaEntity cart = cartRepository.findByUserId(userId)
                 .orElse(null);
 
@@ -152,7 +175,7 @@ public class CartApplicationService {
             return new CartViewResult(null, List.of(), 0, 0);
         }
 
-        // 2. 장바구니 항목 조회
+        // 3. 장바구니 항목 조회
         List<CartItemJpaEntity> cartItems = cartItemRepository.findByUserId(userId);
 
         if (cartItems.isEmpty()) {
@@ -160,22 +183,90 @@ public class CartApplicationService {
             return new CartViewResult(cart.getId(), List.of(), 0, 0);
         }
 
-        // 3. 제품 정보 조회
+        // 4. DB 조회 결과를 Redis에 캐싱
+        try {
+            for (CartItemJpaEntity cartItem : cartItems) {
+                redisCartRepository.addOrUpdateItem(
+                        userId, 
+                        cartItem.getProductId(), 
+                        cartItem.getQuantity(), 
+                        cartItem.getId()
+                );
+            }
+            log.debug("[CART_VIEW_REDIS_CACHED] userId={}, itemCount={}", userId, cartItems.size());
+        } catch (Exception e) {
+            log.warn("[CART_VIEW_REDIS_CACHE_FAILED] userId={}, error={}", userId, e.getMessage());
+        }
+
+        // 5. 제품 정보 조회 및 결과 생성
+        return buildCartViewResultFromDB(cart, cartItems);
+    }
+
+    /**
+     * Redis 데이터로부터 장바구니 조회 결과 생성
+     */
+    private CartViewResult buildCartViewResultFromRedis(Long userId, Map<UUID, RedisCartRepository.CartItemData> redisItems) {
+        // 1. 제품 정보 조회
+        List<UUID> productIds = new java.util.ArrayList<>(redisItems.keySet());
+        List<Product> products = productRepository.findByIds(productIds);
+        
+        // 2. 제품 정보를 Map으로 변환
+        Map<UUID, Product> productMap = products.stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
+
+        // 3. 결과 생성
+        int totalItems = redisItems.size();
+        int totalPrice = 0;
+        List<CartItemResult> itemResults = new java.util.ArrayList<>();
+
+        for (Map.Entry<UUID, RedisCartRepository.CartItemData> entry : redisItems.entrySet()) {
+            UUID productId = entry.getKey();
+            RedisCartRepository.CartItemData itemData = entry.getValue();
+            Product product = productMap.get(productId);
+            
+            if (product != null) {
+                int itemTotalPrice = product.getPrice() * itemData.getQuantity();
+                totalPrice += itemTotalPrice;
+
+                itemResults.add(new CartItemResult(
+                        itemData.getCartItemId(),
+                        productId,
+                        product.getName(),
+                        product.getPrice(),
+                        itemData.getQuantity(),
+                        itemTotalPrice,
+                        null, // Redis에는 timestamp 없음
+                        null
+                ));
+            }
+        }
+
+        log.info("[CART_VIEW_REDIS_SUCCESS] userId={}, totalItems={}, totalPrice={}", 
+                userId, totalItems, totalPrice);
+
+        return new CartViewResult(null, itemResults, totalItems, totalPrice);
+    }
+
+    /**
+     * DB 데이터로부터 장바구니 조회 결과 생성
+     */
+    private CartViewResult buildCartViewResultFromDB(CartJpaEntity cart, List<CartItemJpaEntity> cartItems) {
+        // 1. 제품 정보 조회
         List<UUID> productIds = cartItems.stream()
                 .map(CartItemJpaEntity::getProductId)
                 .toList();
 
         List<Product> products = productRepository.findByIds(productIds);
         
-        // 4. 제품 정보를 Map으로 변환 (빠른 조회를 위해)
-        java.util.Map<UUID, Product> productMap = products.stream()
-                .collect(java.util.stream.Collectors.toMap(Product::getId, p -> p));
+        // 2. 제품 정보를 Map으로 변환
+        Map<UUID, Product> productMap = products.stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
 
-        // 5. 결과 생성
+        // 3. 결과 생성
         int totalItems = cartItems.size();
         int totalPrice = 0;
-
         List<CartItemResult> itemResults = new java.util.ArrayList<>();
+
         for (CartItemJpaEntity cartItem : cartItems) {
             Product product = productMap.get(cartItem.getProductId());
             if (product != null) {
@@ -195,8 +286,8 @@ public class CartApplicationService {
             }
         }
 
-        log.info("[CART_VIEW_SUCCESS] userId={}, cartId={}, totalItems={}, totalPrice={}", 
-                userId, cart.getId(), totalItems, totalPrice);
+        log.info("[CART_VIEW_DB_SUCCESS] userId={}, cartId={}, totalItems={}, totalPrice={}", 
+                cart.getUser().getId(), cart.getId(), totalItems, totalPrice);
 
         return new CartViewResult(cart.getId(), itemResults, totalItems, totalPrice);
     }
@@ -346,12 +437,30 @@ public class CartApplicationService {
                 // 수량이 0이면 항목 제거
                 cart.removeCartItem(cartItem);
                 cartItemRepository.delete(cartItem);
+                
+                // Redis에서도 제거
+                try {
+                    redisCartRepository.removeItem(userId, productId);
+                } catch (Exception e) {
+                    log.warn("[CART_REDIS_REMOVE_FAILED] userId={}, productId={}, error={}", 
+                            userId, productId, e.getMessage());
+                }
+                
                 log.info("[CART_REMOVE_COMPLETE] userId={}, productId={}, cartItemId={}, removed=true", 
                         userId, productId, cartItem.getId());
             } else {
                 // 수량이 남으면 수량만 감소
                 cartItem.setQuantity(remainingQuantity);
                 cartItemRepository.save(cartItem);
+                
+                // Redis에서도 수량 업데이트
+                try {
+                    redisCartRepository.updateQuantity(userId, productId, remainingQuantity);
+                } catch (Exception e) {
+                    log.warn("[CART_REDIS_UPDATE_FAILED] userId={}, productId={}, error={}", 
+                            userId, productId, e.getMessage());
+                }
+                
                 log.info("[CART_REMOVE_PARTIAL] userId={}, productId={}, cartItemId={}, remainingQuantity={}", 
                         userId, productId, cartItem.getId(), remainingQuantity);
             }
@@ -412,6 +521,14 @@ public class CartApplicationService {
         cartItem.setQuantity(newQuantity);
         cartItemRepository.save(cartItem);
 
+        // 7. Redis에서도 수량 업데이트
+        try {
+            redisCartRepository.updateQuantity(userId, productId, newQuantity);
+        } catch (Exception e) {
+            log.warn("[CART_REDIS_UPDATE_QUANTITY_FAILED] userId={}, productId={}, error={}", 
+                    userId, productId, e.getMessage());
+        }
+
         log.info("[CART_INCREASE_QUANTITY_SUCCESS] userId={}, productId={}, oldQuantity={}, newQuantity={}, stock={}",
                 userId, productId, currentQuantity, newQuantity, productStock);
 
@@ -457,6 +574,14 @@ public class CartApplicationService {
         int newQuantity = currentQuantity - 1;
         cartItem.setQuantity(newQuantity);
         cartItemRepository.save(cartItem);
+
+        // 7. Redis에서도 수량 업데이트
+        try {
+            redisCartRepository.updateQuantity(userId, productId, newQuantity);
+        } catch (Exception e) {
+            log.warn("[CART_REDIS_UPDATE_QUANTITY_FAILED] userId={}, productId={}, error={}", 
+                    userId, productId, e.getMessage());
+        }
 
         log.info("[CART_DECREASE_QUANTITY_SUCCESS] userId={}, productId={}, oldQuantity={}, newQuantity={}, stock={}",
                 userId, productId, currentQuantity, newQuantity, product.getStock());

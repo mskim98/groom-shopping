@@ -8,6 +8,7 @@ import java.util.UUID;
 
 public interface NotificationRepository {
     Notification save(Notification notification);
+    List<Notification> saveAll(List<Notification> notifications);
     Optional<Notification> findById(Long id);
     List<Notification> findByUserId(Long userId);
     List<Notification> findUnreadByUserId(Long userId);
