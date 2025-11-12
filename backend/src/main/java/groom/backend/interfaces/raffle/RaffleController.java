@@ -3,6 +3,7 @@ package groom.backend.interfaces.raffle;
 import groom.backend.application.raffle.RaffleApplicationService;
 import groom.backend.application.raffle.RaffleDrawApplicationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
@@ -26,7 +27,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -53,7 +53,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
-    @PreAuthorize("hasRole('ADMIN')")
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.FO)
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -73,7 +73,8 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 수정",
-            description = "기존 추첨의 정보를 수정합니다."
+            description = "ADMIN 권한을 가진 사용자가 기존 추첨의 정보를 수정합니다.",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 수정 성공",
@@ -83,6 +84,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.BO)
     @PutMapping("/{raffleId}")
     public ResponseEntity<RaffleResponse> updateRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -104,13 +106,15 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 삭제",
-            description = "추첨을 삭제합니다."
+            description = "ADMIN 권한 가진 사용자가 추첨을 삭제합니다.",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "204", description = "추첨 삭제 성공"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.BO)
     @DeleteMapping("/{raffleId}")
     public ResponseEntity<Void> deleteRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -132,8 +136,7 @@ public class RaffleController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 검색 성공",
                     content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = RaffleResponse.class))),
-            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
+                            schema = @Schema(implementation = RaffleResponse.class)))
     })
     @GetMapping
     public ResponseEntity<Page<RaffleResponse>> searchRaffles(
@@ -156,17 +159,12 @@ public class RaffleController {
             @ApiResponse(responseCode = "200", description = "추첨 조회 성공",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = RaffleResponse.class))),
-            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
     @GetMapping("/{raffleId}")
     public ResponseEntity<RaffleResponse> getRaffleDetails(
-            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
-        if (user == null || user.getEmail() == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
 
         RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
         return ResponseEntity.ok(response);
@@ -174,7 +172,8 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 참여",
-            description = "추첨에 참여합니다. 추첨 티켓을 발급받습니다."
+            description = "추첨에 참여합니다. 추첨 티켓을 발급받습니다.",
+    security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_USER","ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "추첨 참여 성공"),
@@ -182,6 +181,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
+    @CheckPermission(roles = {"USER","ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
     @PostMapping("/{raffleId}/entries")
     public ResponseEntity<Void> addToEntryCart(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -203,13 +203,15 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 실행",
-            description = "추첨을 실행하여 당첨자를 선정합니다. 당첨자에게 알림을 전송합니다."
+            description = "ADMIN 권한을 가진 사용자가 추첨을 실행하여 당첨자를 선정합니다. 당첨자에게 알림을 전송합니다.",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 실행 성공"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PostMapping("/{raffleId}/draws")
     public ResponseEntity<Void> drawRaffleWinners(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -228,15 +230,15 @@ public class RaffleController {
 
     @Operation(
             summary = "추첨 상태 변경",
-            description = "ADMIN 권한을 가진 사용자가 추첨 상태를 변경 할수 있다",
+            description = "ADMIN 권한을 가진 사용자가 추첨 상태를 변경 할 수 있다",
             security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_ADMIN"}) }
     )
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "추첨 실행 성공"),
+            @ApiResponse(responseCode = "200", description = "추첨 상태 변경 성공"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
-    //@CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PatchMapping("/{raffleId}/status")
     public ResponseEntity<RaffleResponse> updateRaffleStatus(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
