@@ -103,11 +103,11 @@ public class CouponIssueService {
     // 쿠폰 검증
     checkCouponUsable(couponIssue, userId);
 
-    DiscountStrategy discountStrategy = DiscountStrategyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+    DiscountPolicy discountPolicy = DiscountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
     DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
 
     // 할인율 계산 로직
-    return discountStrategy.calculateDiscount(context);
+    return discountPolicy.calculateDiscount(context);
   }
 
   public Integer calculateDiscount(List<Long> couponIdList, Long userId, Integer cost) {
@@ -124,18 +124,18 @@ public class CouponIssueService {
       DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
 
       checkCouponUsable(couponIssue, userId);
-      DiscountStrategy discountStrategy = DiscountStrategyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+      DiscountPolicy discountPolicy = DiscountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
       // 단일 쿠폰인지 검증, 하나라도 단일 사용 전용 쿠폰 존재 시 실패
-      if(discountStrategy instanceof DiscountSingleStrategy)
+      if(discountPolicy instanceof DiscountSinglePolicy)
         throw new BusinessException(ErrorCode.INVALID_PARAMETER, "단일 사용 전용 쿠폰은 여러 개 사용할 수 없습니다.");
-      else if (discountStrategy instanceof DiscountAmountMultiStrategy)
+      else if (discountPolicy instanceof DiscountAmountMultiPolicy)
         amount.add(context);
-      else if (discountStrategy instanceof DiscountPercentMultiStrategy)
+      else if (discountPolicy instanceof DiscountPercentMultiPolicy)
         percent.add(context);
     }
 
-    DiscountMultiStrategy discountPercentMultiStrategy = DiscountStrategyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
-    DiscountMultiStrategy discountAmountMultiStrategy = DiscountStrategyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
+    DiscountMultiPolicy discountPercentMultiStrategy = DiscountPolicyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
+    DiscountMultiPolicy discountAmountMultiStrategy = DiscountPolicyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
 
     return discountPercentMultiStrategy.calculateMultiDiscount(percent) + discountAmountMultiStrategy.calculateMultiDiscount(amount);
   }

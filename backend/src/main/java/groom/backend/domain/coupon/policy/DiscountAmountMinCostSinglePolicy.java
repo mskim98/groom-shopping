@@ -2,7 +2,7 @@ package groom.backend.domain.coupon.policy;
 
 import groom.backend.domain.coupon.model.vo.DiscountContext;
 
-public class DiscountAmountMinCostSingleStrategy implements DiscountSingleStrategy{
+public class DiscountAmountMinCostSinglePolicy implements DiscountSinglePolicy {
 
   @Override
   public int calculateDiscount(DiscountContext discountContext) {

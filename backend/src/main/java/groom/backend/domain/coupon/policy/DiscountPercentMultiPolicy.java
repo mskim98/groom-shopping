@@ -8,7 +8,7 @@ import java.util.List;
 
 // 비율 할인 정책
 @Component
-public class DiscountPercentMultiStrategy implements DiscountMultiStrategy {
+public class DiscountPercentMultiPolicy implements DiscountMultiPolicy {
   @Override
   public int calculateDiscount(DiscountContext discountContext) {
     double rate = discountContext.getAmount() / 100.0;
