@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 public class CouponIssueService {
   private final CouponRepository couponRepository;
   private final CouponIssueRepository  couponIssueRepository;
+  private final DiscountPolicyFactory discountPolicyFactory;
 
   // 쿠폰 발급 메서드
   @Transactional
@@ -103,7 +104,7 @@ public class CouponIssueService {
     // 쿠폰 검증
     checkCouponUsable(couponIssue, userId);
 
-    DiscountPolicy discountPolicy = DiscountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+    DiscountPolicy discountPolicy = discountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
     DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
 
     // 할인율 계산 로직
@@ -124,7 +125,7 @@ public class CouponIssueService {
       DiscountContext context = CouponContextMapper.from(couponIssue.getCoupon(), cost);
 
       checkCouponUsable(couponIssue, userId);
-      DiscountPolicy discountPolicy = DiscountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
+      DiscountPolicy discountPolicy = discountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
       // 단일 쿠폰인지 검증, 하나라도 단일 사용 전용 쿠폰 존재 시 실패
       if(discountPolicy instanceof DiscountSinglePolicy)
         throw new BusinessException(ErrorCode.INVALID_PARAMETER, "단일 사용 전용 쿠폰은 여러 개 사용할 수 없습니다.");
@@ -134,8 +135,8 @@ public class CouponIssueService {
         percent.add(context);
     }
 
-    DiscountMultiPolicy discountPercentMultiStrategy = DiscountPolicyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
-    DiscountMultiPolicy discountAmountMultiStrategy = DiscountPolicyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
+    DiscountMultiPolicy discountPercentMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
+    DiscountMultiPolicy discountAmountMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
 
     return discountPercentMultiStrategy.calculateMultiDiscount(percent) + discountAmountMultiStrategy.calculateMultiDiscount(amount);
   }

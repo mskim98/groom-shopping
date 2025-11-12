@@ -1,21 +1,31 @@
 package groom.backend.domain.coupon.policy;
 
 import groom.backend.domain.coupon.model.enums.CouponType;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
 
+@Component
+@RequiredArgsConstructor
 public class DiscountPolicyFactory {
-  public static DiscountPolicy getDiscountStrategy(CouponType couponType) {
+  private final DiscountAmountMultiPolicy discountAmountMultiPolicy;
+  private final DiscountPercentMultiPolicy discountPercentMultiPolicy;
+  private final DiscountAmountMinCostSinglePolicy discountAmountMinCostSinglePolicy;
+  private final DiscountPercentMaximumDiscountSinglePolicy discountPercentMaximumDiscountSinglePolicy;
+
+
+  public DiscountPolicy getDiscountStrategy(CouponType couponType) {
     return switch (couponType) {
-      case DISCOUNT -> new DiscountAmountMultiPolicy();
-      case PERCENT -> new DiscountPercentMultiPolicy();
-      case MIN_COST_AMOUNT -> new DiscountAmountMultiPolicy();
-      case MAX_DISCOUNT_PERCENT -> new DiscountAmountMultiPolicy();
+      case DISCOUNT -> discountAmountMultiPolicy;
+      case PERCENT -> discountPercentMultiPolicy;
+      case MIN_COST_AMOUNT -> discountAmountMinCostSinglePolicy;
+      case MAX_DISCOUNT_PERCENT -> discountPercentMaximumDiscountSinglePolicy;
     };
   }
 
-  public static DiscountMultiPolicy getDiscountMultiStrategy(CouponType couponType) {
+  public DiscountMultiPolicy getDiscountMultiStrategy(CouponType couponType) {
     return switch (couponType) {
-      case DISCOUNT -> new DiscountAmountMultiPolicy();
-      case PERCENT -> new DiscountPercentMultiPolicy();
+      case DISCOUNT ->discountAmountMultiPolicy;
+      case PERCENT -> discountPercentMultiPolicy;
       default -> null;
     };
   }
