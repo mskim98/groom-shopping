@@ -30,6 +30,7 @@ public @interface CheckPermission {
     }
 
     enum Page {
-        BO, FO
+        BO,
+        FO
     }
 }

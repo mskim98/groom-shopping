@@ -53,7 +53,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
-    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.FO)
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
     @PostMapping
     public ResponseEntity<RaffleResponse> createRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -84,7 +84,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
-    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.BO)
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PutMapping("/{raffleId}")
     public ResponseEntity<RaffleResponse> updateRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -114,7 +114,7 @@ public class RaffleController {
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
-    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ALL, page = CheckPermission.Page.BO)
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @DeleteMapping("/{raffleId}")
     public ResponseEntity<Void> deleteRaffle(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
