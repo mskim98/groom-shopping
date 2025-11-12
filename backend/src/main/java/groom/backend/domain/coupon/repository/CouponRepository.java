@@ -4,6 +4,7 @@ import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,6 +19,10 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT c FROM Coupon c WHERE c.id = :couponId")
   Optional<Coupon> findByIdForUpdate(@Param("couponId") Long couponId);
+
+  @Modifying
+  @Query("UPDATE Coupon c SET c.isActive = false where c.id = :couponId")
+  Integer updateIsActiveFalse(@Param("couponId") Long couponId);
 
   @Query("""
   SELECT c
