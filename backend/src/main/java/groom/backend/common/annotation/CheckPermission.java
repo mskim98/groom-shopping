@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
  * - 이 어노테이션이 적용된 메서드는 권한 검증 로직이 실행됨.
  * - 주로 관리자 권한이 필요한 API에 사용됨.
  */
-@Target(ElementType.METHOD)
+@Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface CheckPermission {
 
