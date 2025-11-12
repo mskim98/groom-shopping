@@ -57,20 +57,92 @@ export default function CartPage() {
 
   const loadCoupons = async () => {
     try {
-      const response = await couponApi.getCoupons(0, 100);
-      setCoupons(response.content || []);
+      // 사용자가 발급받은 쿠폰만 로드
+      try {
+        const myCouponsResponse = await couponApi.getMyCoupons();
+        console.log('My coupons response:', myCouponsResponse);
+
+        const myCoupons = Array.isArray(myCouponsResponse) ? myCouponsResponse : [];
+        console.log('Loaded my coupons:', myCoupons);
+
+        // CouponIssueResponse를 Coupon 형식으로 변환
+        const couponsData = await Promise.all(
+          myCoupons.map(async (issue: any) => {
+            try {
+              const couponDetail = await couponApi.getCoupon(String(issue.couponId));
+              return {
+                id: String(issue.couponId),
+                ...couponDetail,
+              };
+            } catch (error) {
+              console.error('Failed to load coupon detail:', error);
+              return null;
+            }
+          })
+        );
+
+        const validCoupons = couponsData.filter(c => c !== null);
+        console.log('Valid coupons:', validCoupons);
+        setCoupons(validCoupons);
+      } catch (error) {
+        console.error('Failed to load my coupons:', error);
+        // getMyCoupons 실패시 모든 쿠폰 로드 (대체)
+        const response = await couponApi.getCoupons(0, 100);
+        setCoupons(response.content || []);
+      }
     } catch (error) {
       console.error('Failed to load coupons:', error);
+      setCoupons([]);
     }
   };
 
   const handleRemove = async (productId: string) => {
     try {
-      await cartApi.removeFromCart(productId);
+      const item = cartItems.find(i => i.productId === productId);
+      if (!item) {
+        toast.error('상품을 찾을 수 없습니다.');
+        return;
+      }
+      // 전체 수량을 제거
+      await cartApi.removeFromCart(productId, item.quantity);
       setCartItems(cartItems.filter(item => item.productId !== productId));
       toast.success('상품이 삭제되었습니다.');
     } catch (error) {
+      console.error('Remove error:', error);
       toast.error('삭제에 실패했습니다.');
+    }
+  };
+
+  const handleIncreaseQuantity = async (productId: string) => {
+    try {
+      await cartApi.increaseQuantity(productId);
+      setCartItems(cartItems.map(item =>
+        item.productId === productId
+          ? { ...item, quantity: item.quantity + 1 }
+          : item
+      ));
+      toast.success('수량이 증가했습니다.');
+    } catch (error) {
+      toast.error('수량 증가에 실패했습니다.');
+    }
+  };
+
+  const handleDecreaseQuantity = async (productId: string) => {
+    try {
+      const item = cartItems.find(i => i.productId === productId);
+      if (item && item.quantity <= 1) {
+        toast.error('최소 1개 이상이어야 합니다.');
+        return;
+      }
+      await cartApi.decreaseQuantity(productId);
+      setCartItems(cartItems.map(item =>
+        item.productId === productId
+          ? { ...item, quantity: item.quantity - 1 }
+          : item
+      ));
+      toast.success('수량이 감소했습니다.');
+    } catch (error) {
+      toast.error('수량 감소에 실패했습니다.');
     }
   };
 
@@ -79,7 +151,14 @@ export default function CartPage() {
     let discount = 0;
 
     if (selectedCoupon) {
-      const coupon = coupons.find(c => c.id === selectedCoupon);
+      console.log('Selected coupon ID:', selectedCoupon);
+      console.log('Available coupons:', coupons);
+      const coupon = coupons.find(c => {
+        console.log('Comparing:', String(c.id), '===', selectedCoupon);
+        return String(c.id) === String(selectedCoupon);
+      });
+      console.log('Found coupon:', coupon);
+
       if (coupon) {
         if (coupon.type === 'PERCENT') {
           discount = subtotal * (coupon.amount / 100);
@@ -88,6 +167,8 @@ export default function CartPage() {
         }
       }
     }
+
+    console.log('Total calculation:', { subtotal, discount, selectedCoupon, couponsCount: coupons.length });
 
     return {
       subtotal,
@@ -149,9 +230,24 @@ export default function CartPage() {
                     </div>
                     <div className="flex-1">
                       <h3 className="mb-2">{item.productName}</h3>
-                      <p className="text-muted-foreground mb-2">
-                        수량: {item.quantity}개
-                      </p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDecreaseQuantity(item.productId)}
+                          disabled={item.quantity <= 1}
+                        >
+                          −
+                        </Button>
+                        <span className="w-8 text-center">{item.quantity}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleIncreaseQuantity(item.productId)}
+                        >
+                          +
+                        </Button>
+                      </div>
                       <p className="text-primary">
                         {(item.price * item.quantity).toLocaleString()}원
                       </p>
@@ -177,24 +273,24 @@ export default function CartPage() {
 
               {coupons.length > 0 && (
                 <div>
-                  <label className="text-muted-foreground mb-2 block">쿠폰 선택</label>
-                  <Select value={selectedCoupon} onValueChange={setSelectedCoupon}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="쿠폰을 선택하세요" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">쿠폰 미사용</SelectItem>
-                      {coupons.map((coupon) => (
-                        <SelectItem key={coupon.id} value={coupon.id}>
-                          {coupon.name} (
-                          {coupon.type === 'PERCENT'
-                            ? `${coupon.amount}%`
-                            : `${coupon.amount.toLocaleString()}원`}
-                          )
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <label htmlFor="coupon-select" className="text-muted-foreground mb-2 block">쿠폰 선택</label>
+                  <select
+                    id="coupon-select"
+                    value={selectedCoupon}
+                    onChange={(e) => setSelectedCoupon(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white cursor-pointer"
+                  >
+                    <option value="">쿠폰 미사용</option>
+                    {coupons.map((coupon) => (
+                      <option key={coupon.id} value={coupon.id}>
+                        {coupon.name} (
+                        {coupon.type === 'PERCENT'
+                          ? `${coupon.amount}%`
+                          : `${coupon.amount.toLocaleString()}원`}
+                        )
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 

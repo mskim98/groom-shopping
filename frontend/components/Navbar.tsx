@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ShoppingCart, User, LogOut, Package, Ticket, Gift } from 'lucide-react';
+import { ShoppingCart, User, LogOut, Package, Ticket, Gift, Percent } from 'lucide-react';
 import { Button } from './ui/button';
 import { getAccessToken, clearTokens, authApi } from '@/lib/api';
 import { useEffect, useState } from 'react';
@@ -56,6 +56,10 @@ export function Navbar() {
               <Link href="/my/raffles" className={pathname === '/my/raffles' ? 'text-primary' : ''}>
                 <Ticket className="w-4 h-4 inline mr-1" />
                 내 응모내역
+              </Link>
+              <Link href="/coupons" className={pathname === '/coupons' ? 'text-primary' : ''}>
+                <Percent className="w-4 h-4 inline mr-1" />
+                쿠폰
               </Link>
             </>
           )}

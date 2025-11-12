@@ -32,9 +32,23 @@ export async function apiRequest<T>(
 
   if (requireAuth && token) {
     requestHeaders['Authorization'] = `Bearer ${token}`;
+  } else if (requireAuth && !token) {
+    console.warn('Auth required but no token found');
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  // /api/로 시작하는 경로는 API_BASE_URL을 사용하지 않음
+  const url = endpoint.startsWith('/api/') ? endpoint : `${API_BASE_URL}${endpoint}`;
+
+  console.log('API Request:', {
+    url,
+    method: restOptions.method || 'GET',
+    requireAuth,
+    hasToken: !!token,
+    hasAuthHeader: !!requestHeaders['Authorization'],
+    body: restOptions.body,
+  });
+
+  const response = await fetch(url, {
     ...restOptions,
     headers: requestHeaders,
   });
@@ -72,6 +86,12 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
+    console.error('API Error Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      errorData,
+      url,
+    });
     const errorMessage = errorData?.message || errorData?.error?.message || `요청 실패: ${response.status}`;
     throw new Error(errorMessage);
   }
@@ -208,10 +228,24 @@ export const cartApi = {
       requireAuth: true,
     }),
   
-  removeFromCart: (productId: string) =>
+  removeFromCart: (productId: string, quantity: number) =>
     apiRequest('/cart/remove', {
       method: 'DELETE',
-      body: JSON.stringify({ productId }),
+      body: JSON.stringify({ items: [{ productId, quantity }] }),
+      requireAuth: true,
+    }),
+
+  increaseQuantity: (productId: string) =>
+    apiRequest('/cart/add', {
+      method: 'POST',
+      body: JSON.stringify({ productId, quantity: 1 }),
+      requireAuth: true,
+    }),
+
+  decreaseQuantity: (productId: string) =>
+    apiRequest('/cart/remove', {
+      method: 'DELETE',
+      body: JSON.stringify({ items: [{ productId, quantity: 1 }] }),
       requireAuth: true,
     }),
 };
@@ -257,6 +291,14 @@ export const couponApi = {
       method: 'POST',
       body: JSON.stringify({ userId }),
       requireAuth: true,
+      headers: {
+        'Request-Date': new Date().toISOString(),
+      },
+    }),
+
+  getMyCoupons: () =>
+    apiRequest<any[]>('/coupon/me', {
+      requireAuth: true,
     }),
 };
 
@@ -267,30 +309,48 @@ export const raffleApi = {
       content: any[];
       totalElements: number;
       totalPages: number;
-    }>(`/raffles?page=${page}&size=${size}`),
+    }>(`/raffles?page=${page}&size=${size}`, {
+      requireAuth: true,
+    }),
   
   getRaffle: (id: string) =>
-    apiRequest<any>(`/raffles/${id}`),
-  
+    apiRequest<any>(`/raffles/${id}`, {
+      requireAuth: true,
+    }),
+
   createRaffle: (data: any) =>
     apiRequest('/raffles', {
       method: 'POST',
       body: JSON.stringify(data),
       requireAuth: true,
     }),
-  
+
   deleteRaffle: (id: string) =>
     apiRequest(`/raffles/${id}`, {
       method: 'DELETE',
       requireAuth: true,
     }),
-  
+
+  updateRaffle: (id: string, data: any) =>
+    apiRequest(`/raffles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+
+  updateRaffleStatus: (id: string, status: string) =>
+    apiRequest(`/raffles/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+      requireAuth: true,
+    }),
+
   executeRaffle: (id: string) =>
     apiRequest(`/raffles/${id}/draws`, {
       method: 'POST',
       requireAuth: true,
     }),
-  
+
   getParticipants: (id: string, page = 0, size = 20) =>
     apiRequest<{
       content: any[];
@@ -298,16 +358,16 @@ export const raffleApi = {
     }>(`/raffles/${id}/participants?page=${page}&size=${size}`, {
       requireAuth: true,
     }),
-  
+
   getResult: (id: string) =>
     apiRequest<any>(`/raffles/${id}/result`, {
       requireAuth: true,
     }),
-  
+
   enterRaffle: (id: string, entries: number) =>
     apiRequest(`/raffles/${id}/enter`, {
       method: 'POST',
-      body: JSON.stringify({ entries }),
+      body: JSON.stringify({ count: entries }),
       requireAuth: true,
     }),
 };
@@ -320,9 +380,14 @@ export const orderApi = {
       body: JSON.stringify(data),
       requireAuth: true,
     }),
-  
+
   getOrders: () =>
     apiRequest<any[]>('/order', {
+      requireAuth: true,
+    }),
+
+  getOrder: (orderId: string) =>
+    apiRequest<any>(`/order/${orderId}`, {
       requireAuth: true,
     }),
 };
@@ -333,9 +398,25 @@ export const paymentApi = {
     apiRequest<any[]>('/payment/my', {
       requireAuth: true,
     }),
-  
+
   getPayment: (id: string) =>
     apiRequest<any>(`/payment/${id}`, {
+      requireAuth: true,
+    }),
+
+  // 테스트 결제 (Toss Payments 테스트 API)
+  confirmTestPayment: (data: any) =>
+    apiRequest('/payment/confirm/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      requireAuth: true,
+    }),
+
+  // 실제 결제 (Toss Payments 실제 API)
+  confirmPayment: (data: any) =>
+    apiRequest('/payment/confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
       requireAuth: true,
     }),
 };

@@ -2,28 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { orderApi, getAccessToken } from '@/lib/api';
+import { paymentApi, getAccessToken } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Package } from 'lucide-react';
 
-interface Order {
+interface PaymentInfo {
   id: string;
-  orderDate: string;
-  totalAmount: number;
+  orderId: string;
+  amount: number;
   status: string;
-  items: Array<{
-    productName: string;
-    quantity: number;
-    price: number;
-  }>;
+  paymentDate: string;
 }
 
 export default function MyOrdersPage() {
   const router = useRouter();
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<PaymentInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -36,10 +32,12 @@ export default function MyOrdersPage() {
 
   const loadOrders = async () => {
     try {
-      const data = await orderApi.getOrders();
-      setOrders(data);
+      const payments = await paymentApi.getMyPayments();
+      console.log('Payments loaded:', payments);
+      setOrders(payments || []);
     } catch (error) {
-      console.error('Failed to load orders:', error);
+      console.error('Failed to load payments:', error);
+      setOrders([]);
     } finally {
       setLoading(false);
     }
@@ -48,17 +46,15 @@ export default function MyOrdersPage() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, any> = {
       PENDING: 'outline',
-      CONFIRMED: 'default',
-      SHIPPING: 'default',
-      DELIVERED: 'secondary',
-      CANCELLED: 'destructive',
+      COMPLETED: 'default',
+      FAILED: 'destructive',
+      CANCELLED: 'secondary',
     };
 
     const labels: Record<string, string> = {
       PENDING: '대기중',
-      CONFIRMED: '확인됨',
-      SHIPPING: '배송중',
-      DELIVERED: '배송완료',
+      COMPLETED: '완료',
+      FAILED: '실패',
       CANCELLED: '취소됨',
     };
 
@@ -83,33 +79,32 @@ export default function MyOrdersPage() {
       <h2 className="mb-6">주문 내역</h2>
 
       <div className="space-y-4">
-        {orders.map((order) => (
-          <Card key={order.id}>
+        {orders.map((payment) => (
+          <Card key={payment.id}>
             <CardContent className="p-6">
               <div className="flex justify-between items-start mb-4">
-                <div>
-                  <p className="text-muted-foreground">주문번호: {order.id}</p>
-                  <p className="text-muted-foreground">
-                    주문일: {new Date(order.orderDate).toLocaleDateString()}
+                <div className="flex-1">
+                  <h3 className="mb-2 font-semibold">주문번호: {payment.orderId}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    결제일: {new Date(payment.paymentDate).toLocaleString()}
                   </p>
                 </div>
-                {getStatusBadge(order.status)}
+                <div className="text-right">
+                  {getStatusBadge(payment.status)}
+                  <p className="mt-2 text-lg font-bold text-primary">
+                    {payment.amount.toLocaleString()}원
+                  </p>
+                </div>
               </div>
 
-              <div className="space-y-2 mb-4">
-                {order.items.map((item, index) => (
-                  <div key={index} className="flex justify-between">
-                    <span>
-                      {item.productName} x {item.quantity}
-                    </span>
-                    <span>{(item.price * item.quantity).toLocaleString()}원</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex justify-between items-center pt-4 border-t">
-                <span>총 결제 금액</span>
-                <span className="text-primary">{order.totalAmount.toLocaleString()}원</span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push(`/order/${payment.orderId}`)}
+                >
+                  상세 보기
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -121,9 +116,9 @@ export default function MyOrdersPage() {
           <CardContent className="p-12 text-center">
             <Package className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
             <p className="text-muted-foreground mb-4">주문 내역이 없습니다.</p>
-            <Link href="/products" className="text-primary hover:underline">
+            <Button onClick={() => router.push('/products')}>
               상품 둘러보기
-            </Link>
+            </Button>
           </CardContent>
         </Card>
       )}

@@ -17,7 +17,7 @@ import { Plus, Play, Eye, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Raffle {
-  id: string;
+  raffleId: string | number;
   title: string;
   description: string;
   status: string;
@@ -61,11 +61,13 @@ export default function AdminRafflesPage() {
   });
 
   useEffect(() => {
-    if (!getAccessToken()) {
+    const token = getAccessToken();
+    if (!token) {
       toast.error('로그인이 필요합니다.');
       router.push('/login');
       return;
     }
+    console.log('Access token exists:', !!token);
     loadRaffles();
     loadProducts();
   }, [router]);
@@ -73,11 +75,20 @@ export default function AdminRafflesPage() {
   const loadRaffles = async () => {
     try {
       const response = await raffleApi.getRaffles(0, 100);
-      setRaffles(response.content);
+      console.log('Raffles response:', response);
+      console.log('Response type:', typeof response);
+      console.log('Response.content:', response.content);
+      const raffleList = response.content || [];
+      console.log('Final raffle list:', raffleList);
+      setRaffles(raffleList);
     } catch (error) {
+      console.error('Failed to load raffles:', error);
       toast.error('추첨 목록을 불러오는데 실패했습니다.');
     }
   };
+
+  // 이미 등록된 추첨 상품 ID 목록
+  const registeredRaffleProductIds = raffles.map(r => String(r.raffleProductId)).filter(Boolean);
 
   const loadProducts = async () => {
     try {
@@ -93,7 +104,23 @@ export default function AdminRafflesPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await raffleApi.createRaffle(formData);
+      // datetime-local 입력값을 ISO 8601 형식으로 변환 (초 단위 포함)
+      const formatDateTime = (dateTimeStr: string) => {
+        if (!dateTimeStr) return dateTimeStr;
+        // 2025-11-07T21:05 -> 2025-11-07T21:05:00
+        return dateTimeStr.includes(':') && !dateTimeStr.includes(':00')
+          ? `${dateTimeStr}:00`
+          : dateTimeStr;
+      };
+
+      const payload = {
+        ...formData,
+        entryStartAt: formatDateTime(formData.entryStartAt),
+        entryEndAt: formatDateTime(formData.entryEndAt),
+        raffleDrawAt: formatDateTime(formData.raffleDrawAt),
+      };
+
+      await raffleApi.createRaffle(payload);
       toast.success('추첨이 등록되었습니다.');
       setIsCreateOpen(false);
       resetForm();
@@ -130,10 +157,18 @@ export default function AdminRafflesPage() {
     });
   };
 
+
+  const statusOptions = [
+    { value: 'DRAFT', label: '초안' },
+    { value: 'ACTIVE', label: '활성' },
+    { value: 'CLOSED', label: '종료' },
+    { value: 'DRAWN', label: '추첨완료' },
+    { value: 'CANCELLED', label: '취소' },
+  ];
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, any> = {
       DRAFT: 'secondary',
-      READY: 'outline',
       ACTIVE: 'default',
       CLOSED: 'secondary',
       DRAWN: 'destructive',
@@ -142,7 +177,6 @@ export default function AdminRafflesPage() {
 
     const labels: Record<string, string> = {
       DRAFT: '초안',
-      READY: '준비완료',
       ACTIVE: '활성',
       CLOSED: '종료',
       DRAWN: '추첨완료',
@@ -150,6 +184,33 @@ export default function AdminRafflesPage() {
     };
 
     return <Badge variant={variants[status] || 'default'}>{labels[status] || status}</Badge>;
+  };
+
+  const getAvailableStatusOptions = (currentStatus: string) => {
+    const transitions: Record<string, string[]> = {
+      DRAFT: ['ACTIVE', 'CANCELLED'],
+      ACTIVE: ['CLOSED', 'CANCELLED'],
+      CLOSED: ['CANCELLED'],
+      DRAWN: [],
+      CANCELLED: [],
+    };
+
+    const availableStatuses = transitions[currentStatus] || [];
+    return statusOptions.filter(opt => availableStatuses.includes(opt.value));
+  };
+
+  const handleStatusChange = async (raffleId: string | number, newStatus: string) => {
+    try {
+      const raffleIdStr = String(raffleId);
+      console.log('Updating raffle status:', raffleIdStr, newStatus);
+
+      await raffleApi.updateRaffleStatus(raffleIdStr, newStatus);
+      toast.success('추첨 상태가 변경되었습니다.');
+      loadRaffles();
+    } catch (error) {
+      console.error('Status change error:', error);
+      toast.error('상태 변경에 실패했습니다.');
+    }
   };
 
   return (
@@ -190,32 +251,50 @@ export default function AdminRafflesPage() {
                 <div>
                   <Label className="mb-2 block">추첨 티켓 상품 (TICKET 카테고리)</Label>
                   <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto border rounded-md p-3">
-                    {ticketProducts.map((product) => (
-                      <Card
-                        key={product.productId}
-                        className={`cursor-pointer transition-all ${
-                          formData.raffleProductId === product.productId
-                            ? 'border-primary border-2 bg-primary/5'
-                            : 'hover:border-primary/50'
-                        }`}
-                        onClick={() => setFormData({ ...formData, raffleProductId: product.productId })}
-                      >
-                        <CardHeader className="p-3">
-                          <div className="flex items-start justify-between">
-                            <CardTitle className="text-sm">{product.name}</CardTitle>
-                            {formData.raffleProductId === product.productId && (
-                              <Check className="w-4 h-4 text-primary" />
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="p-3 pt-0">
-                          <p className="text-xs text-muted-foreground line-clamp-2">
-                            {product.description}
-                          </p>
-                          <p className="text-xs mt-2">가격: {product.price.toLocaleString()}원</p>
-                        </CardContent>
-                      </Card>
-                    ))}
+                    {ticketProducts.map((product) => {
+                      const isRegistered = registeredRaffleProductIds.includes(product.productId);
+                      return (
+                        <Card
+                          key={product.productId}
+                          className={`transition-all ${
+                            isRegistered
+                              ? 'cursor-not-allowed opacity-50 border-destructive/50'
+                              : 'cursor-pointer hover:border-primary/50'
+                          } ${
+                            formData.raffleProductId === product.productId
+                              ? 'border-primary border-2 bg-primary/5'
+                              : ''
+                          }`}
+                          onClick={() => {
+                            if (!isRegistered) {
+                              setFormData({ ...formData, raffleProductId: product.productId });
+                            } else {
+                              toast.error('이미 등록된 추첨 상품입니다.');
+                            }
+                          }}
+                        >
+                          <CardHeader className="p-3">
+                            <div className="flex items-start justify-between">
+                              <CardTitle className="text-sm">{product.name}</CardTitle>
+                              {formData.raffleProductId === product.productId && (
+                                <Check className="w-4 h-4 text-primary" />
+                              )}
+                              {isRegistered && (
+                                <span className="text-xs bg-destructive/20 text-destructive px-2 py-1 rounded">
+                                  사용중
+                                </span>
+                              )}
+                            </div>
+                          </CardHeader>
+                          <CardContent className="p-3 pt-0">
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {product.description}
+                            </p>
+                            <p className="text-xs mt-2">가격: {product.price.toLocaleString()}원</p>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                     {ticketProducts.length === 0 && (
                       <p className="text-sm text-muted-foreground col-span-2 text-center py-4">
                         TICKET 카테고리 상품이 없습니다.
@@ -336,9 +415,25 @@ export default function AdminRafflesPage() {
             </TableHeader>
             <TableBody>
               {raffles.map((raffle) => (
-                <TableRow key={raffle.id}>
+                <TableRow key={raffle.raffleId}>
                   <TableCell>{raffle.title}</TableCell>
-                  <TableCell>{getStatusBadge(raffle.status)}</TableCell>
+                  <TableCell>
+                    {getAvailableStatusOptions(raffle.status).length > 0 ? (
+                      <select
+                        value={raffle.status}
+                        onChange={(e) => handleStatusChange(raffle.raffleId, e.target.value)}
+                        className="px-2 py-1 border rounded text-sm bg-white cursor-pointer"
+                      >
+                        {statusOptions.map((option) => (
+                          <option key={option.value} value={option.value} disabled={!getAvailableStatusOptions(raffle.status).map(o => o.value).includes(option.value) && option.value !== raffle.status}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      getStatusBadge(raffle.status)
+                    )}
+                  </TableCell>
                   <TableCell>{raffle.winnersCount}명</TableCell>
                   <TableCell>
                     {new Date(raffle.entryStartAt).toLocaleDateString()} ~{' '}

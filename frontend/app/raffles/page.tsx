@@ -44,7 +44,10 @@ export default function RafflesPage() {
   const loadRaffles = async () => {
     try {
       const response = await raffleApi.getRaffles(0, 20);
-      setRaffles(response.content || []);
+      console.log('Raffles response:', response);
+      const raffleList = response.content || response || [];
+      console.log('Filtered raffles:', raffleList);
+      setRaffles(raffleList);
     } catch (error) {
       console.error('Failed to load raffles:', error);
     } finally {

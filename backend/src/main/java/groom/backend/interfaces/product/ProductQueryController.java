@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/product")
+@RequestMapping("/v1/product")
 @RequiredArgsConstructor
 @Tag(name = "Product Query", description = "제품 조회 API")
 @SecurityRequirement(name = "JWT")

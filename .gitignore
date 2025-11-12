@@ -1,3 +1,5 @@
 .idea
 .DS_Store
 backend/CLAUDE.md
+
+frontend/package-lock.json

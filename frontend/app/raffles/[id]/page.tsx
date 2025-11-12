@@ -57,7 +57,7 @@ export default function RaffleDetailPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!raffle || raffle.status !== 'ACTIVE') {
       toast.error('현재 응모할 수 없는 상태입니다.');
       return;
@@ -65,11 +65,12 @@ export default function RaffleDetailPage() {
 
     setSubmitting(true);
     try {
-      await raffleApi.enterRaffle(params.id as string, entries);
+      await raffleApi.enterRaffle(raffle.id, entries);
       toast.success('응모가 완료되었습니다!');
       router.push('/raffles');
     } catch (error) {
-      toast.error('응모에 실패했습니다.');
+      console.error('Enter raffle error:', error);
+      toast.error(error instanceof Error ? error.message : '응모에 실패했습니다.');
     } finally {
       setSubmitting(false);
     }

@@ -239,6 +239,7 @@ export default function AdminCouponsPage() {
                 <TableHead>할인 타입</TableHead>
                 <TableHead>할인 값</TableHead>
                 <TableHead>만료일</TableHead>
+                <TableHead>활성화 여부</TableHead>
                 <TableHead>작업</TableHead>
               </TableRow>
             </TableHeader>
@@ -256,6 +257,17 @@ export default function AdminCouponsPage() {
                   </TableCell>
                   <TableCell>
                     {coupon.expireDate ? new Date(coupon.expireDate).toLocaleDateString() : '-'}
+                  </TableCell>
+                  <TableCell>
+                    {coupon.isActive ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        활성
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                        비활성
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">

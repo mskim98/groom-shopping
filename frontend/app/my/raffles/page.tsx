@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getAccessToken } from '@/lib/api';
+import { getAccessToken, raffleApi } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,27 +34,16 @@ export default function MyRafflesPage() {
 
   const loadEntries = async () => {
     try {
-      // Mock data - 실제 API 엔드포인트로 교체
-      setEntries([
-        {
-          raffleId: '1',
-          raffleTitle: '여름 맞이 경품 추첨',
-          entryCount: 3,
-          entryDate: '2024-11-01',
-          status: 'DRAWN',
-          isWinner: false,
-        },
-        {
-          raffleId: '2',
-          raffleTitle: '신규 회원 감사 이벤트',
-          entryCount: 1,
-          entryDate: '2024-11-05',
-          status: 'ACTIVE',
-          isWinner: false,
-        },
-      ]);
+      // TODO: 백엔드에서 사용자의 응모 내역 API가 제공되면 아래 코드로 교체
+      // 현재는 백엔드에서 사용자의 응모 내역을 조회하는 API가 없으므로 빈 배열로 설정
+      // const response = await raffleApi.getMyEntries();
+      // setEntries(response || []);
+
+      console.log('Loading user raffle entries...');
+      setEntries([]);
     } catch (error) {
       console.error('Failed to load entries:', error);
+      setEntries([]);
     } finally {
       setLoading(false);
     }
