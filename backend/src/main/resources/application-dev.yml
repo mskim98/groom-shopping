@@ -40,7 +40,7 @@ jwt:
 
 payment:
   toss:
-    secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
+    secret-key: test_sk_LkKEypNArWQjwJEElyKN3lmeaxYG
     api-url: https://api.tosspayments.com
     
 springdoc:

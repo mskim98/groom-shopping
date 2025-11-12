@@ -191,7 +191,9 @@ export const productApi = {
     }>(`/product?page=${page}&size=${size}&sort=${sort}`),
   
   getProduct: (id: string) =>
-    apiRequest<any>(`/product/${id}`),
+    apiRequest<any>(`/product/${id}`, {
+      requireAuth: true,
+    }),
   
   createProduct: (data: any) =>
     apiRequest('/product', {
