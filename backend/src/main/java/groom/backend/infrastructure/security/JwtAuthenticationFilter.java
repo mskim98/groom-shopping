@@ -33,7 +33,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final ObjectMapper LOCAL_OBJECT_MAPPER = createLocalObjectMapper();
 
-
     private static ObjectMapper createLocalObjectMapper() {
         ObjectMapper om = new ObjectMapper();
         om.registerModule(new JavaTimeModule());
@@ -57,7 +56,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
 
         if ("GET".equalsIgnoreCase(request.getMethod()) &&
-                ("/api/v1/product".equals(path) || "/api/v1/raffles".equals(path))) {
+                (pathMatcher.match("/api/v1/product/**", path)
+                        || pathMatcher.match("/api/v1/raffles/**", path))) {
             return true;
         }
 
