@@ -3,7 +3,6 @@ package groom.backend.common.aop;
 import groom.backend.common.annotation.CheckPermission;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
-import groom.backend.infrastructure.security.JwtTokenProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.Aspect;
@@ -24,12 +23,6 @@ import java.util.stream.Collectors;
 @Component
 @Slf4j
 public class PermissionAspect {
-
-    private final JwtTokenProvider jwtTokenProvider;
-
-    public PermissionAspect(JwtTokenProvider jwtTokenProvider) {
-        this.jwtTokenProvider = jwtTokenProvider;
-    }
 
     @Before("@within(groom.backend.common.annotation.CheckPermission) || @annotation(groom.backend.common.annotation.CheckPermission)")
     public void checkPermission(JoinPoint joinPoint) {
