@@ -9,6 +9,7 @@ import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
+import groom.backend.interfaces.raffle.dto.request.RaffleStatusUpdateRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
@@ -110,6 +111,24 @@ public class RaffleApplicationService {
         }
 
         raffle.updateRaffle(request);
+
+        Raffle saved = raffleRepository.save(raffle);
+
+        return RaffleResponse.from(saved);
+    }
+
+    @Transactional
+    public RaffleResponse updateRaffleStatus(User user,  Long raffleId, RaffleStatusUpdateRequest request) {
+        // 권한 검증
+        raffleValidationService.ensureAdmin(user);
+
+        Raffle raffle = raffleValidationService.findById(raffleId);
+
+        // 상태 전환 가능 여부 검증
+        // TODO : 상태 전환 검증 로직 추가 필요
+        //raffleValidationService.validateRaffleStatusTransition(raffle.getStatus(), newStatus);
+
+        raffle.updateStatus(request.getStatus());
 
         Raffle saved = raffleRepository.save(raffle);
 

@@ -57,6 +57,8 @@ public class Raffle {
     }
 
     public void updateStatus(RaffleStatus status) {
-        this.status = status;
+        if(status != null) {
+            this.status = status;
+        }
     }
 }
