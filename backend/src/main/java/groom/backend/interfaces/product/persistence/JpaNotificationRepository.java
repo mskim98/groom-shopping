@@ -28,6 +28,17 @@ public class JpaNotificationRepository implements NotificationRepository {
     }
 
     @Override
+    public List<Notification> saveAll(List<Notification> notifications) {
+        List<NotificationJpaEntity> entities = notifications.stream()
+                .map(this::toEntity)
+                .collect(Collectors.toList());
+        List<NotificationJpaEntity> saved = springRepo.saveAll(entities);
+        return saved.stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public Optional<Notification> findById(Long id) {
         return springRepo.findById(id).map(this::toDomain);
     }
@@ -74,6 +85,9 @@ public class JpaNotificationRepository implements NotificationRepository {
     }
 
     private Notification toDomain(NotificationJpaEntity e) {
+        if (e == null) {
+            return null;
+        }
         return new Notification(
                 e.getId(),
                 e.getCurrentStock(),

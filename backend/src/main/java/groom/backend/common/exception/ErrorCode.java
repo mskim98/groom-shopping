@@ -93,8 +93,23 @@ public enum ErrorCode {
     RAFFLE_NOT_EDITABLE                 (HttpStatus.BAD_REQUEST, "현재 상태에서는 추첨을 수정할 수 없습니다."),
 
     // 추첨 시작 전 검증(별도)
-    RAFFLE_DRAW_NOT_STARTED             (HttpStatus.BAD_REQUEST, "아직 추첨일이 되지 않았습니다.");
+    RAFFLE_DRAW_NOT_STARTED             (HttpStatus.BAD_REQUEST, "아직 추첨일이 되지 않았습니다."),
 
+    // ===================== Cart 에러 코드 ====================
+    /** 장바구니가 존재하지 않음 */
+    CART_NOT_FOUND                      (HttpStatus.NOT_FOUND, "장바구니가 존재하지 않습니다."),
+    /** 장바구니에 제품이 존재하지 않음 */
+    CART_ITEM_NOT_FOUND                 (HttpStatus.NOT_FOUND, "해당 제품이 장바구니에 존재하지 않습니다."),
+    /** 제품 재고 부족 */
+    INSUFFICIENT_STOCK                  (HttpStatus.BAD_REQUEST, "재고가 부족합니다."),
+    /** 판매 중지된 제품 */
+    PRODUCT_NOT_ACTIVE                  (HttpStatus.BAD_REQUEST, "판매 중지된 제품입니다."),
+    /** 장바구니 수량 초과 */
+    CART_QUANTITY_EXCEEDED              (HttpStatus.BAD_REQUEST, "장바구니의 제품보다 수량이 큽니다."),
+    /** 최소 수량 미달 */
+    CART_QUANTITY_MINIMUM               (HttpStatus.BAD_REQUEST, "수량은 1개 이상이어야 합니다."),
+    /** 제거 수량 유효성 검증 실패 */
+    INVALID_REMOVE_QUANTITY             (HttpStatus.BAD_REQUEST, "제거할 수량은 1 이상이어야 합니다.");
 
 
 
@@ -104,4 +119,3 @@ public enum ErrorCode {
     // 클라이언트에게 반환될 메시지
     private final String message;
 }
-

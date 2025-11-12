@@ -30,4 +30,23 @@ public class RedisConfig {
         template.setValueSerializer(new StringRedisSerializer());
         return template;
     }
+
+    /**
+     * 장바구니용 RedisTemplate
+     * Hash 구조로 사용자별 장바구니 항목 저장
+     * Key: cart:{userId}
+     * Hash Field: productId (UUID)
+     * Hash Value: quantity (JSON)
+     */
+    @Bean(name = "cartRedisTemplate")
+    public RedisTemplate<String, String> cartRedisTemplate() {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(redisConnectionFactory());
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setHashValueSerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        template.afterPropertiesSet();
+        return template;
+    }
 }

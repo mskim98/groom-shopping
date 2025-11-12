@@ -1,6 +1,10 @@
 package groom.backend.infrastructure.config;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,6 +36,36 @@ public class AsyncConfig {
 
         log.info("[ASYNC_CONFIG] Notification executor initialized - CorePoolSize: {}, MaxPoolSize: {}, QueueCapacity: {}",
                 executor.getCorePoolSize(), executor.getMaxPoolSize(), executor.getQueueCapacity());
+
+        return executor;
+    }
+
+    /**
+     * 알림 생성 및 전송을 위한 동적 스레드 풀
+     * - CPU 코어 수 기반 동적 조정
+     * - 애플리케이션 종료 시 자동 정리
+     */
+    @Bean(name = "notificationProcessingExecutor", destroyMethod = "shutdown")
+    public ExecutorService notificationProcessingExecutor() {
+        int availableProcessors = Runtime.getRuntime().availableProcessors();
+        int corePoolSize = Math.max(2, availableProcessors);  // 최소 2개
+        int maxPoolSize = availableProcessors * 2;            // 최대 코어 수 * 2
+        
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                corePoolSize,              // 기본 스레드 수
+                maxPoolSize,               // 최대 스레드 수
+                60L, TimeUnit.SECONDS,     // 유휴 스레드 유지 시간
+                new LinkedBlockingQueue<>(1000),  // 작업 큐 (버퍼링)
+                r -> {
+                    Thread thread = new Thread(r, "notification-processing-" + System.currentTimeMillis());
+                    thread.setDaemon(false);
+                    return thread;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()  // 큐 가득 찰 경우 호출 스레드에서 실행
+        );
+
+        log.info("[ASYNC_CONFIG] Notification processing executor initialized - CorePoolSize: {}, MaxPoolSize: {}, QueueCapacity: 1000",
+                corePoolSize, maxPoolSize);
 
         return executor;
     }
