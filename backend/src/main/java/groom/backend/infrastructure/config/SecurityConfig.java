@@ -34,6 +34,8 @@ public class SecurityConfig {
                         .requestMatchers("/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh").permitAll()
                         .requestMatchers(HttpMethod.GET,"/v1/raffles", "/v1/product").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()  // Swagger 경로 허용
+                        .requestMatchers(HttpMethod.GET, "/v1/product/**").permitAll()  // 상품 조회 허용
+                        .requestMatchers(HttpMethod.GET, "/v1/raffles/**").permitAll()  // 래플 조회 허용
                         .anyRequest().authenticated()  // 모든 요청 인증 필요
                 )
                 .formLogin(login -> login.disable()) // 로그인 폼 비활성화

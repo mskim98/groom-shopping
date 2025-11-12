@@ -14,11 +14,14 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,7 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
 @RestController
-@RequestMapping("/order")
+@RequestMapping("/v1/order")
 @RequiredArgsConstructor
 @Tag(name = "Order", description = "주문 관련 API")
 @SecurityRequirement(name = "JWT")
@@ -73,9 +76,35 @@ public class OrderController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-//    @GetMapping
-//    @ResponseStatus(HttpStatus.OK)
-//    public List<OrderResponse> getOrders(@AuthenticationPrincipal User user) {
-//
-//    }
+    @Operation(
+            summary = "주문 상세 조회",
+            description = "특정 주문의 상세 정보를 조회합니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = OrderResponse.class))),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "404", description = "주문을 찾을 수 없음")
+    })
+    @GetMapping("/{orderId}")
+    public ResponseEntity<OrderResponse> getOrder(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            @Parameter(description = "주문 ID", required = true)
+            @PathVariable UUID orderId
+    ) {
+        Long userId = user.getId();
+
+        log.info("주문 상세 조회 요청 - userId: {}, orderId: {}", userId, orderId);
+
+        // 서비스 호출
+        Order order = orderApplicationService.getOrderById(orderId, userId);
+
+        // Response DTO 변환
+        OrderResponse response = OrderResponse.from(order);
+
+        return ResponseEntity.ok(response);
+    }
+
 }

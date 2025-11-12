@@ -148,6 +148,19 @@ public class OrderApplicationService {
         return savedOrder;
     }
 
+    // 주문 상세 조회
+    public Order getOrderById(UUID orderId, Long userId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("주문을 찾을 수 없습니다."));
+
+        // 본인의 주문만 조회 가능
+        if (!order.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("조회 권한이 없습니다.");
+        }
+
+        return order;
+    }
+
     // 주문명 생성 헬퍼 메서드
     private String createOrderName(List<OrderItem> orderItems) {
         if (orderItems.isEmpty()) {
