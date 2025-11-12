@@ -16,6 +16,16 @@ spring:
   
   kafka:
     bootstrap-servers: localhost:9092
+    # kafka streams setting
+    streams:
+      application-id: coupon-delay-app
+      properties:
+        processing.guarantee: exactly_once_v2
+        commit.interval.ms: 1000
+        cache.max.bytes.buffering: 10485760
+        num.stream.threads: 1
+        # 백엔드 서버 경로 기준
+        state.dir: ./tmp/kafka-streams
 
   jpa:
     hibernate:
