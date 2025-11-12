@@ -5,6 +5,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
@@ -29,10 +30,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @DisplayName("CouponService 통합 테스트")
-class CouponServiceIntegrationTest {
+class CouponCommonServiceIntegrationTest {
 
     @Autowired
-    private CouponService couponService;
+    private CouponCommonService couponCommonService;
 
     @Autowired
     private CouponRepository couponRepository;
@@ -62,7 +63,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 생성 성공")
     void createCoupon_success() {
         // when
-        CouponResponse response = couponService.createCoupon(createRequest);
+        CouponResponse response = couponCommonService.createCoupon(createRequest);
 
         // then
         assertThat(response).isNotNull();
@@ -86,11 +87,11 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 단일 조회 성공")
     void findCoupon_success() {
         // given
-        CouponResponse created = couponService.createCoupon(createRequest);
+        CouponResponse created = couponCommonService.createCoupon(createRequest);
         Long couponId = created.getId();
 
         // when
-        CouponResponse response = couponService.findCoupon(couponId);
+        CouponResponse response = couponCommonService.findCoupon(couponId);
 
         // then
         assertThat(response).isNotNull();
@@ -107,7 +108,7 @@ class CouponServiceIntegrationTest {
         Long nonExistentId = 999L;
 
         // when & then
-        assertThatThrownBy(() -> couponService.findCoupon(nonExistentId))
+        assertThatThrownBy(() -> couponCommonService.findCoupon(nonExistentId))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
@@ -121,7 +122,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 조건부 검색 - 이름으로 검색")
     void searchCoupon_byName() {
         // given
-        couponService.createCoupon(createRequest);
+        couponCommonService.createCoupon(createRequest);
         
         CouponCreateRequest request2 = CouponCreateRequest.builder()
                 .name("할인 쿠폰")
@@ -131,7 +132,7 @@ class CouponServiceIntegrationTest {
                 .type(CouponType.DISCOUNT)
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
-        couponService.createCoupon(request2);
+        couponCommonService.createCoupon(request2);
 
         CouponSearchCondition condition = CouponSearchCondition.builder()
                 .name("할인")
@@ -139,7 +140,7 @@ class CouponServiceIntegrationTest {
         Pageable pageable = PageRequest.of(0, 10);
 
         // when
-        Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
+        Page<CouponResponse> response = couponCommonService.searchCoupon(condition, pageable);
 
         // then
         assertThat(response).isNotNull();
@@ -154,7 +155,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 조건부 검색 - 타입으로 검색")
     void searchCoupon_byType() {
         // given
-        couponService.createCoupon(createRequest);
+        couponCommonService.createCoupon(createRequest);
         
         CouponCreateRequest percentRequest = CouponCreateRequest.builder()
                 .name("퍼센트 쿠폰")
@@ -164,7 +165,7 @@ class CouponServiceIntegrationTest {
                 .type(CouponType.PERCENT)
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
-        couponService.createCoupon(percentRequest);
+        couponCommonService.createCoupon(percentRequest);
 
         CouponSearchCondition condition = CouponSearchCondition.builder()
                 .type(CouponType.PERCENT)
@@ -172,7 +173,7 @@ class CouponServiceIntegrationTest {
         Pageable pageable = PageRequest.of(0, 10);
 
         // when
-        Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
+        Page<CouponResponse> response = couponCommonService.searchCoupon(condition, pageable);
 
         // then
         assertThat(response).isNotNull();
@@ -186,12 +187,12 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 조건부 검색 - 활성화 여부로 검색, 실패")
     void searchCoupon_byIsActive() {
         // given
-        CouponResponse created = couponService.createCoupon(createRequest);
+        CouponResponse created = couponCommonService.createCoupon(createRequest);
         
         CouponUpdateRequest updateRequest = CouponUpdateRequest.builder()
                 .isActive(false)
                 .build();
-        couponService.updateCoupon(created.getId(), updateRequest);
+        couponCommonService.updateCoupon(created.getId(), updateRequest);
 
         CouponSearchCondition condition = CouponSearchCondition.builder()
                 .isActive(true)
@@ -199,7 +200,7 @@ class CouponServiceIntegrationTest {
         Pageable pageable = PageRequest.of(0, 10);
 
         // when
-        Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
+        Page<CouponResponse> response = couponCommonService.searchCoupon(condition, pageable);
 
         // then
         assertThat(response).isNotNull();
@@ -222,15 +223,15 @@ class CouponServiceIntegrationTest {
                     .type(CouponType.DISCOUNT)
                     .expireDate(LocalDate.now().plusDays(30))
                     .build();
-            couponService.createCoupon(request);
+            couponCommonService.createCoupon(request);
         }
 
         CouponSearchCondition condition = CouponSearchCondition.builder().build();
         Pageable pageable = PageRequest.of(0, 10);
 
         // when
-        Page<CouponResponse> firstPage = couponService.searchCoupon(condition, pageable);
-        Page<CouponResponse> secondPage = couponService.searchCoupon(condition, PageRequest.of(1, 10));
+        Page<CouponResponse> firstPage = couponCommonService.searchCoupon(condition, pageable);
+        Page<CouponResponse> secondPage = couponCommonService.searchCoupon(condition, PageRequest.of(1, 10));
 
         // then
         assertThat(firstPage.getTotalElements()).isEqualTo(15);
@@ -245,7 +246,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 수정 성공")
     void updateCoupon_success() {
         // given
-        CouponResponse created = couponService.createCoupon(createRequest);
+        CouponResponse created = couponCommonService.createCoupon(createRequest);
         Long couponId = created.getId();
 
         CouponUpdateRequest updateRequest = CouponUpdateRequest.builder()
@@ -256,7 +257,7 @@ class CouponServiceIntegrationTest {
                 .build();
 
         // when
-        CouponResponse response = couponService.updateCoupon(couponId, updateRequest);
+        CouponResponse response = couponCommonService.updateCoupon(couponId, updateRequest);
 
         // then
         assertThat(response).isNotNull();
@@ -284,7 +285,7 @@ class CouponServiceIntegrationTest {
                 .build();
 
         // when & then
-        assertThatThrownBy(() -> couponService.updateCoupon(nonExistentId, updateRequest))
+        assertThatThrownBy(() -> couponCommonService.updateCoupon(nonExistentId, updateRequest))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
@@ -298,7 +299,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 수정 - 부분 수정 (null 값은 무시)")
     void updateCoupon_partialUpdate() {
         // given
-        CouponResponse created = couponService.createCoupon(createRequest);
+        CouponResponse created = couponCommonService.createCoupon(createRequest);
         Long couponId = created.getId();
 
         CouponUpdateRequest updateRequest = CouponUpdateRequest.builder()
@@ -306,7 +307,7 @@ class CouponServiceIntegrationTest {
                 .build();
 
         // when
-        CouponResponse response = couponService.updateCoupon(couponId, updateRequest);
+        CouponResponse response = couponCommonService.updateCoupon(couponId, updateRequest);
 
         // then
         assertThat(response.getName()).isEqualTo("이름만 수정");
@@ -320,11 +321,11 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 삭제 성공")
     void deleteCoupon_success() {
         // given
-        CouponResponse created = couponService.createCoupon(createRequest);
+        CouponResponse created = couponCommonService.createCoupon(createRequest);
         Long couponId = created.getId();
 
         // when
-        Boolean result = couponService.deleteCoupon(couponId);
+        Boolean result = couponCommonService.deleteCoupon(couponId);
 
         // then
         assertThat(result).isTrue();
@@ -340,7 +341,7 @@ class CouponServiceIntegrationTest {
         Long nonExistentId = 999L;
 
         // when
-        Boolean result = couponService.deleteCoupon(nonExistentId);
+        Boolean result = couponCommonService.deleteCoupon(nonExistentId);
 
         // then
         assertThat(result).isFalse();
@@ -352,7 +353,7 @@ class CouponServiceIntegrationTest {
     @DisplayName("쿠폰 삭제 후 다른 쿠폰 조회 가능")
     void deleteCoupon_otherCouponsStillExist() {
         // given
-        CouponResponse coupon1 = couponService.createCoupon(createRequest);
+        CouponResponse coupon1 = couponCommonService.createCoupon(createRequest);
         
         CouponCreateRequest request2 = CouponCreateRequest.builder()
                 .name("다른 쿠폰")
@@ -362,16 +363,16 @@ class CouponServiceIntegrationTest {
                 .type(CouponType.DISCOUNT)
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
-        CouponResponse coupon2 = couponService.createCoupon(request2);
+        CouponResponse coupon2 = couponCommonService.createCoupon(request2);
 
         // when
-        couponService.deleteCoupon(coupon1.getId());
+        couponCommonService.deleteCoupon(coupon1.getId());
 
         // then
         assertThat(couponRepository.existsById(coupon1.getId())).isFalse();
         assertThat(couponRepository.existsById(coupon2.getId())).isTrue();
         
-        CouponResponse found = couponService.findCoupon(coupon2.getId());
+        CouponResponse found = couponCommonService.findCoupon(coupon2.getId());
         assertThat(found).isNotNull();
         assertThat(found.getName()).isEqualTo("다른 쿠폰");
     }

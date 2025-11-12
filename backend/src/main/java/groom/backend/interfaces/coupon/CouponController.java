@@ -1,7 +1,7 @@
 package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponIssueService;
-import groom.backend.application.coupon.CouponService;
+import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
@@ -13,7 +13,6 @@ import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -41,7 +40,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/coupon")
 public class CouponController {
-  private final CouponService couponService;
+  private final CouponCommonService couponCommonService;
   private final CouponIssueService couponIssueService;
 
   @PostMapping
@@ -51,7 +50,7 @@ public class CouponController {
                   content = {@Content(schema = @Schema(implementation = CouponResponse.class))}),
   })
   public ResponseEntity<CouponResponse> createCoupon(@Validated @RequestBody CouponCreateRequest request) {
-    CouponResponse response = couponService.createCoupon(request);
+    CouponResponse response = couponCommonService.createCoupon(request);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
@@ -66,7 +65,7 @@ public class CouponController {
           @PathVariable("coupon_id")
           @Schema(description = "Path Value", example = "1")
           Long couponId) {
-    CouponResponse response = couponService.findCoupon(couponId);
+    CouponResponse response = couponCommonService.findCoupon(couponId);
     if (response == null) {
       return ResponseEntity.notFound().build();
     }
@@ -90,7 +89,7 @@ public class CouponController {
           @ModelAttribute CouponSearchCondition condition,
           @Parameter(description = "페이징 정보", required = false)
           @PageableDefault(size = 10) Pageable pageable) {
-    Page<CouponResponse> response = couponService.searchCoupon(condition, pageable);
+    Page<CouponResponse> response = couponCommonService.searchCoupon(condition, pageable);
     return ResponseEntity.ok(response);
   }
 
@@ -109,7 +108,7 @@ public class CouponController {
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId,
           @RequestBody CouponUpdateRequest request) {
-    CouponResponse response = couponService.updateCoupon(couponId, request);
+    CouponResponse response = couponCommonService.updateCoupon(couponId, request);
     if (response == null) {
       return ResponseEntity.notFound().build();
     }
@@ -129,7 +128,7 @@ public class CouponController {
   })
   @DeleteMapping("/{coupon_id}")
   public ResponseEntity<Void> deleteCoupon(@PathVariable("coupon_id") Long couponId) {
-    Boolean result = couponService.deleteCoupon(couponId);
+    Boolean result = couponCommonService.deleteCoupon(couponId);
     if (!result) {
       // 삭제 실패 (존재하지 않음)
       return ResponseEntity.notFound().build();
