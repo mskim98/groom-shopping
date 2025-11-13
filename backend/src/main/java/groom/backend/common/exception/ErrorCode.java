@@ -109,7 +109,7 @@ public enum ErrorCode {
     /** 최소 수량 미달 */
     CART_QUANTITY_MINIMUM               (HttpStatus.BAD_REQUEST, "수량은 1개 이상이어야 합니다."),
     /** 제거 수량 유효성 검증 실패 */
-    INVALID_REMOVE_QUANTITY             (HttpStatus.BAD_REQUEST, "제거할 수량은 1 이상이어야 합니다.");
+    INVALID_REMOVE_QUANTITY             (HttpStatus.BAD_REQUEST, "제거할 수량은 1 이상이어야 합니다."),
 
     // ===================== Coupon 에러 코드 ====================
     COUPON_NOT_FOUND(HttpStatus.NOT_FOUND, "쿠폰을 찾을 수 없습니다."),
