@@ -1,6 +1,7 @@
 package groom.backend.interfaces.cart;
 
 import groom.backend.application.cart.CartApplicationService;
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.cart.dto.request.RemoveCartItemsRequest;
 import groom.backend.interfaces.cart.dto.request.UpdateCartQuantityRequest;
@@ -36,6 +37,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @Tag(name = "Cart", description = "장바구니 관련 API")
 @SecurityRequirement(name = "JWT")
+@CheckPermission(roles = {"USER", "ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
 public class CartController {
 
     private final CartApplicationService cartApplicationService;

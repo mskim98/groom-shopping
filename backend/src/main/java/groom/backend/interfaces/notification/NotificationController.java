@@ -1,6 +1,7 @@
 package groom.backend.interfaces.notification;
 
 import groom.backend.application.notification.NotificationApplicationService;
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.notification.entity.Notification;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.infrastructure.sse.SseService;
@@ -35,6 +36,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Tag(name = "Notification", description = "알림 관련 API")
 @SecurityRequirement(name = "JWT")
+@CheckPermission(roles = {"USER", "ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
 public class NotificationController {
 
     private final SseService sseService;
