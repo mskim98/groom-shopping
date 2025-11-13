@@ -43,6 +43,8 @@ server:
     context-path: /api
 
 jwt:
+  private-key-path: classpath:keys/private_key.pem
+  public-key-path: classpath:keys/public_key.pem
   access:
     expiration: 1800000 #30분
   refresh:

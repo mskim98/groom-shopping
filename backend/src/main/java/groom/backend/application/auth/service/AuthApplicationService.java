@@ -6,7 +6,7 @@ import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.repository.RefreshTokenRepository;
 import groom.backend.domain.auth.repository.UserRepository;
 import groom.backend.infrastructure.security.CustomUserDetails;
-import groom.backend.infrastructure.security.JwtTokenProvider;
+import groom.backend.infrastructure.security.JwtRsaTokenProvider;
 import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
 import groom.backend.interfaces.auth.dto.request.TokenRefreshRequest;
@@ -33,7 +33,7 @@ public class AuthApplicationService {
     private final UserRepository userRepo;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
-    private final JwtTokenProvider jwtTokenProvider;
+    private final JwtRsaTokenProvider jwtTokenProvider;
     private final RefreshTokenRepository refreshTokenRepository;
 
     @Transactional
@@ -96,6 +96,10 @@ public class AuthApplicationService {
         String refreshToken = request.getRefreshToken();
 
         if (!jwtTokenProvider.validateToken(refreshToken)) {
+            throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
+        }
+
+        if(!jwtTokenProvider.isRefreshToken(refreshToken)) {
             throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 

@@ -29,7 +29,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private final JwtTokenProvider jwtTokenProvider;
+    private final JwtRsaTokenProvider jwtTokenProvider;
 
     private static final ObjectMapper LOCAL_OBJECT_MAPPER = createLocalObjectMapper();
 
@@ -85,11 +85,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             if (StringUtils.hasText(token)) {
                 if (jwtTokenProvider.validateToken(token)) {
-                    Authentication authentication = jwtTokenProvider.getAuthentication(token);
+                    if (jwtTokenProvider.isAccessToken(token)) {
+                        String email = jwtTokenProvider.getEmail(token);
+                        String role = jwtTokenProvider.getRole(token).name();
+                        log.info("Authenticated user: {}, Role: {}", email, role);
 
-                    ((AbstractAuthenticationToken) authentication)
-                            .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                        Authentication authentication = jwtTokenProvider.getAuthentication(token);
+
+                        ((AbstractAuthenticationToken) authentication)
+                                .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                        log.debug("Set authentication for user: {}", email);
+                    } else {
+                        log.warn("Refresh token used as access token");
+                    }
                 }
             } else {
                 // 토큰이 없거나 유효하지 않은 경우
