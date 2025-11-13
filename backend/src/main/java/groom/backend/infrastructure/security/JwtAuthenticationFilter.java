@@ -10,6 +10,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
@@ -20,9 +22,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-
-import java.io.IOException;
-import java.util.List;
 
 @Slf4j
 @Component
@@ -46,7 +45,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "/api/v1/auth/refresh",
             "/api/swagger-ui/**",
             "/api/v3/api-docs/**",
-            "/api/swagger-ui.html"
+            "/api/swagger-ui.html",
+            "/api/actuator/**"
     );
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
@@ -79,7 +79,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
         try {
             String token = resolveToken(request);
 
@@ -93,13 +94,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
             } else {
                 // 토큰이 없거나 유효하지 않은 경우
-                setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TOKEN", "인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
+                setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TOKEN",
+                        "인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
                 return;
             }
 
         } catch (ExpiredJwtException e) {
             // 만료된 토큰
-            setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "EXPIRED_TOKEN", "세션이 만료되었습니다. 다시 로그인해 주세요.");
+            setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "EXPIRED_TOKEN",
+                    "세션이 만료되었습니다. 다시 로그인해 주세요.");
             return;
         } catch (JwtException | IllegalArgumentException e) {
             // JWT 관련 예외는 이 필터에서 직접 401 응답으로 처리함
@@ -114,7 +117,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private void setErrorResponse(HttpServletResponse response, int status, String code, String message) throws IOException {
+    private void setErrorResponse(HttpServletResponse response, int status, String code, String message)
+            throws IOException {
         // 이전에 쓰여진 내용이 있을 수 있으니 초기화
         response.resetBuffer();
         response.setStatus(status);
