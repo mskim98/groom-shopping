@@ -50,7 +50,45 @@ jwt:
   refresh:
     expiration: 604800000 #7일
   security:
-    secretKey: my-custom-secret-key-groom-shopping-dev
+    privateKey: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDq9tp9u6GeJSzY
+      q3PSlZV7B8IHE0FzmBO7l47W4D/ryU4KvlWDXSnhmjyJtPf+DAWBoSv73YXTezIv
+      zSzTxwbYbh2ZzzK/vtOHLBmgW/gKKLsTXA/Ha5lIw1fEDAZBhi/G55rXTab6+BbZ
+      TY7Dz6ZkHAJNU03bCjEfsih8xgLi0vJAe8LupRpWt9tuVmiHtho43PWTMu9uaYK8
+      suPUs4uKTlgNDVqt4QE/OWQ4l0fgBJzeT4ug7rWRYtQ3KL9OSnEgEsFHLRgKJ/x3
+      Li6LhynZ3UfIwKE0FNHmh91ufCsXJSB2p9TbRM/CwMEF3lMA0ZQzhtMVZMCPXUDv
+      P1qOpi1FAgMBAAECggEAGdiHljcSgxvhv/+0IOD1bXAgBrk2hOmgmg0E2FwYi+47
+      2HCxZV7VIYzexeMTOG3IGUdKWE040FeH4Lw4Bx+ogBw0w1uIYJE0IXVXaE1VjoCG
+      e42v6qbKWLesKtOLyJ9jGAUYAkD3cjniAYtHfgCUdASkuC7GrKaFWtA1Jex+GscV
+      iwcJsM5XYs6pVvau9XL4mw2OPcxRWZa0hYhPS/HNQkhhUhS5Vxs1dUZ8Z26QzcUi
+      k5b2iBmIT0AKG9ACnIrWeEwNZ8qbmOUFIEex9Szva/JXQh/NjMdZxWdRmCZ8pT8F
+      /VAfG/vlT30i4evD2zrIj6Gssh+knugoT/MwHF4y4QKBgQD36y2dCnoWRRNDHv+M
+      F7fS2qmqExTdG+KEGJMDq6kX7E4aXkdHJmSMyE+j4KOqKgIqFH+9/0hmep9S/QSl
+      uxHC8i/yl78JcJFfMGMITjnwydcs5NOFb963xyvwxjqzUag0I3YzvWU/ggRLUt5A
+      oUcYQLPl3cTGeoTJX+YFDbt6SQKBgQDyn5LxcmOdJvvFCCN6q6eO/j5UFOOvmspk
+      FownveZvow5sioPnbi7FoDbtsbmVGvhQvi4wB9k3qMXxPA3tBkL6arvKiTgsO+NR
+      V89LtVVMWW8RmvvtneX4JaQwks3Zyq8y1pTMC8Mt+tWWpswFMuF1XT4Wc/JD7NUV
+      75oarWa7HQKBgA49H52JYIGu7fBI83xkUFZ34I64EdaxJ01W6/ql/Uw2cjXpfEaF
+      2fiL+Kb82+mGCCHKk5uh8dKQ8F2f0oiCOf7sUfyo4nv0TyUcblOnyoQd05HsgomD
+      Z1M+yTNG71AlPHfiIYPPOOVw3jZFSCaGHMMz1CE7n3WWy9GVBGz94OqhAoGBAJiy
+      MWrf0S2wwTep/ZpQui3WeSe11e5I/yOqxR6l94c/Ge7Z5lYbFDiwsqE5/1CGHs3C
+      Q5Na/Sx4fctrPmB0VmcAEZxQbBf6wQAKwZ4mS763cp2j6vYLMBbSqdkgK4nsdAMM
+      5azdokMn4JDl/PUwppCU1GSRKGHzhdA+ccBkbYlJAoGBAPdhCQOSRj8cAnhlHmTz
+      1jQactISs3wVWAYVvxFkDUBlQBQCcMMmGlNdOI02PvZHBGInxLy8BKBCU/ZRNZcX
+      6jeszQ1/Grx4pJ4FZEEw3POKVuh1vqC4x/6YsgrrE6b1Xcn1PV86dEux/KwMxzsN
+      01zDxmMTYbB2T1nRwH3dYzJz
+      -----END PRIVATE KEY-----
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6vbafbuhniUs2Ktz0pWV
+      ewfCBxNBc5gTu5eO1uA/68lOCr5Vg10p4Zo8ibT3/gwFgaEr+92F03syL80s08cG
+      2G4dmc8yv77ThywZoFv4Cii7E1wPx2uZSMNXxAwGQYYvxuea102m+vgW2U2Ow8+m
+      ZBwCTVNN2woxH7IofMYC4tLyQHvC7qUaVrfbblZoh7YaONz1kzLvbmmCvLLj1LOL
+      ik5YDQ1areEBPzlkOJdH4ASc3k+LoO61kWLUNyi/TkpxIBLBRy0YCif8dy4ui4cp
+      2d1HyMChNBTR5ofdbnwrFyUgdqfU20TPwsDBBd5TANGUM4bTFWTAj11A7z9ajqYt
+      RQIDAQAB
+      -----END PUBLIC KEY-----
 
 payment:
   toss:
