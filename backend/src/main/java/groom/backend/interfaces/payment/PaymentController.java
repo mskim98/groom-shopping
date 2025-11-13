@@ -1,6 +1,7 @@
 package groom.backend.interfaces.payment;
 
 import groom.backend.application.payment.PaymentApplicationService;
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.interfaces.payment.dto.request.CancelPaymentRequest;
@@ -130,6 +131,7 @@ public class PaymentController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PostMapping("/cancel")
     public ResponseEntity<PaymentResponse> cancelPayment(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
