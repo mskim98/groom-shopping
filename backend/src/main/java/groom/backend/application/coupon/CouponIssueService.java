@@ -39,22 +39,22 @@ public class CouponIssueService {
     // 쿠폰 조회
     // 비관적 락을 이용해 리소스 점유, 자원 충돌 ( quantity <= 0 ) 케이스 방지
     Coupon coupon = couponRepository.findByIdForUpdate(couponId).orElseThrow(
-            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+            ()-> new BusinessException(ErrorCode.COUPON_NOT_FOUND)
     );
 
     // 활성화 여부 확인
     if (!coupon.getIsActive()) {
-      throw new BusinessException(ErrorCode.NOT_FOUND);
+      throw new BusinessException(ErrorCode.COUPON_NOT_FOUND);
     }
 
     // 수량 확인
     if (coupon.getQuantity() <= 0) {
-      throw new BusinessException(ErrorCode.CONFLICT, "수량이 소진되었습니다.");
+      throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
     }
 
     // 사용자 중복 쿠폰 발급 방지
     if (!couponIssueRepository.findByCouponIdAndUserId(couponId, user.getId()).isEmpty()) {
-      throw new BusinessException(ErrorCode.CONFLICT, "이미 발급받은 쿠폰입니다.");
+      throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
     }
 
     // 쿠폰 확보
@@ -99,7 +99,7 @@ public class CouponIssueService {
     Integer discount = 0;
 
     // 쿠폰 조회
-    CouponIssue couponIssue = couponIssueRepository.findByCouponIdAndUserId(couponId, userId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
+    CouponIssue couponIssue = couponIssueRepository.findByCouponIdAndUserId(couponId, userId).orElseThrow(() -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
 
     // 쿠폰 검증
     checkCouponUsable(couponIssue, userId);
@@ -128,7 +128,7 @@ public class CouponIssueService {
       DiscountPolicy discountPolicy = discountPolicyFactory.getDiscountStrategy(couponIssue.getCoupon().getType());
       // 단일 쿠폰인지 검증, 하나라도 단일 사용 전용 쿠폰 존재 시 실패
       if(discountPolicy instanceof DiscountSinglePolicy)
-        throw new BusinessException(ErrorCode.INVALID_PARAMETER, "단일 사용 전용 쿠폰은 여러 개 사용할 수 없습니다.");
+        throw new BusinessException(ErrorCode.COUPON_INVALID_POLICY, "단일 사용 전용 쿠폰은 여러 개 사용할 수 없습니다.");
       else if (discountPolicy instanceof DiscountAmountMultiPolicy)
         amount.add(context);
       else if (discountPolicy instanceof DiscountPercentMultiPolicy)
@@ -150,7 +150,7 @@ public class CouponIssueService {
     // 쿠폰 사용 처리 (쿠폰 비활성화)
     // 쿠폰 조회
     CouponIssue issue = couponIssueRepository.findById(couponId).orElseThrow(
-            () -> new BusinessException(ErrorCode.NOT_FOUND, "쿠폰이 존재하지 않습니다."));
+            () -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
 
     // 쿠폰 검증
     checkCouponUsable(issue, userId);
@@ -169,12 +169,12 @@ public class CouponIssueService {
   private void checkCouponUsable(CouponIssue issue, Long userId) {
     // 사용자 확인, 활성화 여부 확인
     if (!issue.getUserId().equals(userId))
-      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+      throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
     if (!issue.getIsActive())
-      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다.");
+      throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
     // 쿠폰 만료일 확인
     // isActive가 true일 경우 활성화된 상태이기에 만료일을 검사하지 않음. DeletedAt을 검사해주어야 한다.
     if (issue.getDeletedAt().isBefore(LocalDateTime.now()))
-      throw new BusinessException(ErrorCode.FORBIDDEN, "쿠폰 사용일이 만료되었습니다.");
+      throw new BusinessException(ErrorCode.COUPON_EXPIRED);
   }
 }

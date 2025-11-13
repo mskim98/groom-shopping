@@ -93,9 +93,19 @@ public enum ErrorCode {
     RAFFLE_NOT_EDITABLE                 (HttpStatus.BAD_REQUEST, "현재 상태에서는 추첨을 수정할 수 없습니다."),
 
     // 추첨 시작 전 검증(별도)
-    RAFFLE_DRAW_NOT_STARTED             (HttpStatus.BAD_REQUEST, "아직 추첨일이 되지 않았습니다.");
+    RAFFLE_DRAW_NOT_STARTED             (HttpStatus.BAD_REQUEST, "아직 추첨일이 되지 않았습니다."),
 
 
+    // ===================== Coupon 에러 코드 ====================
+    COUPON_NOT_FOUND(HttpStatus.NOT_FOUND, "쿠폰을 찾을 수 없습니다."),
+    COUPON_DATE_INVALID(HttpStatus.BAD_REQUEST, "처리할 수 없는 날짜입니다."),
+
+    COUPON_USER_MATCH_FAILED(HttpStatus.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다."),
+    COUPON_EXPIRED(HttpStatus.FORBIDDEN, "쿠폰 사용일이 만료되었습니다."),
+
+    COUPON_INVALID_POLICY(HttpStatus.BAD_REQUEST, "쿠폰 정책에 맞지 않은 사용방식입니다."),
+    COUPON_OUT_OF_STOCK(HttpStatus.CONFLICT, "발급 수량이 소진되었습니다."),
+    COUPON_ALREADY_ISSUED(HttpStatus.CONFLICT, "이미 발급받은 쿠폰입니다.");
 
 
     // HTTP 상태 코드

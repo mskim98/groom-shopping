@@ -57,7 +57,7 @@ public class CouponCommonService {
   public CouponResponse findCoupon(Long couponId) {
     // 단일 쿠폰 검색
     Coupon coupon = couponRepository.findById(couponId).orElseThrow(
-            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+            ()-> new BusinessException(ErrorCode.COUPON_NOT_FOUND)
     );
 
     // 검색 결과 반환
@@ -75,7 +75,7 @@ public class CouponCommonService {
   public CouponResponse updateCoupon(Long couponId, CouponUpdateRequest couponUpdateRequest) {
     // coupon id 기반 조회
     Coupon currentCoupon = couponRepository.findById(couponId).orElseThrow(
-            ()-> new BusinessException(ErrorCode.NOT_FOUND)
+            ()-> new BusinessException(ErrorCode.COUPON_NOT_FOUND)
     );
 
     // 쿠폰 수정
