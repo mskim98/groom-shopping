@@ -6,3 +6,5 @@ backend/CLAUDE.md
 tmp/**
 
 frontend/package-lock.json
+
+logs/application.log

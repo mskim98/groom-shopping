@@ -1,4 +1,6 @@
 spring:
+  application:
+    name: groom-shopping
   config:
     activate:
       on-profile: dev
@@ -54,13 +56,13 @@ payment:
   toss:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
-    
-  jackson:
-    serialization:
-      write-dates-as-timestamps: false
-    deserialization:
-      fail-on-unknown-properties: false
-    default-property-inclusion: non_null
+
+jackson:
+  serialization:
+    write-dates-as-timestamps: false
+  deserialization:
+    fail-on-unknown-properties: false
+  default-property-inclusion: non_null
 
 springdoc:
   swagger-ui:
@@ -82,3 +84,32 @@ springdoc:
   model-and-view-allowed: true
   paths-to-match:
     - /**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,threaddump,heapdump
+      base-path: /actuator
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      show-details: always
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: dev
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        spring.data.repository.invocations: true
+    export:
+      prometheus:
+        enabled: true
+        step: 1m
