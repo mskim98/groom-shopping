@@ -49,7 +49,7 @@ function SuccessContent() {
         }
 
         // 백엔드에 결제 승인 요청
-        const response = await fetch('/api/v1/payments/confirm', {
+        const response = await fetch('/api/v1/payment/confirm', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

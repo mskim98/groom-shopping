@@ -95,10 +95,39 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         // Basic Auth: Secret Key를 Base64로 인코딩
-        String auth = secretKey + ":";
+        // 원본 시크릿 키 상태 확인
+        log.info("[TOSS_AUTH_DEBUG] Original secretKey: length={}, hex={}, starts with BOM={}",
+                secretKey.length(),
+                byteArrayToHex(secretKey.getBytes(StandardCharsets.UTF_8), 20),
+                secretKey.startsWith("\uFEFF"));
+
+        // BOM(Byte Order Mark) 제거 (UTF-8 BOM: \ufeff)
+        String cleanSecretKey = secretKey.replaceFirst("^\\uFEFF", "").trim();
+
+        log.info("[TOSS_AUTH_DEBUG] Cleaned secretKey: length={}, hex={}",
+                cleanSecretKey.length(),
+                byteArrayToHex(cleanSecretKey.getBytes(StandardCharsets.UTF_8), 20));
+
+        String auth = cleanSecretKey + ":";
         String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
+
+        log.info("[TOSS_AUTH_DEBUG] Encoded auth: {}", encodedAuth);
+        log.info("[TOSS_AUTH_DEBUG] Authorization header: Basic {}", encodedAuth);
+
+        // 정상 인코딩인지 확인
+        String expectedEncoded = "dGVzdF9za19Ma0tFeXBOQXJXUWp3SkVFbHlLTjNsbWVheFlHOg==";
+        log.info("[TOSS_AUTH_DEBUG] Expected: {}, Match: {}", expectedEncoded, encodedAuth.equals(expectedEncoded));
+
         headers.set("Authorization", "Basic " + encodedAuth);
 
         return headers;
+    }
+
+    private String byteArrayToHex(byte[] bytes, int limit) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Math.min(bytes.length, limit); i++) {
+            sb.append(String.format("%02x ", bytes[i]));
+        }
+        return sb.toString();
     }
 }
