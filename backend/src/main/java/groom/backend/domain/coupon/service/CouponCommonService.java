@@ -2,6 +2,8 @@ package groom.backend.domain.coupon.service;
 
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
+import groom.backend.infrastructure.kafka.stream.CouponDelayEvent;
+import groom.backend.infrastructure.kafka.stream.CouponDelayProducer;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
@@ -14,11 +16,16 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CouponCommonService {
   private final CouponRepository couponRepository;
+  private final CouponDelayProducer couponDelayProducer;
 
 
   @Transactional
@@ -28,6 +35,22 @@ public class CouponCommonService {
 
     // 쿠폰 생성
     Coupon savedCoupon = couponRepository.save(coupon);
+    return CouponResponse.from(savedCoupon);
+  }
+
+  @Transactional
+  public CouponResponse createCoupon(CouponCreateRequest couponCreateRequest, LocalDateTime expirationTime) {
+    // dto를 entity로 변환
+    Coupon coupon = couponCreateRequest.toEntity();
+
+    // 쿠폰 생성
+    Coupon savedCoupon = couponRepository.save(coupon);
+
+    Long expirationMilis = Duration.between(LocalDateTime.now(), expirationTime).toMillis();
+    CouponDelayEvent couponDelayEvent = new CouponDelayEvent(savedCoupon.getId(), expirationMilis, LocalDateTime.now().atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli());
+    couponDelayProducer.publishCouponDelayEvent(couponDelayEvent);
     return CouponResponse.from(savedCoupon);
   }
 

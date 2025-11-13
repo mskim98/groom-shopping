@@ -18,11 +18,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
 
 @Tag(name = "Coupon Management", description = "쿠폰 관리 API(생성, 수정, 삭제)")
 @Validated
@@ -34,13 +37,29 @@ public class CouponCommonController {
   private final CouponCommonService couponCommonService;
 
   @PostMapping
-  @Operation(summary = "쿠폰 생성", description = "지정된 값으로 쿠폰을 생성합니다. 할인 정책을 적용시 해당 정책의 수치는 변경할 수 없습니다.")
+  @Operation(summary = "쿠폰 생성", description = """
+          지정된 값으로 쿠폰을 생성합니다.
+          할인 정책을 적용시 해당 정책의 수치는 변경할 수 없습니다.
+          만료 날짜를 지정할 수 있습니다.
+          """)
   @ApiResponses(value = {
           @ApiResponse(responseCode = "201", description = "Created",
                   content = {@Content(schema = @Schema(implementation = CouponResponse.class))}),
   })
-  public ResponseEntity<CouponResponse> createCoupon(@Validated @RequestBody CouponCreateRequest request) {
-    CouponResponse response = couponCommonService.createCoupon(request);
+  public ResponseEntity<CouponResponse> createCoupon(
+          @Validated
+          @RequestBody
+          CouponCreateRequest request,
+          @RequestParam(required = false)
+          @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          LocalDateTime date) {
+    CouponResponse response = null;
+    if (date == null) {
+      response = couponCommonService.createCoupon(request);
+    } else {
+      response = couponCommonService.createCoupon(request, date);
+    }
+
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
