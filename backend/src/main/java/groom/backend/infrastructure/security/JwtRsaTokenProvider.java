@@ -4,14 +4,12 @@ import groom.backend.domain.auth.enums.Role;
 import io.jsonwebtoken.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -32,36 +30,38 @@ public class JwtRsaTokenProvider {
     private final long refreshTokenValidityInMilliseconds;
 
     public JwtRsaTokenProvider(UserDetailsService userDetailsService,
-                               @Value("${jwt.private-key-path}") Resource privateKeyResource,
-                               @Value("${jwt.public-key-path}") Resource  publicKeyResource,
+                               @Value("${jwt.security.privateKey}") String  privateKeyPem,
+                               @Value("${jwt.security.publicKey}") String  publicKeyPem,
                                @Value("${jwt.access.expiration}") long accessTokenValidity,
                                @Value("${jwt.refresh.expiration}") long refreshTokenValidity) throws Exception {
         this.userDetailsService = userDetailsService;
-        this.privateKey = loadPrivateKeyFromFile(privateKeyResource);
-        this.publicKey = loadPublicKeyFromFile(publicKeyResource);
+        this.privateKey = loadPrivateKey(privateKeyPem);
+        this.publicKey = loadPublicKey(publicKeyPem);
         this.accessTokenValidityInMilliseconds = accessTokenValidity;
         this.refreshTokenValidityInMilliseconds = refreshTokenValidity;
     }
 
-    private PrivateKey loadPrivateKeyFromFile(Resource resource) throws Exception {
-        String keyContent = new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8)
+    // Private Key 로드
+    private PrivateKey loadPrivateKey(String privateKeyPem) throws Exception {
+        String privateKeyContent = privateKeyPem
                 .replace("-----BEGIN PRIVATE KEY-----", "")
                 .replace("-----END PRIVATE KEY-----", "")
                 .replaceAll("\\s", "");
 
-        byte[] keyBytes = Base64.getDecoder().decode(keyContent);
+        byte[] keyBytes = Base64.getDecoder().decode(privateKeyContent);
         PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         return keyFactory.generatePrivate(keySpec);
     }
 
-    private PublicKey loadPublicKeyFromFile(Resource resource) throws Exception {
-        String keyContent = new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8)
+    // Public Key 로드
+    private PublicKey loadPublicKey(String publicKeyPem) throws Exception {
+        String publicKeyContent = publicKeyPem
                 .replace("-----BEGIN PUBLIC KEY-----", "")
                 .replace("-----END PUBLIC KEY-----", "")
                 .replaceAll("\\s", "");
 
-        byte[] keyBytes = Base64.getDecoder().decode(keyContent);
+        byte[] keyBytes = Base64.getDecoder().decode(publicKeyContent);
         X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         return keyFactory.generatePublic(keySpec);
@@ -77,7 +77,7 @@ public class JwtRsaTokenProvider {
                 .claim("type", "access")
                 .setIssuedAt(now)
                 .setExpiration(expiryDate)
-                .signWith(privateKey, SignatureAlgorithm.RS256)  // ← RS256 사용
+                .signWith(privateKey, SignatureAlgorithm.RS256)
                 .compact();
     }
 
@@ -88,6 +88,7 @@ public class JwtRsaTokenProvider {
 
         return Jwts.builder()
                 .setSubject(email)
+                .claim("role", role)
                 .claim("type", "refresh")
                 .setIssuedAt(now)
                 .setExpiration(expiryDate)
@@ -108,6 +109,9 @@ public class JwtRsaTokenProvider {
 
     public Role getRole(String token) {
         String role = getClaims(token).get("role", String.class);
+        if (role == null) {
+            throw new JwtException("토큰에서 역할 정보를 찾을 수 없습니다.");
+        }
         return Role.valueOf(role);
     }
 

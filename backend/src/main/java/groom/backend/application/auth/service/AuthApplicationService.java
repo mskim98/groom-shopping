@@ -99,7 +99,7 @@ public class AuthApplicationService {
             throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
-        if(!jwtTokenProvider.isRefreshToken(refreshToken)) {
+        if (!jwtTokenProvider.isRefreshToken(refreshToken)) {
             throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
