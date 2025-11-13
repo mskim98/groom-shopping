@@ -46,13 +46,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "/api/v1/auth/refresh",
             "/api/swagger-ui/**",
             "/api/v3/api-docs/**",
-            "/api/swagger-ui.html"
+            "/api/swagger-ui.html",
+            "/api/v1/health",
+            "/api/v1/actuator/health"
     );
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) throws ServletException {
+        String uri = request.getRequestURI();
+        String context = request.getContextPath();
+        String servlet = request.getServletPath();
+        log.debug("[JWT_FILTER] requestURI={} , contextPath={} , servletPath={}", uri, context, servlet);
+
+
         String path = request.getRequestURI();
 
         if ("GET".equalsIgnoreCase(request.getMethod()) &&
