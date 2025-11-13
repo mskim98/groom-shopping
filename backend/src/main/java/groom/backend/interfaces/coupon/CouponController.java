@@ -1,6 +1,7 @@
 package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
@@ -39,6 +40,7 @@ import java.util.List;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/v1/coupon")
+@CheckPermission(roles = {"USER", "ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
 public class CouponController {
   private final CouponCommonService couponCommonService;
   private final CouponIssueService couponIssueService;
