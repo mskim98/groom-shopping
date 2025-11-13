@@ -29,6 +29,36 @@ public class KafkaConfig {
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
 
+    // 공통 템플릿 주석
+//    /**
+//     * [공통] Producer 설정 팩토리
+//     * 모든 이벤트 객체(POJO)를 JSON으로 직렬화하는 공통 팩토리입니다.
+//     */
+//    @Bean
+//    public ProducerFactory<String, Object> commonProducerFactory() {
+//        Map<String, Object> configProps = new HashMap<>();
+//        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+//        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+//        // Value Serializer를 JsonSerializer로 설정 (모든 객체 처리 가능)
+//        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+//        configProps.put(ProducerConfig.ACKS_CONFIG, "1");
+//        configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
+//        // JsonSerializer가 Type 정보를 Header에 추가하도록 설정 (Consumer에서 유용할 수 있음)
+//        // configProps.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false); // 기본값은 true
+//
+//        return new DefaultKafkaProducerFactory<>(configProps);
+//    }
+//
+//    /**
+//     * [공통] KafkaTemplate
+//     * 이 KafkaTemplate 하나만 주입받아서 모든 종류의 이벤트를 전송할 수 있습니다.
+//     */
+//    @Bean
+//    public KafkaTemplate<String, Object> kafkaTemplate() {
+//        // 공통 ProducerFactory를 사용
+//        return new KafkaTemplate<>(commonProducerFactory());
+//    }
+
     @Bean
     public ProducerFactory<String, StockThresholdEvent> producerFactory() {
         Map<String, Object> configProps = new HashMap<>();
