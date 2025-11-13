@@ -2,6 +2,9 @@
 .DS_Store
 backend/CLAUDE.md
 
+# kafka streams tmp files
+tmp/**
+
 frontend/package-lock.json
 
 logs/application.log

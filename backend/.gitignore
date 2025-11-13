@@ -5,6 +5,10 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
+### kafka streams 저장 경로 ###
+# 상위 폴더에도 적용되어 있으나 backend에서 실행될 우려가 있기에 추가
+tmp/**
+
 ### STS ###
 .apt_generated
 .classpath
