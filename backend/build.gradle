@@ -30,8 +30,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.kafka:spring-kafka'
-    
+
     implementation 'org.apache.kafka:kafka-streams'
+
+    // Flyway - DB 마이그레이션 도구
+    implementation 'org.flywaydb:flyway-core:8.5.13'
+
     // swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
 

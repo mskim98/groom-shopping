@@ -81,43 +81,6 @@ public class PaymentController {
     }
 
     /**
-     * 테스트용 결제 승인 (Toss API 호출 없이)
-     */
-    @Operation(
-            summary = "테스트용 결제 승인",
-            description = "Toss API 호출 없이 테스트용으로 결제를 승인합니다."
-    )
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "테스트 결제 승인 성공",
-                    content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = PaymentResponse.class))),
-            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
-            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
-    })
-    @PostMapping("/confirm/test")
-    public ResponseEntity<PaymentResponse> confirmPaymentForTest(
-            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
-            @io.swagger.v3.oas.annotations.parameters.RequestBody(
-                    description = "테스트 결제 승인 요청",
-                    required = true,
-                    content = @Content(schema = @Schema(implementation = ConfirmPaymentRequest.class))
-            )
-            @RequestBody ConfirmPaymentRequest request) {
-
-        log.info("[API_REQUEST] Test confirm payment - UserId: {}, OrderId: {}",
-                user.getId(), request.getOrderId());
-
-        Payment payment = paymentApplicationService.confirmPaymentForTest(request.getOrderId());
-
-        PaymentResponse response = PaymentResponse.from(payment);
-
-        log.info("[API_RESPONSE] Test payment confirmed - PaymentId: {}, Status: {}",
-                response.getId(), response.getStatus());
-
-        return ResponseEntity.ok(response);
-    }
-
-    /**
      * 결제 취소
      */
     @Operation(
