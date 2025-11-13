@@ -1,9 +1,9 @@
 package groom.backend.interfaces.coupon;
 
-import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
-import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.interfaces.coupon.dto.response.CouponResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,9 +15,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -57,6 +54,10 @@ public class CouponCommonController {
     if (date == null) {
       response = couponCommonService.createCoupon(request);
     } else {
+      if(date.isBefore(LocalDateTime.now())) {
+        // 서버 시간 이후에만 이벤트 생성 가능
+        throw new BusinessException(ErrorCode.COUPON_DATE_INVALID);
+      }
       response = couponCommonService.createCoupon(request, date);
     }
 
