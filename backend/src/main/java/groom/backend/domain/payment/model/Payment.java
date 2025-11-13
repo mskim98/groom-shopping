@@ -6,6 +6,8 @@ import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.model.vo.Money;
 import groom.backend.domain.payment.model.vo.PaymentKey;
 import groom.backend.domain.payment.model.vo.TransactionId;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
@@ -50,8 +52,41 @@ public class Payment {
     @Embedded
     private TransactionId transactionId;
 
+    @Column(name = "last_transaction_key", length = 200)
+    private String lastTransactionKey;
+
     @Embedded
     private Money amount;
+
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "value", column = @Column(name = "balance_amount"))
+    })
+    private Money balanceAmount;
+
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "value", column = @Column(name = "supplied_amount"))
+    })
+    private Money suppliedAmount;
+
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "value", column = @Column(name = "vat_amount"))
+    })
+    private Money vat;
+
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "value", column = @Column(name = "tax_free_amount"))
+    })
+    private Money taxFreeAmount;
+
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "value", column = @Column(name = "tax_exemption_amount"))
+    })
+    private Money taxExemptionAmount;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -67,6 +102,30 @@ public class Payment {
     @Column(name = "customer_name")
     private String customerName;
 
+    @Column(name = "m_id", length = 50)
+    private String mId;
+
+    @Column(name = "version", length = 50)
+    private String version;
+
+    @Column(name = "type", length = 50)
+    private String type;
+
+    @Column(name = "currency", length = 10)
+    private String currency;
+
+    @Column(name = "use_escrow")
+    private Boolean useEscrow;
+
+    @Column(name = "culture_expense")
+    private Boolean cultureExpense;
+
+    @Column(name = "is_partial_cancelable")
+    private Boolean isPartialCancelable;
+
+    @Column(name = "requested_at")
+    private LocalDateTime requestedAt;
+
     @Column(name = "approved_at")
     private LocalDateTime approvedAt;
 
@@ -78,6 +137,15 @@ public class Payment {
 
     @Column(name = "failure_message")
     private String failureMessage;
+
+    @Column(name = "payment_method_details", columnDefinition = "TEXT")
+    private String paymentMethodDetails;
+
+    @Column(name = "receipt", columnDefinition = "TEXT")
+    private String receipt;
+
+    @Column(name = "checkout", columnDefinition = "TEXT")
+    private String checkout;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -97,6 +165,10 @@ public class Payment {
         this.customerName = customerName;
         this.method = method;
         this.status = PaymentStatus.PENDING;
+        this.currency = "KRW";
+        this.useEscrow = false;
+        this.cultureExpense = false;
+        this.isPartialCancelable = false;
     }
 
     public UUID getOrderId() {
@@ -115,18 +187,71 @@ public class Payment {
         return this.transactionId != null ? this.transactionId.getValue() : null;
     }
 
+    public Integer getBalanceAmountValue() {
+        return this.balanceAmount != null ? this.balanceAmount.getValue() : null;
+    }
+
+    public Integer getSuppliedAmountValue() {
+        return this.suppliedAmount != null ? this.suppliedAmount.getValue() : null;
+    }
+
+    public Integer getVatValue() {
+        return this.vat != null ? this.vat.getValue() : null;
+    }
+
+    public Integer getTaxFreeAmountValue() {
+        return this.taxFreeAmount != null ? this.taxFreeAmount.getValue() : null;
+    }
+
+    public Integer getTaxExemptionAmountValue() {
+        return this.taxExemptionAmount != null ? this.taxExemptionAmount.getValue() : null;
+    }
+
     // 비즈니스 로직: 결제 준비 상태로 변경
     public void ready(String paymentKey) {
         this.paymentKey = PaymentKey.of(paymentKey);
         this.status = PaymentStatus.READY;
+        this.requestedAt = LocalDateTime.now();
     }
 
-    // 비즈니스 로직: 결제 승인
+    // 비즈니스 로직: 결제 승인 (기본 정보)
     public void approve(String paymentKey, String transactionId) {
         this.paymentKey = PaymentKey.of(paymentKey);
         this.transactionId = TransactionId.of(transactionId);
         this.status = PaymentStatus.DONE;
         this.approvedAt = LocalDateTime.now();
+    }
+
+    // 비즈니스 로직: 결제 승인 (Toss Payment API 응답으로부터)
+    public void approveWithTossResponse(String paymentKey, String lastTransactionKey,
+                                       Integer balanceAmount, Integer suppliedAmount,
+                                       Integer vat, Integer taxFreeAmount,
+                                       Integer taxExemptionAmount, String mId,
+                                       String version, String type, String currency,
+                                       Boolean useEscrow, Boolean cultureExpense,
+                                       Boolean isPartialCancelable, LocalDateTime requestedAt,
+                                       String paymentMethodDetails, String receipt,
+                                       String checkout) {
+        this.paymentKey = PaymentKey.of(paymentKey);
+        this.lastTransactionKey = lastTransactionKey;
+        this.status = PaymentStatus.DONE;
+        this.approvedAt = LocalDateTime.now();
+        this.balanceAmount = Money.won(balanceAmount);
+        this.suppliedAmount = Money.won(suppliedAmount);
+        this.vat = Money.won(vat);
+        this.taxFreeAmount = Money.won(taxFreeAmount);
+        this.taxExemptionAmount = Money.won(taxExemptionAmount);
+        this.mId = mId;
+        this.version = version;
+        this.type = type;
+        this.currency = currency;
+        this.useEscrow = useEscrow;
+        this.cultureExpense = cultureExpense;
+        this.isPartialCancelable = isPartialCancelable;
+        this.requestedAt = requestedAt;
+        this.paymentMethodDetails = paymentMethodDetails;
+        this.receipt = receipt;
+        this.checkout = checkout;
     }
 
     // 비즈니스 로직: 결제 취소

@@ -5,7 +5,6 @@ import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.interfaces.payment.dto.request.CancelPaymentRequest;
 import groom.backend.interfaces.payment.dto.request.ConfirmPaymentRequest;
-import groom.backend.interfaces.payment.dto.request.PreparePaymentRequest;
 import groom.backend.interfaces.payment.dto.response.PaymentResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -38,45 +37,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class PaymentController {
 
     private final PaymentApplicationService paymentApplicationService;
-
-    /**
-     * 결제 준비 - Order 기반으로 Payment 생성
-     */
-    @Operation(
-            summary = "결제 준비",
-            description = "주문 기반으로 결제를 준비합니다. 결제 수단을 선택할 수 있습니다."
-    )
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "결제 준비 성공",
-                    content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = PaymentResponse.class))),
-            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
-            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
-    })
-    @PostMapping("/prepare")
-    public ResponseEntity<PaymentResponse> preparePayment(
-            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
-            @io.swagger.v3.oas.annotations.parameters.RequestBody(
-                    description = "결제 준비 요청",
-                    required = true,
-                    content = @Content(schema = @Schema(implementation = PreparePaymentRequest.class))
-            )
-            @RequestBody PreparePaymentRequest request) {
-
-        log.info("[API_REQUEST] Prepare payment - UserId: {}, OrderId: {}",
-                user.getId(), request.getOrderId());
-
-        Payment payment = paymentApplicationService.preparePayment(
-                request.getOrderId(),
-                request.getPaymentMethod()
-        );
-
-        PaymentResponse response = PaymentResponse.from(payment);
-
-        log.info("[API_RESPONSE] Payment prepared - PaymentId: {}", response.getId());
-
-        return ResponseEntity.ok(response);
-    }
 
     /**
      * 결제 승인 - Toss Payments API 호출 후 상태 변경

@@ -1,5 +1,6 @@
 package groom.backend.application.payment;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.application.raffle.RaffleValidationService;
@@ -8,7 +9,6 @@ import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.model.enums.OrderStatus;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
-import groom.backend.domain.payment.model.enums.PaymentMethod;
 import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
@@ -18,6 +18,9 @@ import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.dto.TossPaymentConfirmRequest;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -40,45 +43,7 @@ public class PaymentApplicationService {
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
-
-    /**
-     * 결제 준비 - Order 기반으로 Payment 생성
-     */
-    @Transactional
-    public Payment preparePayment(UUID orderId, PaymentMethod paymentMethod) {
-        // 주문 조회
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new IllegalArgumentException("주문을 찾을 수 없습니다: " + orderId));
-
-        // 이미 결제가 존재하는지 확인
-        if (paymentRepository.existsByOrderId(orderId)) {
-            throw new IllegalStateException("이미 결제가 생성된 주문입니다: " + orderId);
-        }
-
-        // 주문명 생성 (첫 번째 상품명 + 외 N건)
-        List<OrderItem> orderItems = order.getOrderItems();
-        String orderName = createOrderName(orderItems);
-
-        // Payment 생성
-        Payment payment = Payment.builder()
-                .order(order)
-                .userId(order.getUserId())
-                .amount(order.getTotalAmount())
-                .orderName(orderName)
-                .method(paymentMethod)
-                .build();
-
-        Payment savedPayment = paymentRepository.save(payment);
-
-        // Order에 Payment 연결
-        order.assignPayment(savedPayment);
-        orderRepository.save(order);
-
-        log.info("[PAYMENT_PREPARE] Payment created - PaymentId: {}, OrderId: {}, Amount: {}",
-                savedPayment.getId(), orderId, savedPayment.getAmountValue());
-
-        return savedPayment;
-    }
+    private final ObjectMapper objectMapper;
 
     /**
      * 결제 승인 - Toss Payments API 호출 후 상태 변경
@@ -106,8 +71,32 @@ public class PaymentApplicationService {
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
 
-            // Payment 승인 처리
-            payment.approve(response.getPaymentKey(), response.getTransactionKey());
+            // Toss Payment API 응답 데이터로 Payment 승인 처리
+            String paymentMethodDetailsJson = convertPaymentMethodDetails(response);
+            String receiptJson = convertObjectToJson(response.getReceipt());
+            String checkoutJson = convertObjectToJson(response.getCheckout());
+            LocalDateTime requestedAtDateTime = parseDateTime(response.getRequestedAt());
+
+            payment.approveWithTossResponse(
+                    response.getPaymentKey(),
+                    response.getLastTransactionKey(),
+                    response.getBalanceAmount() != null ? response.getBalanceAmount() : response.getTotalAmount(),
+                    response.getSuppliedAmount() != null ? response.getSuppliedAmount() : response.getTotalAmount(),
+                    response.getVat() != null ? response.getVat() : 0,
+                    response.getTaxFreeAmount() != null ? response.getTaxFreeAmount() : 0,
+                    response.getTaxExemptionAmount() != null ? response.getTaxExemptionAmount() : 0,
+                    response.getMId(),
+                    response.getVersion(),
+                    response.getType(),
+                    response.getCurrency(),
+                    response.getUseEscrow(),
+                    response.getCultureExpense(),
+                    response.getIsPartialCancelable(),
+                    requestedAtDateTime,
+                    paymentMethodDetailsJson,
+                    receiptJson,
+                    checkoutJson
+            );
             paymentRepository.save(payment);
 
             // Order 상태 변경 (PENDING -> CONFIRMED)
@@ -248,17 +237,72 @@ public class PaymentApplicationService {
 
     // === 비공개 메서드 ===
 
-    private String createOrderName(List<OrderItem> orderItems) {
-        if (orderItems.isEmpty()) {
-            return "주문";
+    /**
+     * Toss Payment API 응답 데이터로부터 결제 수단 상세정보를 JSON 문자열로 변환
+     */
+    private String convertPaymentMethodDetails(TossPaymentResponse response) {
+        try {
+            // 결제 수단별로 데이터 구성
+            if (response.getCard() != null) {
+                return convertObjectToJson(response.getCard());
+            } else if (response.getVirtualAccount() != null) {
+                return convertObjectToJson(response.getVirtualAccount());
+            } else if (response.getTransfer() != null) {
+                return convertObjectToJson(response.getTransfer());
+            } else if (response.getMobilePhone() != null) {
+                return convertObjectToJson(response.getMobilePhone());
+            } else if (response.getGiftCertificate() != null) {
+                return convertObjectToJson(response.getGiftCertificate());
+            } else if (response.getEasyPay() != null) {
+                return convertObjectToJson(response.getEasyPay());
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("[PAYMENT_METHOD_DETAILS_CONVERT] Failed to convert payment method details", e);
+            return null;
+        }
+    }
+
+    /**
+     * Object를 JSON 문자열로 변환
+     */
+    private String convertObjectToJson(Object object) {
+        if (object == null) {
+            return null;
+        }
+        try {
+            if (object instanceof String) {
+                return (String) object;
+            }
+            // ObjectMapper를 사용해서 Object를 JSON 문자열로 변환
+            return objectMapper.writeValueAsString(object);
+        } catch (Exception e) {
+            log.warn("[OBJECT_TO_JSON_CONVERT] Failed to convert object to JSON", e);
+            return null;
+        }
+    }
+
+    /**
+     * ISO 8601 형식의 날짜 문자열을 LocalDateTime으로 파싱 예: "2022-06-08T15:40:49+09:00" -> LocalDateTime
+     */
+    private LocalDateTime parseDateTime(String dateTimeString) {
+        if (dateTimeString == null || dateTimeString.isEmpty()) {
+            return null;
         }
 
-        OrderItem firstItem = orderItems.get(0);
-        if (orderItems.size() == 1) {
-            return firstItem.getProductName();
+        try {
+            // ISO 8601 형식 (예: "2022-06-08T15:40:49+09:00")
+            OffsetDateTime offsetDateTime = OffsetDateTime.parse(dateTimeString);
+            return offsetDateTime.toLocalDateTime();
+        } catch (Exception e1) {
+            try {
+                // 다른 형식 시도 (예: "2022-06-08T15:40:49")
+                return LocalDateTime.parse(dateTimeString, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            } catch (Exception e2) {
+                log.warn("[DATETIME_PARSE] Failed to parse datetime: {}", dateTimeString, e2);
+                return null;
+            }
         }
-
-        return firstItem.getProductName() + " 외 " + (orderItems.size() - 1) + "건";
     }
 
     private List<UUID> reduceProductStock(Order order) {

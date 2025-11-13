@@ -151,25 +151,10 @@ export default function OrderPage() {
   const handleTossPayment = async () => {
     if (!createdOrder) return;
 
-    setPaymentInProgress(true);
-    try {
-      const paymentData = {
-        orderId: createdOrder.orderId,
-        amount: createdOrder.totalAmount,
-        paymentMethod: 'TOSS',
-      };
-
-      console.log('Processing TOSS payment:', paymentData);
-      await paymentApi.confirmPayment(paymentData);
-
-      toast.success('결제가 완료되었습니다.');
-      setPaymentCompleted(true);
-    } catch (error) {
-      console.error('Payment error:', error);
-      toast.error(error instanceof Error ? error.message : '결제에 실패했습니다.');
-    } finally {
-      setPaymentInProgress(false);
-    }
+    // 토스 결제 페이지로 이동 (토스 위젯이 있는 페이지)
+    // 토스 위젯에서 paymentKey를 받은 후 /payment/success로 리다이렉트됨
+    console.log('Redirecting to Toss payment page:', createdOrder.orderId);
+    router.push(`/payment?orderId=${createdOrder.orderId}`);
   };
 
   // 결제 완료 전 - 결제 수단 선택 화면
