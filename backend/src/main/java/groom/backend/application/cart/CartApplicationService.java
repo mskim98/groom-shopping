@@ -210,15 +210,24 @@ public class CartApplicationService {
      * Redis 데이터로부터 장바구니 조회 결과 생성
      */
     private CartViewResult buildCartViewResultFromRedis(Long userId, Map<UUID, RedisCartRepository.CartItemData> redisItems) {
-        // 1. 제품 정보 조회
+        // 1. Cart 정보 조회 (cartId를 위해)
+        CartJpaEntity cart = cartRepository.findByUserId(userId).orElse(null);
+        Long cartId = cart != null ? cart.getId() : null;
+        
+        // 2. CartItem 정보 조회 (createdAt, updatedAt을 위해)
+        List<CartItemJpaEntity> cartItems = cartItemRepository.findByUserId(userId);
+        Map<UUID, CartItemJpaEntity> cartItemMap = cartItems.stream()
+                .collect(Collectors.toMap(CartItemJpaEntity::getProductId, item -> item));
+        
+        // 3. 제품 정보 조회
         List<UUID> productIds = new java.util.ArrayList<>(redisItems.keySet());
         List<Product> products = productRepository.findByIds(productIds);
         
-        // 2. 제품 정보를 Map으로 변환
+        // 4. 제품 정보를 Map으로 변환
         Map<UUID, Product> productMap = products.stream()
                 .collect(Collectors.toMap(Product::getId, p -> p));
 
-        // 3. 결과 생성
+        // 5. 결과 생성
         int totalItems = redisItems.size();
         int totalPrice = 0;
         List<CartItemResult> itemResults = new java.util.ArrayList<>();
@@ -227,28 +236,30 @@ public class CartApplicationService {
             UUID productId = entry.getKey();
             RedisCartRepository.CartItemData itemData = entry.getValue();
             Product product = productMap.get(productId);
+            CartItemJpaEntity cartItem = cartItemMap.get(productId);
             
             if (product != null) {
                 int itemTotalPrice = product.getPrice() * itemData.getQuantity();
                 totalPrice += itemTotalPrice;
 
                 itemResults.add(new CartItemResult(
-                        itemData.getCartItemId(),
+                        itemData.getCartItemId() != null ? itemData.getCartItemId() : 
+                                (cartItem != null ? cartItem.getId() : null),
                         productId,
                         product.getName(),
                         product.getPrice(),
                         itemData.getQuantity(),
                         itemTotalPrice,
-                        null, // Redis에는 timestamp 없음
-                        null
+                        cartItem != null ? cartItem.getCreatedAt() : null,
+                        cartItem != null ? cartItem.getUpdatedAt() : null
                 ));
             }
         }
 
-        log.info("[CART_VIEW_REDIS_SUCCESS] userId={}, totalItems={}, totalPrice={}", 
-                userId, totalItems, totalPrice);
+        log.info("[CART_VIEW_REDIS_SUCCESS] userId={}, cartId={}, totalItems={}, totalPrice={}", 
+                userId, cartId, totalItems, totalPrice);
 
-        return new CartViewResult(null, itemResults, totalItems, totalPrice);
+        return new CartViewResult(cartId, itemResults, totalItems, totalPrice);
     }
 
     /**
