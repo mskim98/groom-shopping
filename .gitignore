@@ -8,3 +8,5 @@ tmp/**
 frontend/package-lock.json
 
 logs/application.log
+
+backend/logs/application.log

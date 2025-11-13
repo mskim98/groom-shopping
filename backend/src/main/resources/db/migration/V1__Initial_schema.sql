@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX idx_users_email ON users(email);
 
 -- 2. Product 테이블
+-- ProductCategory: GENERAL, TICKET, RAFFLE
+-- ProductStatus: AVAILABLE, OUT_OF_STOCK
 CREATE TABLE IF NOT EXISTS product (
     id UUID PRIMARY KEY,
     name VARCHAR(255),
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS cart (
 
 CREATE INDEX idx_cart_user_id ON cart(user_id);
 
--- 4. CartItem 테이블
+-- 4. CartItem 테이블 (entity: CartItemJpaEntity)
 CREATE TABLE IF NOT EXISTS cart_item (
     id BIGSERIAL PRIMARY KEY,
     cart_id BIGINT NOT NULL,
@@ -62,47 +64,49 @@ CREATE TABLE IF NOT EXISTS cart_item (
 CREATE INDEX idx_cart_item_cart_id ON cart_item(cart_id);
 CREATE INDEX idx_cart_item_product_id ON cart_item(product_id);
 
--- 5. Order 테이블 (테이블명: "Order" - 예약어이므로 큰따옴표 사용)
-CREATE TABLE IF NOT EXISTS "Order" (
+-- 5. Order 테이블 (entity: Order.java)
+-- OrderStatus: PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED
+CREATE TABLE IF NOT EXISTS "order" (
     id UUID PRIMARY KEY,
-    userId BIGINT NOT NULL,
-    subTotal INTEGER NOT NULL,
-    discountAmount INTEGER,
-    totalAmount INTEGER NOT NULL,
+    user_id BIGINT NOT NULL,
+    sub_total INTEGER NOT NULL,
+    discount_amount INTEGER,
+    total_amount INTEGER NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
-    couponId BIGINT,
-    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_order_user FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    coupon_id BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_order_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_order_user_id ON "Order"(userId);
-CREATE INDEX idx_order_status ON "Order"(status);
+CREATE INDEX idx_order_user_id ON "order"(user_id);
+CREATE INDEX idx_order_status ON "order"(status);
 
--- 6. OrderItem 테이블
+-- 6. OrderItem 테이블 (entity: OrderItem.java)
 CREATE TABLE IF NOT EXISTS order_item (
     id BIGSERIAL PRIMARY KEY,
     order_id UUID NOT NULL,
     product_id UUID NOT NULL,
-    product_name VARCHAR(255),
-    product_price INTEGER,
+    name VARCHAR(200) NOT NULL,
+    price INTEGER NOT NULL,
     quantity INTEGER NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_order_item_order FOREIGN KEY (order_id) REFERENCES "Order"(id) ON DELETE CASCADE,
+    sub_total INTEGER NOT NULL,
+    CONSTRAINT fk_order_item_order FOREIGN KEY (order_id) REFERENCES "order"(id) ON DELETE CASCADE,
     CONSTRAINT fk_order_item_product FOREIGN KEY (product_id) REFERENCES product(id)
 );
 
 CREATE INDEX idx_order_item_order_id ON order_item(order_id);
 CREATE INDEX idx_order_item_product_id ON order_item(product_id);
 
--- 7. Payment 테이블
+-- 7. Payment 테이블 (entity: Payment.java, table name = payment)
+-- PaymentStatus: PENDING, DONE, FAILED, CANCELLED
+-- PaymentMethod: CARD, VIRTUAL_ACCOUNT
 CREATE TABLE IF NOT EXISTS payment (
     id UUID PRIMARY KEY,
-    orderId UUID NOT NULL UNIQUE,
-    userId BIGINT NOT NULL,
-    payment_key VARCHAR(255),
-    transaction_id VARCHAR(255),
+    "orderId" UUID NOT NULL UNIQUE,
+    "userId" BIGINT NOT NULL,
+    "paymentKey" VARCHAR(255),
+    "transactionId" VARCHAR(255),
     last_transaction_key VARCHAR(200),
     amount INTEGER,
     balance_amount INTEGER,
@@ -114,6 +118,8 @@ CREATE TABLE IF NOT EXISTS payment (
     method VARCHAR(50),
     order_name VARCHAR(255),
     customer_name VARCHAR(255),
+    m_id VARCHAR(50),
+    version VARCHAR(50),
     type VARCHAR(50) DEFAULT 'NORMAL',
     currency VARCHAR(10) DEFAULT 'KRW',
     use_escrow BOOLEAN DEFAULT FALSE,
@@ -128,14 +134,17 @@ CREATE TABLE IF NOT EXISTS payment (
     approved_at TIMESTAMP,
     canceled_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_payment_order FOREIGN KEY (orderId) REFERENCES "Order"(id) ON DELETE CASCADE,
-    CONSTRAINT fk_payment_user FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    CONSTRAINT fk_payment_order FOREIGN KEY ("orderId") REFERENCES "order"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_payment_user FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_payment_order_id ON payment(orderId);
-CREATE INDEX idx_payment_user_id ON payment(userId);
+CREATE INDEX idx_payment_order_id ON payment("orderId");
+CREATE INDEX idx_payment_user_id ON payment("userId");
 CREATE INDEX idx_payment_status ON payment(status);
 
 -- ============================================
--- 마이그레이션 완료
+-- V1 마이그레이션 완료
+-- 테이블명 주의:
+-- - "Order", "OrderItem": 예약어 및 camelCase 사용으로 큰따옴표 필수
+-- - 컬럼명: 대부분 camelCase (userId, orderId, productId, etc)
 -- ============================================
