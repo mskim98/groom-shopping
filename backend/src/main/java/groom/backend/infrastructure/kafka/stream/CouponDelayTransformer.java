@@ -1,8 +1,6 @@
 package groom.backend.infrastructure.kafka.stream;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import groom.backend.infrastructure.kafka.stream.CouponDelayEventListWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.kstream.Transformer;
@@ -14,7 +12,6 @@ import org.apache.kafka.streams.state.KeyValueStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * <h3>Kafka Streams 'Transformer' (저수준 프로세서)</h3>
@@ -196,18 +193,5 @@ public class CouponDelayTransformer implements Transformer<String, CouponDelayEv
   @Override
   public void close() {
     // 리소스 정리 (현재 코드에서는 특별히 할 것 없음)
-  }
-
-  /**
-   * StateStore에 List<CouponDelayEvent>를 직접 저장하기 위한 Wrapper 클래스.
-   * (이유: Java 제네릭의 타입 소거 문제로 인한 Serde(직렬화) 오류 방지)
-   * (Lombok @Data, @NoArgsConstructor, @AllArgsConstructor가
-   * Getter/Setter/기본생성자를 자동으로 만들어주어 Serde가 정상 동작합니다.)
-   */
-  @Data
-  @NoArgsConstructor
-  @AllArgsConstructor
-  public static class CouponDelayEventListWrapper {
-    private List<CouponDelayEvent> events;
   }
 }

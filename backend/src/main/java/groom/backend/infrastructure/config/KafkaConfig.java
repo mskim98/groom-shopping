@@ -89,7 +89,7 @@ public class KafkaConfig {
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, StockThresholdEvent> kafkaListenerContainerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, StockThresholdEvent> factory = 
+        ConcurrentKafkaListenerContainerFactory<String, StockThresholdEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory());
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
@@ -165,7 +165,7 @@ public class KafkaConfig {
         // 2. [중요] GROUP_ID: 컨슈머 그룹 ID
         //    같은 그룹 ID를 가진 컨슈머들은 "하나의 팀"처럼 동작하여,
         //    토픽의 메시지를 "나눠서" 처리합니다. (중복 처리 방지, 스케일 아웃)
-        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "coupon-delay-group"); // TODO: 주석 원본 확인 필요
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "coupon-delay-group");
 
         // 3. 메시지 Key 역직렬화 방식: Kafka의 byte[]를 String(메시지 키)으로 변환
         configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);

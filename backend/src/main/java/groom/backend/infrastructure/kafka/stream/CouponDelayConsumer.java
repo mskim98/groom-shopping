@@ -48,17 +48,20 @@ public class CouponDelayConsumer {
    * Spring이 자동으로 JSON/바이트 형태의 메시지를
    * {@link CouponDelayEvent} Java 객체로 변환(Deserialize)하여 주입해 줍니다.
    */
-  @KafkaListener(topics = "coupon-delay-processed", groupId = "coupon-delay-group")
+  @KafkaListener(
+          topics = "coupon-activate-events",
+          groupId = "coupon-delay-group",
+          containerFactory = "couponDelayEventConcurrentKafkaListenerContainerFactory")
   public void consume(CouponDelayEvent event) {
     log.info("[Kafka] coupon inactivate reservation event consumed: {}", event);
     try {
       // 전달받은 이벤트의 couponId를 사용하여 실제 비즈니스 로직(쿠폰 비활성화) 실행
       couponService.disableCoupon(event.getCouponId());
-      log.info("[KAFKA_CONSUME_SUCCESS] couponIssueId={}", event.getCouponId());
+      log.info("[KAFKA_CONSUME_SUCCESS] couponId={}", event.getCouponId());
 
     } catch (Exception e) {
       // [중요] 컨슈머에서 예외(Exception) 처리
-      log.error("[KAFKA_CONSUME_FAILED] couponIssueId={}, error={}",
+      log.error("[KAFKA_CONSUME_FAILED] couponId={}, error={}",
               event.getCouponId(), e.getMessage(), e);
 
       // 예외를 다시 throw:

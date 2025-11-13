@@ -20,7 +20,9 @@ spring:
     streams:
       application-id: coupon-delay-app
       properties:
-        processing.guarantee: exactly_once_v2
+        processing.guarantee: exactly_once_v2        # 배포환경에서는 클러스터 최소 3개 필요
+        transaction.state.log.replication.factor: 1
+        transaction.state.log.min.isr: 1
         commit.interval.ms: 1000
         cache.max.bytes.buffering: 10485760
         num.stream.threads: 1

@@ -53,7 +53,7 @@ public class CouponDelayProducer {
     CompletableFuture<SendResult<String, CouponDelayEvent>> f =
             kafkaTemplate.send(TOPIC, String.valueOf(event.getCouponId()), event);
 
-    log.info("[KAFKA_PUBLISH_START] couponIssueId={}, delay={}ms, eventTs={}",
+    log.info("[KAFKA_PUBLISH_START] couponId={}, delay={}ms, eventTs={}",
             event.getCouponId(), event.getDelayMillis(), event.getTimestamp());
 
     // [중요] Kafka 전송은 '비동기(Non-Blocking)'입니다.
@@ -65,7 +65,7 @@ public class CouponDelayProducer {
         // 'res' (SendResult)에는 전송 성공 결과가 담겨 있습니다.
         // - partition: 메시지가 저장된 파티션 번호
         // - offset: 해당 파티션 내에서 메시지의 고유한 위치(주소) 번호
-        log.info("[KAFKA_PUBLISH_COMPLETE] couponIssueId={}, took={}ms, partition={}, offset={}",
+        log.info("[KAFKA_PUBLISH_COMPLETE] couponId={}, took={}ms, partition={}, offset={}",
                 event.getCouponId(),
                 System.currentTimeMillis() - start,
                 res.getRecordMetadata().partition(), // 몇 번 파티션(큐)에 저장되었는지
@@ -73,7 +73,7 @@ public class CouponDelayProducer {
       } else {
         // 'ex' (Exception)에는 전송 실패 원인이 담겨 있습니다.
         // (예: Kafka 브로커 다운, 메시지 크기 초과 등)
-        log.error("[KAFKA_PUBLISH_FAILED] couponIssueId={}, took={}ms, error={}",
+        log.error("[KAFKA_PUBLISH_FAILED] couponId={}, took={}ms, error={}",
                 event.getCouponId(), System.currentTimeMillis() - start, ex.getMessage(), ex);
       }
     });
