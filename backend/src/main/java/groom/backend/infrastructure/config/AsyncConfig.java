@@ -51,11 +51,15 @@ public class AsyncConfig {
         int corePoolSize = Math.max(2, availableProcessors);  // 최소 2개
         int maxPoolSize = availableProcessors * 2;            // 최대 코어 수 * 2
         
+        // 큐 크기를 5000으로 증가하여 대량 작업 처리 가능
+        // Chunk 단위 처리로 메모리 사용량이 제한되므로 큐 크기 증가 가능
+        int queueCapacity = 5000;
+        
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 corePoolSize,              // 기본 스레드 수
                 maxPoolSize,               // 최대 스레드 수
                 60L, TimeUnit.SECONDS,     // 유휴 스레드 유지 시간
-                new LinkedBlockingQueue<>(1000),  // 작업 큐 (버퍼링)
+                new LinkedBlockingQueue<>(queueCapacity),  // 작업 큐 (버퍼링)
                 r -> {
                     Thread thread = new Thread(r, "notification-processing-" + System.currentTimeMillis());
                     thread.setDaemon(false);
@@ -64,8 +68,8 @@ public class AsyncConfig {
                 new ThreadPoolExecutor.CallerRunsPolicy()  // 큐 가득 찰 경우 호출 스레드에서 실행
         );
 
-        log.info("[ASYNC_CONFIG] Notification processing executor initialized - CorePoolSize: {}, MaxPoolSize: {}, QueueCapacity: 1000",
-                corePoolSize, maxPoolSize);
+        log.info("[ASYNC_CONFIG] Notification processing executor initialized - CorePoolSize: {}, MaxPoolSize: {}, QueueCapacity: {}",
+                corePoolSize, maxPoolSize, queueCapacity);
 
         return executor;
     }

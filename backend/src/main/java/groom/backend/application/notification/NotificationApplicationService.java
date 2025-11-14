@@ -62,8 +62,7 @@ public class NotificationApplicationService {
                             "제품을 찾을 수 없습니다: " + productId));
             String productName = product.getName() != null ? product.getName() : "제품";
             
-            // 재고 차감 후 값 사용 (Kafka 이벤트에 담긴 currentStock은 이미 차감된 값)
-            // 제품을 다시 조회하면 트랜잭션 격리 수준에 따라 차감 이전 값이 조회될 수 있음
+
             Integer stockForNotification = currentStock;
             if (stockForNotification == null) {
                 // fallback: 제품 조회한 재고량 사용
@@ -86,8 +85,8 @@ public class NotificationApplicationService {
                 log.info("[NOTIFICATION_NO_USERS] productId={}, productName={}", productId, productName);
                 return;
             }
-            // TODO: 다른 방법도 고안
-            // 3. 사용자 수에 따라 배치 저장 또는 개별 저장 선택
+
+            // 3. 사용자 수에 따라 배치 저장 또는 개별 저장 선택(메모리 효율을 위해)
             long parallelStartTime = System.currentTimeMillis();
             
             if (userIds.size() >= BATCH_THRESHOLD) {
@@ -325,6 +324,7 @@ public class NotificationApplicationService {
 
     /**
      * 배치 저장 방식: 대량 사용자 처리 (트랜잭션 그룹화)
+     * 메모리 효율을 위해 Chunk 단위로 처리하고 완료를 대기합니다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     private void createAndSendNotificationsBatch(
@@ -344,23 +344,42 @@ public class NotificationApplicationService {
             
             log.info("[NOTIFICATION_BATCH_SAVED] savedCount={}", savedNotifications.size());
             
-            // 3. SSE 전송은 비동기로 처리 (트랜잭션 외부)
-            // 메모리 효율을 위해 스트림 처리로 즉시 전송
-            savedNotifications.forEach(notification -> {
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        sseService.sendNotification(notification.getUserId(), notification);
-                        log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", 
-                                notification.getUserId(), notification.getId());
-                    } catch (Exception e) {
-                        log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", 
-                                notification.getUserId(), e.getMessage());
-                    }
-                }, executorService);
-            });
+            // 3. Chunk 단위로 SSE 전송 (메모리 효율)
+            // 한 번에 처리할 최대 개수: 100개 (메모리 사용량 제한)
+            int chunkSize = 100;
+            List<CompletableFuture<Void>> chunkFutures = new ArrayList<>();
             
-            log.info("[NOTIFICATION_BATCH_COMPLETE] userIdCount={}, savedCount={}", 
-                    userIds.size(), savedNotifications.size());
+            for (int i = 0; i < savedNotifications.size(); i += chunkSize) {
+                int endIndex = Math.min(i + chunkSize, savedNotifications.size());
+                List<Notification> chunk = savedNotifications.subList(i, endIndex);
+                
+                CompletableFuture<Void> chunkFuture = CompletableFuture.runAsync(() -> {
+                    // Chunk 내에서 병렬 처리
+                    List<CompletableFuture<Void>> futures = chunk.stream()
+                            .map(notification -> CompletableFuture.runAsync(() -> {
+                                try {
+                                    sseService.sendNotification(notification.getUserId(), notification);
+                                    log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", 
+                                            notification.getUserId(), notification.getId());
+                                } catch (Exception e) {
+                                    log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", 
+                                            notification.getUserId(), e.getMessage());
+                                }
+                            }, executorService))
+                            .collect(Collectors.toList());
+                    
+                    // Chunk 완료 대기 (메모리 효율: 최대 100개의 Future만 유지)
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                }, executorService);
+                
+                chunkFutures.add(chunkFuture);
+            }
+            
+            // 모든 Chunk 완료 대기 (SSE 전송 완료 보장)
+            CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0])).join();
+            
+            log.info("[NOTIFICATION_BATCH_COMPLETE] userIdCount={}, savedCount={}, chunkCount={}", 
+                    userIds.size(), savedNotifications.size(), chunkFutures.size());
             
         } catch (Exception e) {
             log.error("[NOTIFICATION_BATCH_FAILED] productId={}, error={}", productId, e.getMessage(), e);
@@ -403,6 +422,7 @@ public class NotificationApplicationService {
     
     /**
      * 개별 트랜잭션으로 알림 저장 및 SSE 전송
+     * 중첩된 CompletableFuture를 제거하여 메모리 효율 향상
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     private void saveNotificationInTransaction(
@@ -413,15 +433,14 @@ public class NotificationApplicationService {
         Notification notification = Notification.create(userId, productId, productName, currentStock, thresholdValue);
         Notification saved = notificationRepository.save(notification);
         
-        // SSE 전송은 트랜잭션 커밋 후 비동기로 수행
-        CompletableFuture.runAsync(() -> {
-            try {
-                sseService.sendNotification(userId, saved);
-                log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", userId, saved.getId());
-            } catch (Exception e) {
-                log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", userId, e.getMessage());
-            }
-        }, executorService);
+        // SSE 전송은 트랜잭션 커밋 후 직접 호출
+        // 호출부에서 이미 CompletableFuture로 감싸져 있으므로 중첩 제거
+        try {
+            sseService.sendNotification(userId, saved);
+            log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", userId, saved.getId());
+        } catch (Exception e) {
+            log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", userId, e.getMessage());
+        }
     }
     
     /**
