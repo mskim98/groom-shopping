@@ -49,8 +49,9 @@ public class NotificationApplicationService {
      * @param productId 제품 ID
      * @param currentStock 현재 재고
      * @param thresholdValue 임계값
+     * @param excludeUserId 제외할 사용자 ID (주문한 사용자 등, null 가능)
      */
-    public void createAndSendNotifications(UUID productId, Integer currentStock, Integer thresholdValue) {
+    public void createAndSendNotifications(UUID productId, Integer currentStock, Integer thresholdValue, Long excludeUserId) {
         long startTime = System.currentTimeMillis();
         log.info("[NOTIFICATION_SERVICE_START] productId={}, currentStock={}, thresholdValue={}", 
                 productId, currentStock, thresholdValue);
@@ -80,6 +81,19 @@ public class NotificationApplicationService {
             long queryDuration = System.currentTimeMillis() - queryStartTime;
             log.info("[NOTIFICATION_QUERY_USERS] productId={}, productName={}, userIdCount={}, queryDuration={}ms, stockForNotification={}", 
                     productId, productName, userIds.size(), queryDuration, stockForNotification);
+
+            // 주문한 사용자 제외
+            if (excludeUserId != null) {
+                int beforeSize = userIds.size();
+                userIds = userIds.stream()
+                        .filter(userId -> !userId.equals(excludeUserId))
+                        .collect(Collectors.toList());
+                int afterSize = userIds.size();
+                if (beforeSize != afterSize) {
+                    log.info("[NOTIFICATION_EXCLUDE_USER] productId={}, excludeUserId={}, beforeCount={}, afterCount={}", 
+                            productId, excludeUserId, beforeSize, afterSize);
+                }
+            }
 
             if (userIds.isEmpty()) {
                 log.info("[NOTIFICATION_NO_USERS] productId={}, productName={}", productId, productName);
@@ -197,7 +211,7 @@ public class NotificationApplicationService {
      * @param productIds 제품 ID 목록
      */
     public void createAndSendNotificationsForProducts(List<UUID> productIds) {
-        createAndSendNotificationsForProducts(productIds, null);
+        createAndSendNotificationsForProducts(productIds, null, null);
     }
 
     /**
@@ -206,8 +220,9 @@ public class NotificationApplicationService {
      *
      * @param productIds 제품 ID 목록
      * @param productStockMap 제품 ID와 차감 후 재고량 맵 (null 가능)
+     * @param excludeUserId 제외할 사용자 ID (주문한 사용자 등, null 가능)
      */
-    public void createAndSendNotificationsForProducts(List<UUID> productIds, Map<UUID, Integer> productStockMap) {
+    public void createAndSendNotificationsForProducts(List<UUID> productIds, Map<UUID, Integer> productStockMap, Long excludeUserId) {
         long startTime = System.currentTimeMillis();
         log.info("[BATCH_NOTIFICATION_START] productIds={}, count={}, timestamp={}", 
                 productIds, productIds.size(), startTime);
@@ -265,7 +280,7 @@ public class NotificationApplicationService {
                     // 재고 차감 후 값 사용 (제품 조회 시점의 재고량은 이미 차감된 값)
                     // createAndSendNotifications 내부에서도 currentStock을 그대로 사용하므로
                     // 차감 후 값이 알림 메시지에 표시됨
-                    createAndSendNotifications(productId, currentStock, thresholdValue);
+                    createAndSendNotifications(productId, currentStock, thresholdValue, excludeUserId);
                     notifiedCount++;
                 } else {
                     log.info("[BATCH_NOTIFICATION_THRESHOLD_NOT_REACHED] productId={}, currentStock={}, thresholdValue={}", 
