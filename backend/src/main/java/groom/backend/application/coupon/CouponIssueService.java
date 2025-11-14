@@ -23,6 +23,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -126,15 +127,16 @@ public class CouponIssueService {
             .map(CouponIssueResponse::from)
             .collect(Collectors.toList());
 
-    // [수정] CacheManager 대신 RedisTemplate(MSET)으로 수동 저장
-    // TODO : Redis TTL 적용 안됨.
     if (!responses.isEmpty()) {
       Map<String, CouponIssueResponse> cacheWriteMap = new HashMap<>();
       responses.forEach(couponResponse -> {
         cacheWriteMap.put(CACHE_PREFIX + couponResponse.getCouponIssueId(), couponResponse);
       });
-      // MSET 실행 (calculateDiscount와 동일한 방식 사용)
-      couponCacheTemplate.opsForValue().multiSet(cacheWriteMap);
+      // MSET 적용 시 TTL 지정 불가능.
+      for (CouponIssueResponse r : responses) {
+        String key = CACHE_PREFIX + r.getCouponIssueId();
+        couponCacheTemplate.opsForValue().set(key, r, Duration.ofMinutes(60)); // TTL 적용, 1시간
+      }
     }
 
 //    // 목록을 순회하며 개별 쿠폰 캐시에 수동으로 PUT (Cache Warming)
