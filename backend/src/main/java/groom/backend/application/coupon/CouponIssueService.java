@@ -284,15 +284,14 @@ public class CouponIssueService {
 
   /**
    * 쿠폰 검증 (DTO) - 오버로딩
-   * (주의) CouponIssueResponse DTO에 getUserId(), getIsActive(), getDeletedAt() 메서드가 있어야 함.
    */
   private void checkCouponUsable(CouponIssueResponse dto, Long userId) {
-    // 사용자 확인 (매우 중요)
+    // 사용자 확인
     if (!dto.getUserId().equals(userId))
       throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
     // 활성화 여부 확인
     if (!dto.getIsActive())
-      throw new BusinessException(ErrorCode.COUPON_NOT_USABLE); // 다른 에러 코드 권장
+      throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
     // 쿠폰 만료일 확인
     if (dto.getDeletedAt().isBefore(LocalDateTime.now()))
       throw new BusinessException(ErrorCode.COUPON_EXPIRED);
