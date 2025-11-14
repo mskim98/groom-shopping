@@ -38,9 +38,10 @@ public class AuthApplicationService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtRsaTokenProvider jwtTokenProvider;
-    private final RefreshTokenRepository refreshTokenRepository;
     private final CookieUtil cookieUtil;
     private final RedisRefreshTokenService refreshTokenService;
+
+    private final TokenBlacklistService tokenBlacklistService;
 
     @Transactional
     public SignUpResponse register(SignUpRequest request) {
@@ -90,7 +91,7 @@ public class AuthApplicationService {
 
         log.info("로그인 성공: {}", user.getEmail());
 
-        return new LoginResponse(accessToken, refreshToken, user.getName(), user.getRole());
+        return new LoginResponse(accessToken, user.getName(), user.getRole());
     }
 
     @Transactional
@@ -146,11 +147,14 @@ public class AuthApplicationService {
 
 
     @Transactional
-    public void logout(String email) {
-        refreshTokenRepository.deleteByEmail(email);
-        // TODO :: refreshToken cookie 처리
-        // cookieUtil.deleteRefreshTokenCookie(response);
     public void logout(String email, HttpServletRequest request, HttpServletResponse response) {
+        // Access Token 헤더에서 토큰 추출
+        String accessToken = resolveToken(request);
+        if (accessToken != null) {
+            // Access Token 블랙리스트 등록
+            tokenBlacklistService.blacklistToken(accessToken);
+        }
+
         // Refresh Token 쿠키에서 토큰 추출
         String refreshToken = cookieUtil.getRefreshTokenFromCookie(request);
         if (refreshToken != null) {

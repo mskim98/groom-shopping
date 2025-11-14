@@ -46,6 +46,8 @@ public enum ErrorCode {
     ACCOUNT_DISABLED(HttpStatus.FORBIDDEN, "비활성화된 계정입니다."),
     /** 이메일 중복 */
     EMAIL_DUPLICATION(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다."),
+    /** 이미 로그아웃 */
+    ALREADY_LOGGED_OUT(HttpStatus.BAD_REQUEST, "이미 로그아웃된 사용자입니다"),
 
     // ===================== Raffle 에러 코드 ====================
 
@@ -109,7 +111,7 @@ public enum ErrorCode {
     /** 최소 수량 미달 */
     CART_QUANTITY_MINIMUM               (HttpStatus.BAD_REQUEST, "수량은 1개 이상이어야 합니다."),
     /** 제거 수량 유효성 검증 실패 */
-    INVALID_REMOVE_QUANTITY             (HttpStatus.BAD_REQUEST, "제거할 수량은 1 이상이어야 합니다.");
+    INVALID_REMOVE_QUANTITY             (HttpStatus.BAD_REQUEST, "제거할 수량은 1 이상이어야 합니다."),
 
     // ===================== Coupon 에러 코드 ====================
     COUPON_NOT_FOUND(HttpStatus.NOT_FOUND, "쿠폰을 찾을 수 없습니다."),
