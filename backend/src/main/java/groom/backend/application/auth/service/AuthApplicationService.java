@@ -56,7 +56,7 @@ public class AuthApplicationService {
                                 passwordEncoder.encode(request.getPassword()),
                                 request.getName(),
                                 request.getRole(),
-                                request.getGrade()) ;
+                                request.getGrade());
 
         User saved = userRepo.save(user);
 
@@ -176,7 +176,7 @@ public class AuthApplicationService {
         if (ip == null || ip.isEmpty()) {
             ip = request.getRemoteAddr();
         }
-        return ip;
+        return ip.split(",")[0].trim();
     }
 
     private String resolveToken(HttpServletRequest request) {
