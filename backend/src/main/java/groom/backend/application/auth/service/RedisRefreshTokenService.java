@@ -72,8 +72,10 @@ public class RedisRefreshTokenService {
         }
 
         if (refreshToken.get().getExpiresAt().isBefore(LocalDateTime.now())) {
-            log.warn("Refresh token expired: token={}", token);
-            deleteRefreshToken(token);
+            log.warn("Refresh token expired: token={}", refreshToken);
+            String email = refreshToken.get().getEmail();
+            deleteByToken(token, email);
+
             return false;
         }
 
