@@ -38,6 +38,7 @@ public class CouponIssueResponse {
     return CouponIssueResponse.builder()
             .couponId(couponIssue.getCoupon().getId())
             .couponIssueId(couponIssue.getId())
+            .userId(couponIssue.getUserId())
             .createdAt(couponIssue.getCreatedAt())
             .deletedAt(couponIssue.getDeletedAt())
             .couponType(couponIssue.getCoupon().getType())
