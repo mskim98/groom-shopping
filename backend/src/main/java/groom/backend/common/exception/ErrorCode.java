@@ -119,6 +119,7 @@ public enum ErrorCode {
 
     COUPON_USER_MATCH_FAILED(HttpStatus.FORBIDDEN, "쿠폰 소유자와 사용자가 일치하지 않습니다."),
     COUPON_EXPIRED(HttpStatus.FORBIDDEN, "쿠폰 사용일이 만료되었습니다."),
+    COUPON_NOT_USABLE(HttpStatus.FORBIDDEN, "이미 사용한 쿠폰입니다."),
 
     COUPON_INVALID_POLICY(HttpStatus.BAD_REQUEST, "쿠폰 정책에 맞지 않은 사용방식입니다."),
     COUPON_OUT_OF_STOCK(HttpStatus.CONFLICT, "발급 수량이 소진되었습니다."),

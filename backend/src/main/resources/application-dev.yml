@@ -13,6 +13,16 @@ spring:
     redis:
       host: localhost
       port: 6379
+  cache:
+    type: redis
+    redis:
+#      cluster settings
+#      cluster:
+#        nodes:
+#          - redis-node-1:6379
+#          - redis-node-2:6379
+#          - redis-node-3:6379
+      time-to-live: 3600000   # 3600초 = 60분 TTL
   
   kafka:
     bootstrap-servers: localhost:9092
