@@ -2,6 +2,7 @@ package groom.backend.interfaces.raffle.persistence.repository.jpa;
 
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
+import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleRepository;
@@ -12,6 +13,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -98,6 +100,24 @@ public class JpaRaffleRepository implements RaffleRepository {
     @Override
     public Optional<Raffle> findByRaffleProductId(UUID raffleProductId) {
         return raffleRepository.findByRaffleProductId(raffleProductId);
+    }
+
+    @Override
+    public Page<Raffle> findByStatusAndEntryStartAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable) {
+        Page<RaffleJpaEntity> page = raffleRepository.findAllByStatusAndEntryStartAtBefore(status, now, pageable);
+        return page.map(this::toDomain);
+    }
+
+    @Override
+    public Page<Raffle> findAllByStatusAndEntryEndAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable) {
+        Page<RaffleJpaEntity> page = raffleRepository.findAllByStatusAndEntryEndAtBefore(status, now, pageable);
+        return page.map(this::toDomain);
+    }
+
+    @Override
+    public Page<Raffle> findAllByStatusAndRaffleDrawAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable) {
+        Page<RaffleJpaEntity> page = raffleRepository.findAllByStatusAndRaffleDrawAtBefore(status, now, pageable);
+        return page.map(this::toDomain);
     }
 
     // 도메인 기준을 Specification으로 변환 (인터페이스 레이어에 위치하므로 엔티티 참조 가능)
