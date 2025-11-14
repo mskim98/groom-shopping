@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -22,8 +23,9 @@ import java.util.concurrent.TimeUnit;
 public class RedisCartRepository {
 
     private static final String CART_KEY_PREFIX = "cart:";
-    private static final long CART_TTL_DAYS = 7; // 7일 후 자동 삭제
-    private static final long CART_TTL_SECONDS = TimeUnit.DAYS.toSeconds(CART_TTL_DAYS);
+    
+    @Value("${cart.redis.ttl-days:7}") // 기본값 7일, application.yml에서 설정 가능
+    private long cartTtlDays;
 
     @Qualifier("cartRedisTemplate")
     private final RedisTemplate<String, String> redisTemplate;
@@ -71,7 +73,7 @@ public class RedisCartRepository {
             String itemJson = objectMapper.writeValueAsString(itemData);
 
             redisTemplate.opsForHash().put(cartKey, productIdStr, itemJson);
-            redisTemplate.expire(cartKey, CART_TTL_SECONDS, TimeUnit.SECONDS);
+            refreshTtl(cartKey);
 
             log.debug("[REDIS_CART_ADD] userId={}, productId={}, quantity={}, cartItemId={}", 
                     userId, productId, quantity, cartItemId);
@@ -91,6 +93,10 @@ public class RedisCartRepository {
 
         try {
             redisTemplate.opsForHash().delete(cartKey, productIdStr);
+            // 제거 후에도 장바구니가 비어있지 않으면 TTL 갱신
+            if (redisTemplate.opsForHash().size(cartKey) > 0) {
+                refreshTtl(cartKey);
+            }
             log.debug("[REDIS_CART_REMOVE] userId={}, productId={}", userId, productId);
         } catch (Exception e) {
             log.error("[REDIS_CART_REMOVE_FAILED] userId={}, productId={}, error={}", 
@@ -109,6 +115,10 @@ public class RedisCartRepository {
 
         try {
             redisTemplate.opsForHash().delete(cartKey, productIdStrs);
+            // 제거 후에도 장바구니가 비어있지 않으면 TTL 갱신
+            if (redisTemplate.opsForHash().size(cartKey) > 0) {
+                refreshTtl(cartKey);
+            }
             log.debug("[REDIS_CART_REMOVE_BATCH] userId={}, productIds={}", userId, productIds);
         } catch (Exception e) {
             log.error("[REDIS_CART_REMOVE_BATCH_FAILED] userId={}, error={}", 
@@ -132,7 +142,7 @@ public class RedisCartRepository {
                 String updatedItemJson = objectMapper.writeValueAsString(itemData);
                 
                 redisTemplate.opsForHash().put(cartKey, productIdStr, updatedItemJson);
-                redisTemplate.expire(cartKey, CART_TTL_SECONDS, TimeUnit.SECONDS);
+                refreshTtl(cartKey);
                 
                 log.debug("[REDIS_CART_UPDATE_QUANTITY] userId={}, productId={}, quantity={}", 
                         userId, productId, quantity);
@@ -145,6 +155,7 @@ public class RedisCartRepository {
 
     /**
      * 사용자의 모든 장바구니 항목 조회
+     * Touch 패턴: 조회 시 TTL 갱신하여 활성 사용자의 장바구니 유지
      */
     public Map<UUID, CartItemData> getAllItems(Long userId) {
         String cartKey = getCartKey(userId);
@@ -155,6 +166,9 @@ public class RedisCartRepository {
             if (hashMap.isEmpty()) {
                 return Collections.emptyMap();
             }
+
+            // 조회 시 TTL 갱신 (Touch 패턴)
+            refreshTtl(cartKey);
 
             Map<UUID, CartItemData> result = new HashMap<>();
             for (Map.Entry<Object, Object> entry : hashMap.entrySet()) {
@@ -177,6 +191,7 @@ public class RedisCartRepository {
 
     /**
      * 특정 제품의 장바구니 항목 조회
+     * Touch 패턴: 조회 시 TTL 갱신하여 활성 사용자의 장바구니 유지
      */
     public Optional<CartItemData> getItem(Long userId, UUID productId) {
         String cartKey = getCartKey(userId);
@@ -188,6 +203,9 @@ public class RedisCartRepository {
             if (itemJson == null) {
                 return Optional.empty();
             }
+
+            // 조회 시 TTL 갱신 (Touch 패턴)
+            refreshTtl(cartKey);
 
             CartItemData itemData = objectMapper.readValue(itemJson, CartItemData.class);
             return Optional.of(itemData);
@@ -235,6 +253,24 @@ public class RedisCartRepository {
      */
     private String getCartKey(Long userId) {
         return CART_KEY_PREFIX + userId;
+    }
+
+    /**
+     * 장바구니 키의 TTL을 갱신합니다.
+     * 키가 존재하는 경우에만 TTL을 설정합니다.
+     * 
+     * @param cartKey 장바구니 Redis 키
+     */
+    private void refreshTtl(String cartKey) {
+        try {
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(cartKey))) {
+                long ttlSeconds = TimeUnit.DAYS.toSeconds(cartTtlDays);
+                redisTemplate.expire(cartKey, ttlSeconds, TimeUnit.SECONDS);
+                log.debug("[REDIS_CART_TTL_REFRESHED] cartKey={}, ttlDays={}", cartKey, cartTtlDays);
+            }
+        } catch (Exception e) {
+            log.warn("[REDIS_CART_TTL_REFRESH_FAILED] cartKey={}, error={}", cartKey, e.getMessage());
+        }
     }
 }
 

@@ -104,8 +104,8 @@ public class PaymentApplicationService {
             order.changeStatus(OrderStatus.CONFIRMED);
             orderRepository.save(order);
 
-            // 재고 차감 및 차감된 상품 ID 수집
-            List<UUID> reducedProductIds = reduceProductStock(order);
+            // 재고 차감 및 차감된 상품 ID와 차감 후 재고량 수집
+            List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
 
             // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
             processTicketProducts(order);
@@ -114,7 +114,8 @@ public class PaymentApplicationService {
                     payment.getId(), orderId);
 
             // 비동기로 알림 처리 (응답 시간에 영향 없음)
-            paymentNotificationService.sendStockReducedNotifications(reducedProductIds);
+            // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
+            paymentNotificationService.sendStockReducedNotifications(stockReductions);
 
             // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
             paymentNotificationService.clearCartItems(order);
@@ -131,6 +132,47 @@ public class PaymentApplicationService {
 
             throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 테스트용 결제 승인 (Toss API 호출 없이)
+     */
+    @Transactional
+    public Payment confirmPaymentForTest(UUID orderId) {
+        // 결제 조회
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
+
+        log.info("[TEST_PAYMENT_CONFIRM] Test payment confirm start - OrderId: {}", orderId);
+
+        // Payment 승인 처리 (테스트용 paymentKey 생성)
+        String testPaymentKey = "test_" + UUID.randomUUID().toString();
+        String testTransactionId = "tx_test_" + UUID.randomUUID().toString();
+        payment.approve(testPaymentKey, testTransactionId);
+        paymentRepository.save(payment);
+
+        // Order 상태 변경 (PENDING -> CONFIRMED)
+        Order order = payment.getOrder();
+        order.changeStatus(OrderStatus.CONFIRMED);
+        orderRepository.save(order);
+
+        // 재고 차감 및 차감된 상품 ID와 차감 후 재고량 수집
+        List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
+
+        // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
+        processTicketProducts(order);
+
+        log.info("[TEST_PAYMENT_CONFIRM_SUCCESS] Test payment confirmed - PaymentId: {}, OrderId: {}",
+                payment.getId(), orderId);
+
+        // 비동기로 알림 처리 (응답 시간에 영향 없음)
+        // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
+        paymentNotificationService.sendStockReducedNotifications(stockReductions);
+
+        // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
+        paymentNotificationService.clearCartItems(order);
+
+        return payment;
     }
 
     /**
@@ -265,25 +307,31 @@ public class PaymentApplicationService {
         }
     }
 
-    private List<UUID> reduceProductStock(Order order) {
-        List<UUID> reducedProductIds = new java.util.ArrayList<>();
+    private List<PaymentNotificationService.StockReductionResult> reduceProductStock(Order order) {
+        List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
 
         for (OrderItem orderItem : order.getOrderItems()) {
             Product product = productRepository.findById(orderItem.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException(
                             "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
 
+            // 재고 차감 전 값 저장
+            int stockBefore = product.getStock();
+            
             product.decreaseStock(orderItem.getQuantity());
             productRepository.save(product);
 
-            // 차감된 상품 ID 수집
-            reducedProductIds.add(product.getId());
+            // 차감 후 재고량 확인 (차감 후 값)
+            int stockAfter = product.getStock();
 
-            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, Remaining: {}",
-                    product.getId(), orderItem.getQuantity(), product.getStock());
+            // 차감된 상품 ID와 차감 후 재고량 저장
+            results.add(new PaymentNotificationService.StockReductionResult(product.getId(), stockAfter));
+
+            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockBefore: {}, StockAfter: {}",
+                    product.getId(), orderItem.getQuantity(), stockBefore, stockAfter);
         }
 
-        return reducedProductIds;
+        return results;
     }
 
     private void restoreProductStock(Order order) {

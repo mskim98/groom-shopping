@@ -20,7 +20,11 @@ public class RaffleJpaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long raffleId;
+    
+    @Column(name = "raffle_product_id", columnDefinition = "uuid")
     private UUID raffleProductId;
+    
+    @Column(name = "winner_product_id", columnDefinition = "uuid")
     private UUID winnerProductId;
     @NotBlank
     private String title;

@@ -5,7 +5,9 @@ import groom.backend.application.cart.CartApplicationService.CartItemToRemove;
 import groom.backend.application.notification.NotificationApplicationService;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.model.OrderItem;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -24,28 +26,59 @@ public class PaymentNotificationService {
     private final CartApplicationService cartApplicationService;
 
     /**
+     * 재고 차감 결과를 담는 내부 클래스
+     */
+    public static class StockReductionResult {
+        private final UUID productId;
+        private final Integer stockAfter;
+
+        public StockReductionResult(UUID productId, Integer stockAfter) {
+            this.productId = productId;
+            this.stockAfter = stockAfter;
+        }
+
+        public UUID getProductId() {
+            return productId;
+        }
+
+        public Integer getStockAfter() {
+            return stockAfter;
+        }
+    }
+
+    /**
      * 재고 차감된 상품에 대한 알림을 비동기로 처리 - notificationExecutor 스레드풀에서 실행 - 팀원이 만든 알림 메서드는 내부적으로 트랜잭션 처리
      *
-     * @param productIds 재고가 차감된 상품 ID 목록
+     * @param stockReductions 재고 차감 결과 목록 (제품 ID와 차감 후 재고량 포함)
      */
     @Async("notificationExecutor")
-    public void sendStockReducedNotifications(List<UUID> productIds) {
-        log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - ProductIds: {}", productIds);
+    public void sendStockReducedNotifications(List<StockReductionResult> stockReductions) {
+        log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - Count: {}", stockReductions.size());
 
         try {
-            // TODO: 팀원이 만든 알림 메서드 호출
-            notificationApplicationService.createAndSendNotificationsForProducts(productIds);
+            // 제품 ID와 차감 후 재고량 맵 생성
+            Map<UUID, Integer> productStockMap = new HashMap<>();
+            for (StockReductionResult result : stockReductions) {
+                productStockMap.put(result.getProductId(), result.getStockAfter());
+                log.info("[NOTIFICATION_STOCK_MAP] productId={}, stockAfter={}", 
+                        result.getProductId(), result.getStockAfter());
+            }
 
-            log.info("[NOTIFICATION_PROCESSING] Processing notifications for {} products", productIds.size());
+            // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
+            notificationApplicationService.createAndSendNotificationsForProducts(
+                    stockReductions.stream().map(StockReductionResult::getProductId).collect(Collectors.toList()),
+                    productStockMap
+            );
 
-            log.info("[NOTIFICATION_ASYNC_SUCCESS] Stock reduced notifications sent successfully - ProductIds: {}",
-                    productIds);
+            log.info("[NOTIFICATION_PROCESSING] Processing notifications for {} products", stockReductions.size());
+
+            log.info("[NOTIFICATION_ASYNC_SUCCESS] Stock reduced notifications sent successfully - Count: {}",
+                    stockReductions.size());
 
         } catch (Exception e) {
-
             log.error(
-                    "[NOTIFICATION_ASYNC_FAILED] Failed to send stock reduced notifications - ProductIds: {}, Error: {}",
-                    productIds, e.getMessage(), e);
+                    "[NOTIFICATION_ASYNC_FAILED] Failed to send stock reduced notifications - Count: {}, Error: {}",
+                    stockReductions.size(), e.getMessage(), e);
         }
     }
 
