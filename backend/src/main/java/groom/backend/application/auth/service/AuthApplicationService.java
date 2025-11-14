@@ -44,18 +44,12 @@ public class AuthApplicationService {
             throw new BusinessException(ErrorCode.EMAIL_DUPLICATION);
         }
 
-        // TODO 객체 생성 팩토리 메서드로 변경 고려
         // TODO : 개발 편의를 위해 ROLE, GRADE 요청대로 적용 (추후 삭제 예정)
-        User user = new User(
-                null,
-                email,
-                passwordEncoder.encode(request.getPassword()),
-                request.getName(),
-                request.getRole(),
-                request.getGrade(),
-                null,
-                null
-        );
+        User user = User.create(email,
+                                passwordEncoder.encode(request.getPassword()),
+                                request.getName(),
+                                request.getRole(),
+                                request.getGrade()) ;
 
         User saved = userRepo.save(user);
 
