@@ -117,6 +117,7 @@ public class RedisConfig {
         // (기존 objectMapper() 빈의 설정에 따라 의도치 않은 'activateDefaultTyping'이 적용될 수 있음)
         ObjectMapper om = new ObjectMapper();
         om.registerModule(new JavaTimeModule()); // JavaTimeModule 등록
+        // TODO : Deprecated 기능 리팩토링
         jacksonSerializer.setObjectMapper(om);
 
         redisTemplate.setKeySerializer(new StringRedisSerializer());
