@@ -69,7 +69,7 @@ public class Notification {
      * @return Notification 객체
      */
     public static Notification createForRealtime(Long userId, UUID productId, String message) {
-        return new Notification(null, null, null, message, false, LocalDateTime.now(), userId, productId);
+        return new Notification(null, 15, 10, message, false, LocalDateTime.now(), userId, productId);
     }
 }
 
