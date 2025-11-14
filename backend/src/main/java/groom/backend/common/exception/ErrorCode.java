@@ -46,6 +46,8 @@ public enum ErrorCode {
     ACCOUNT_DISABLED(HttpStatus.FORBIDDEN, "비활성화된 계정입니다."),
     /** 이메일 중복 */
     EMAIL_DUPLICATION(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다."),
+    /** 이미 로그아웃 */
+    ALREADY_LOGGED_OUT(HttpStatus.BAD_REQUEST, "이미 로그아웃된 사용자입니다."),
 
     // ===================== Raffle 에러 코드 ====================
 

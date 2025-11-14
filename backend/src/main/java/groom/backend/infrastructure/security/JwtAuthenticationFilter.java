@@ -3,6 +3,7 @@ package groom.backend.infrastructure.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import groom.backend.application.auth.service.TokenBlacklistService;
 import groom.backend.common.exception.dto.ErrorResponse;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
@@ -29,6 +30,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtRsaTokenProvider jwtTokenProvider;
+    private final TokenBlacklistService blacklistService;
 
     private static final ObjectMapper LOCAL_OBJECT_MAPPER = createLocalObjectMapper();
 
@@ -85,6 +87,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = resolveToken(request);
 
             if (StringUtils.hasText(token)) {
+
+                // 1. 블랙리스트 확인
+                if (blacklistService.isBlacklisted(token)) {
+                    log.warn("Blacklisted token used");
+                    setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TOKEN", "인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
+                    return;
+                }
+
                 if (jwtTokenProvider.validateToken(token)) {
                     if (jwtTokenProvider.isAccessToken(token)) {
                         String email = jwtTokenProvider.getEmail(token);

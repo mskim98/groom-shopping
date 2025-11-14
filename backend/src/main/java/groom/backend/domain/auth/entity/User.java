@@ -42,4 +42,8 @@ public class User {
         }
     }
 
+    public static User create(String email, String password, String name, Role role, Grade grade) {
+        return new User(null, email, password, name, role, grade, null, null);
+    }
+
 }

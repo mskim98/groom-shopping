@@ -47,6 +47,11 @@ server:
   port: 8080
   servlet:
     context-path: /api
+  session:
+    cookie:
+      secure: false           # HTTP, HTTPS 전송
+      http-only: true        # JavaScript 접근 차단
+      same-site: lax      # CSRF 방어
 
 jwt:
   access:
