@@ -26,6 +26,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -101,7 +102,7 @@ public class RedisConfig {
     }
 
 
-    @Bean
+    @Bean(name = "couponCacheTemplate")
     public RedisTemplate<String, CouponIssueResponse> couponCacheTemplate(
             RedisConnectionFactory redisConnectionFactory,
             ObjectMapper objectMapper) { // 3. (선택적) ObjectMapper 주입
@@ -133,7 +134,7 @@ public class RedisConfig {
     /**
      * @Cacheable, @CacheEvict 등 Spring Cache 추상화가 사용할 CacheManager
      */
-    @Bean
+    @Bean(name = "couponCacheManager")
     public CacheManager couponCacheManager(RedisConnectionFactory redisConnectionFactory) {
 
         // 4. CacheManager 전용 ObjectMapper 설정 (Type 정보 포함)
