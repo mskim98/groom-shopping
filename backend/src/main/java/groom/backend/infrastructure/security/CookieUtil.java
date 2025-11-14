@@ -20,7 +20,7 @@ public class CookieUtil {
         cookie.setHttpOnly(true);
         cookie.setPath("/"); // 모든 경로에서 접근 가능
         cookie.setMaxAge((int) maxAgeInSeconds);
-        cookie.setAttribute("SameSite", "Strict");
+        cookie.setAttribute("SameSite", "lax");
         // 필요에 따라 Secure 속성 설정 (예: HTTPS 환경에서만 전송)
         // cookie.setSecure(true);
         return cookie;
