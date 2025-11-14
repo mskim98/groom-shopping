@@ -41,24 +41,25 @@ public class CouponIssueService {
   // --- 캐시 이름 및 접두사 상수 ---
   public static final String COUPON_ITEM_CACHE_NAME = "coupon-item-cache";
   public static final String COUPON_LIST_CACHE_NAME = "user-coupons-list-cache";
-  // RedisTemplate을 사용할 경우, 키 접두사(coupon-item-cache::)가 붙는 것을 가정
+  // 현재 다른 도메인과 같은 레디스를 공유하므로, 키 접두사(coupon-item-cache::)를 붙여 도메인 구분
   public static final String CACHE_PREFIX = COUPON_ITEM_CACHE_NAME + "::";
 
 
   private final CouponRepository couponRepository;
   private final CouponIssueRepository couponIssueRepository;
   private final DiscountPolicyFactory discountPolicyFactory;
-  private final CacheManager cacheManager; // CacheManager 주입
+  private final CacheManager couponCacheManager; // CacheManager 주입
 
-  // (필수) RedisConfig에서 설정한 <String, CouponIssueResponse> 타입의 템플릿을 주입
   private final RedisTemplate<String, CouponIssueResponse> couponCacheTemplate;
 
 
   /**
    * 쿠폰 발급 메서드
    * 발급 성공 시, 단건 쿠폰 캐시(coupon-item-cache)에 즉시 저장합니다. (Cache Put)
+   * 만약 새 쿠폰을 발급할 경우, 레디스에 저장된 캐시 목록은 삭제됩니다. (Cache Evict)
    */
   @Transactional
+  @CacheEvict(cacheNames = COUPON_LIST_CACHE_NAME, key = "#user.id")
   public CouponIssueResponse issueCoupon(Long couponId, User user) {
     // 쿠폰 조회 (비관적 락)
     Coupon coupon = couponRepository.findByIdForUpdate(couponId).orElseThrow(
@@ -96,7 +97,7 @@ public class CouponIssueService {
 
     // --- 캐시 수동 등록 (Cache Put) ---
     // 새로 발급된 쿠폰을 즉시 '단건 캐시'에 저장
-    Cache couponItemCache = cacheManager.getCache(COUPON_ITEM_CACHE_NAME);
+    Cache couponItemCache = couponCacheManager.getCache(COUPON_ITEM_CACHE_NAME);
     if (couponItemCache != null) {
       // getCouponIssueId()는 CouponIssue의 PK (Long)를 반환해야 함
       couponItemCache.put(responseDto.getCouponIssueId(), responseDto);
@@ -113,7 +114,7 @@ public class CouponIssueService {
   public List<CouponIssueResponse> searchMyCoupon(Long userId) {
     List<CouponIssue> issues = couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId, LocalDateTime.now());
 
-    Cache couponItemCache = cacheManager.getCache(COUPON_ITEM_CACHE_NAME);
+    Cache couponItemCache = couponCacheManager.getCache(COUPON_ITEM_CACHE_NAME);
     if (couponItemCache == null) {
       // 캐시 설정이 안 되어있을 경우의 방어 코드
       return issues.stream().map(CouponIssueResponse::from).collect(Collectors.toList());
@@ -276,7 +277,7 @@ public class CouponIssueService {
     if (!issue.getUserId().equals(userId))
       throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
     if (!issue.getIsActive())
-      throw new BusinessException(ErrorCode.COUPON_NOT_USABLE); // 다른 에러 코드 권장
+      throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
     // 쿠폰 만료일 확인
     if (issue.getDeletedAt().isBefore(LocalDateTime.now()))
       throw new BusinessException(ErrorCode.COUPON_EXPIRED);
