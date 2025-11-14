@@ -27,10 +27,11 @@ public class RaffleScheduler {
     public void changeRaffleStatusToActive() {
         LocalDateTime now = LocalDateTime.now();
         int page = 0;
-        PageRequest pr = PageRequest.of(page, PAGE_SIZE);
 
         Page<Raffle> chunk;
         do {
+            PageRequest pr = PageRequest.of(page, PAGE_SIZE);
+
             chunk = raffleRepository.findByStatusAndEntryStartAtBefore(RaffleStatus.READY, now, pr);
             chunk.getContent().forEach(raffle -> {
                 try {
@@ -42,7 +43,6 @@ public class RaffleScheduler {
             });
 
             page++;
-            pr = PageRequest.of(page, PAGE_SIZE);
         } while (!chunk.isLast());
     }
 
@@ -51,10 +51,12 @@ public class RaffleScheduler {
     public void changeRaffleStatusToClosed() {
         LocalDateTime now = LocalDateTime.now();
         int page = 0;
-        PageRequest pr = PageRequest.of(page, PAGE_SIZE);
+
 
         Page<Raffle> chunk;
         do {
+            PageRequest pr = PageRequest.of(page, PAGE_SIZE);
+
             chunk = raffleRepository.findAllByStatusAndEntryEndAtBefore(RaffleStatus.ACTIVE, now, pr);
             chunk.getContent().forEach(raffle -> {
                 try {
@@ -66,7 +68,6 @@ public class RaffleScheduler {
             });
 
             page++;
-            pr = PageRequest.of(page, PAGE_SIZE);
         } while (!chunk.isLast());
     }
 

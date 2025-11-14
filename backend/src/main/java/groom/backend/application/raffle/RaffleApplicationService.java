@@ -193,8 +193,8 @@ public class RaffleApplicationService {
             return; // 이미 변경된 상태면 무시
         }
 
-        raffle.updateStatus(newStatus);
-        raffleRepository.save(raffle);
+        current.updateStatus(newStatus);
+        raffleRepository.save(current);
     }
 
 
