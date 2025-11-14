@@ -33,7 +33,6 @@ public class RedisRefreshTokenRepository implements RefreshTokenRepository {
                 expirationMillis,
                 TimeUnit.MILLISECONDS
         );
-        tokenRedisTemplate.opsForValue().set(key, refreshToken, expirationMillis, TimeUnit.MILLISECONDS);
     }
 
     @Override
