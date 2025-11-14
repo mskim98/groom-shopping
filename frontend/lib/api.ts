@@ -237,6 +237,13 @@ export const cartApi = {
       requireAuth: true,
     }),
 
+  removeMultipleFromCart: (items: Array<{ productId: string; quantity: number }>) =>
+    apiRequest('/cart/remove', {
+      method: 'DELETE',
+      body: JSON.stringify({ items }),
+      requireAuth: true,
+    }),
+
   increaseQuantity: (productId: string) =>
     apiRequest('/cart/add', {
       method: 'POST',

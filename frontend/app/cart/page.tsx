@@ -32,6 +32,7 @@ export default function CartPage() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [selectedCoupon, setSelectedCoupon] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!getAccessToken()) {
@@ -106,9 +107,58 @@ export default function CartPage() {
       // 전체 수량을 제거
       await cartApi.removeFromCart(productId, item.quantity);
       setCartItems(cartItems.filter(item => item.productId !== productId));
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(productId);
+        return newSet;
+      });
       toast.success('상품이 삭제되었습니다.');
     } catch (error) {
       console.error('Remove error:', error);
+      toast.error('삭제에 실패했습니다.');
+    }
+  };
+
+  const handleToggleSelect = (productId: string) => {
+    setSelectedItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(productId)) {
+        newSet.delete(productId);
+      } else {
+        newSet.add(productId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedItems.size === cartItems.length) {
+      setSelectedItems(new Set());
+    } else {
+      setSelectedItems(new Set(cartItems.map(item => item.productId)));
+    }
+  };
+
+  const handleRemoveSelected = async () => {
+    if (selectedItems.size === 0) {
+      toast.error('삭제할 상품을 선택해주세요.');
+      return;
+    }
+
+    try {
+      const itemsToRemove = cartItems
+        .filter(item => selectedItems.has(item.productId))
+        .map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        }));
+
+      await cartApi.removeMultipleFromCart(itemsToRemove);
+      setCartItems(cartItems.filter(item => !selectedItems.has(item.productId)));
+      setSelectedItems(new Set());
+      toast.success(`${itemsToRemove.length}개의 상품이 삭제되었습니다.`);
+    } catch (error) {
+      console.error('Remove selected error:', error);
       toast.error('삭제에 실패했습니다.');
     }
   };
@@ -147,7 +197,10 @@ export default function CartPage() {
   };
 
   const calculateTotal = () => {
-    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const selectedCartItems = cartItems.filter(item => selectedItems.has(item.productId));
+    const subtotal = selectedCartItems.length > 0
+      ? selectedCartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
+      : cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     let discount = 0;
 
     if (selectedCoupon) {
@@ -206,6 +259,30 @@ export default function CartPage() {
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
+          {cartItems.length > 0 && (
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedItems.size === cartItems.length && cartItems.length > 0}
+                  onChange={handleSelectAll}
+                  className="w-4 h-4 cursor-pointer"
+                />
+                <label className="text-sm text-muted-foreground cursor-pointer" onClick={handleSelectAll}>
+                  전체 선택 ({selectedItems.size}/{cartItems.length})
+                </label>
+              </div>
+              {selectedItems.size > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleRemoveSelected}
+                >
+                  선택 삭제 ({selectedItems.size})
+                </Button>
+              )}
+            </div>
+          )}
           {cartItems.length === 0 ? (
             <Card>
               <CardContent className="p-12 text-center">
@@ -221,6 +298,14 @@ export default function CartPage() {
               <Card key={item.productId}>
                 <CardContent className="p-4">
                   <div className="flex gap-4">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedItems.has(item.productId)}
+                        onChange={() => handleToggleSelect(item.productId)}
+                        className="w-4 h-4 cursor-pointer"
+                      />
+                    </div>
                     <div className="w-24 h-24 flex-shrink-0">
                       <ImageWithFallback
                         src={item.productImage || '/placeholder-product.jpg'}
