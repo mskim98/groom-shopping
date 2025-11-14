@@ -86,7 +86,7 @@ public class ProductController {
                             .remainingStock(result.getRemainingStock())
                             .stockThresholdReached(result.getStockThresholdReached())
                             .message(result.getStockThresholdReached()
-                                    ? String.format("재고가 %d개로 얼마 남지 않았어요", result.getRemainingStock())
+                                    ? String.format("재고가 %d개 남았어요", result.getRemainingStock())
                                     : "구매가 완료되었습니다.")
                             .build())
                     .toList();
@@ -110,7 +110,7 @@ public class ProductController {
                 .remainingStock(result.getRemainingStock())
                 .stockThresholdReached(result.getStockThresholdReached())
                 .message(result.getStockThresholdReached()
-                        ? String.format("재고가 %d개로 얼마 남지 않았어요", result.getRemainingStock())
+                        ? String.format("재고가 %d개 남았어요", result.getRemainingStock())
                         : "구매가 완료되었습니다.")
                 .build();
 

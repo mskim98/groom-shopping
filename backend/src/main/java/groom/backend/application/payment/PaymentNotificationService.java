@@ -50,10 +50,13 @@ public class PaymentNotificationService {
      * 재고 차감된 상품에 대한 알림을 비동기로 처리 - notificationExecutor 스레드풀에서 실행 - 팀원이 만든 알림 메서드는 내부적으로 트랜잭션 처리
      *
      * @param stockReductions 재고 차감 결과 목록 (제품 ID와 차감 후 재고량 포함)
+     * @param order 주문 정보 (주문한 사용자 제외를 위해 필요)
      */
     @Async("notificationExecutor")
-    public void sendStockReducedNotifications(List<StockReductionResult> stockReductions) {
-        log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - Count: {}", stockReductions.size());
+    public void sendStockReducedNotifications(List<StockReductionResult> stockReductions, Order order) {
+        Long orderUserId = order != null ? order.getUserId() : null;
+        log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - Count: {}, orderUserId={}", 
+                stockReductions.size(), orderUserId);
 
         try {
             // 제품 ID와 차감 후 재고량 맵 생성
@@ -65,9 +68,11 @@ public class PaymentNotificationService {
             }
 
             // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
+            // 주문한 사용자는 알림에서 제외
             notificationApplicationService.createAndSendNotificationsForProducts(
                     stockReductions.stream().map(StockReductionResult::getProductId).collect(Collectors.toList()),
-                    productStockMap
+                    productStockMap,
+                    orderUserId
             );
 
             log.info("[NOTIFICATION_PROCESSING] Processing notifications for {} products", stockReductions.size());

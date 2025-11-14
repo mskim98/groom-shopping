@@ -115,7 +115,8 @@ public class PaymentApplicationService {
 
             // 비동기로 알림 처리 (응답 시간에 영향 없음)
             // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
-            paymentNotificationService.sendStockReducedNotifications(stockReductions);
+            // 주문한 사용자는 알림에서 제외
+            paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
 
             // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
             paymentNotificationService.clearCartItems(order);
@@ -167,7 +168,8 @@ public class PaymentApplicationService {
 
         // 비동기로 알림 처리 (응답 시간에 영향 없음)
         // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
-        paymentNotificationService.sendStockReducedNotifications(stockReductions);
+        // 주문한 사용자는 알림에서 제외
+        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
 
         // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
         paymentNotificationService.clearCartItems(order);
