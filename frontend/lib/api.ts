@@ -429,3 +429,60 @@ export const paymentApi = {
       requireAuth: true,
     }),
 };
+
+// Notification API
+export const notificationApi = {
+  // SSE 스트림 연결
+  connectSSE: (onMessage: (data: any) => void, onError?: (error: Event) => void): EventSource | null => {
+    if (typeof window === 'undefined') return null;
+    
+    const token = getAccessToken();
+    if (!token) return null;
+
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+    // EventSource는 헤더를 직접 설정할 수 없으므로 쿼리 파라미터로 토큰 전달
+    const url = `${API_BASE_URL}/notification/stream?token=${encodeURIComponent(token)}`;
+    
+    const eventSource = new EventSource(url, {
+      withCredentials: true,
+    });
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (error) {
+        console.error('Failed to parse SSE message:', error);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      if (onError) {
+        onError(error);
+      }
+    };
+
+    return eventSource;
+  },
+
+  // 읽지 않은 알림 가져오기
+  getUnreadNotifications: () =>
+    apiRequest<any[]>('/notification/unread', {
+      requireAuth: true,
+    }),
+
+  // 알림 읽음 처리
+  markAsRead: (id: string) =>
+    apiRequest(`/notification/${id}/read`, {
+      method: 'PATCH',
+      requireAuth: true,
+    }),
+
+  // 전체 읽음 처리
+  markAllAsRead: () =>
+    apiRequest('/notification/read-all', {
+      method: 'PATCH',
+      requireAuth: true,
+    }),
+};
