@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.config;
 
+import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import groom.backend.infrastructure.kafka.StockThresholdEvent;
 import groom.backend.infrastructure.kafka.stream.CouponDelayEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -216,6 +217,45 @@ public class KafkaConfig {
         //     재시도되거나 에러 핸들러로 넘어갑니다.)
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
 
+        return factory;
+    }
+
+
+
+    @Bean
+    public ProducerFactory<String, RaffleDrawingEvent> raffleDrawingProducerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        configProps.put(ProducerConfig.ACKS_CONFIG, "1");
+        configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
+        return new DefaultKafkaProducerFactory<>(configProps);
+    }
+
+    @Bean
+    public KafkaTemplate<String, RaffleDrawingEvent> raffleDrawingKafkaTemplate() {
+        return new KafkaTemplate<>(raffleDrawingProducerFactory());
+    }
+
+    @Bean
+    public ConsumerFactory<String, RaffleDrawingEvent> raffleDrawingConsumerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "notification-group");
+        configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
+        configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        return new DefaultKafkaConsumerFactory<>(configProps);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, RaffleDrawingEvent> raffleDrawingKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, RaffleDrawingEvent> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(raffleDrawingConsumerFactory());
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
         return factory;
     }
 }
