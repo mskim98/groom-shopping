@@ -114,19 +114,24 @@ public class RaffleScheduler {
 
             // 각 이벤트를 Kafka로 발행
             for (RaffleDrawingEvent event : readyEvents) {
-                try {
-                    // Kafka로 추첨 실행 메시지 발행
-                    eventProducer.publishRaffleDrawingEvent(event);
+                // Kafka로 추첨 실행 메시지 발행
+                eventProducer.publishRaffleDrawingEvent(event)
+                        .whenComplete((result, ex) -> {
+                            if (ex != null) {
+                                log.error("비동기 발행 실패 - raffleId={} (Redis 유지, 재시도 대상)", event.getRaffleId(), ex);
+                                return;
+                            }
+                            try {
+                                // Redis에서 제거
+                                raffleDelayedDrawingQueue.removeProcessedDrawing(event);
+                                log.info("추첨 실행 메시지 발행 및 Redis 제거 완료 - raffleId: {}",
+                                        event.getRaffleId());
+                            } catch (Exception e) {
+                                log.error("추첨 실행 후 Redis 제거 실패 - raffleId: {} (수동 점검 필요)",
+                                        event.getRaffleId(), e);
+                            }
+                        });
 
-                    // Redis에서 제거
-                    raffleDelayedDrawingQueue.removeProcessedDrawing(event);
-
-                    log.info("추첨 실행 메시지 발행 및 Redis 제거 완료 - raffleId: {}",
-                            event.getRaffleId());
-                } catch (Exception e) {
-                    log.error("추첨 실행 메시지 발행 실패 - raffleId: {} (다음 스케줄에서 재시도)",
-                            event.getRaffleId(), e);
-                }
             }
         } catch (Exception e) {
             log.error("지연된 추첨 처리 중 오류 발생", e);

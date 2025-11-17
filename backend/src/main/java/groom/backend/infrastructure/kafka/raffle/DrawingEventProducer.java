@@ -1,7 +1,5 @@
 package groom.backend.infrastructure.kafka.raffle;
 
-import groom.backend.common.exception.BusinessException;
-import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +20,7 @@ public class DrawingEventProducer {
     /**
      * 추첨 실행 이벤트를 Kafka로 발행
      */
-    public void publishRaffleDrawingEvent(RaffleDrawingEvent event) {
+    public CompletableFuture<SendResult<String, RaffleDrawingEvent>> publishRaffleDrawingEvent(RaffleDrawingEvent event) {
         String key = String.valueOf(event.getRaffleId());
 
         CompletableFuture<SendResult<String, RaffleDrawingEvent>> future = kafkaTemplate.send(TOPIC, key, event);
@@ -35,8 +33,9 @@ public class DrawingEventProducer {
                         result.getRecordMetadata().offset());
             } else {
                 log.error("추첨 실행 이벤트 발행 실패 - raffleId: {}", event.getRaffleId(), ex);
-                throw  new BusinessException(ErrorCode.RAFFLE_DRAWING_EVENT_PUBLISH_FAILED);
             }
         });
+
+        return future;
     }
 }
