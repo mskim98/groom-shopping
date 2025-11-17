@@ -120,10 +120,10 @@ services:
       - monitoring
     depends_on:
       - loki
-    links:
-      - loki  # Loki 컨테이너 링크 (DNS 해석용)
     environment:
       HOSTNAME: groom-shopping-dev
+    dns:
+      - 127.0.0.11  # Docker embedded DNS
 
   prometheus:
     image: prom/prometheus:latest
