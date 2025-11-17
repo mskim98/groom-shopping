@@ -24,7 +24,11 @@ public class Product {
     private ProductCategory category;
     private Integer thresholdValue;
     private Boolean isActive;
+    private String imageUrl;
 
+    public void changeImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
     public static Product create(
             UUID id,
             Name name,
