@@ -268,12 +268,19 @@ export const couponApi = {
       requireAuth: true,
     }),
   
-  createCoupon: (data: any) =>
-    apiRequest('/coupon', {
+  createCoupon: (data: any) => {
+    const { inactiveDate, ...body } = data;
+  
+    const query = inactiveDate
+      ? `?date=${encodeURIComponent(inactiveDate)}`
+      : '';
+  
+    return apiRequest(`/coupon${query}`, {
       method: 'POST',
       body: JSON.stringify(data),
       requireAuth: true,
-    }),
+    });
+  },
   
   updateCoupon: (id: string, data: any) =>
     apiRequest(`/coupon/${id}`, {
@@ -323,7 +330,7 @@ export const raffleApi = {
   createRaffle: (data: any) =>
     apiRequest('/raffles', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
       requireAuth: true,
     }),
 
