@@ -128,7 +128,7 @@ export default function AdminRafflesPage() {
       resetForm();
       loadRaffles();
     } catch (error) {
-      toast.error('추첨 등록에 실패했습니다.');
+        toast.error(error.message || '추첨 등록에 실패했습니다.');
     }
   };
 
@@ -136,10 +136,10 @@ export default function AdminRafflesPage() {
     if (!executeRaffle) return;
     
     try {
-      await raffleApi.executeRaffle(executeRaffle.id);
+      await raffleApi.executeRaffle (executeRaffle.raffleId);
       toast.success('추첨이 완료되었습니다.');
       setExecuteRaffle(null);
-      router.push(`/admin/raffles/${executeRaffle.id}`);
+      router.push(`/admin/raffles/${executeRaffle.raffleId}`);
     } catch (error) {
       toast.error('추첨 실행에 실패했습니다.');
     }
@@ -162,6 +162,7 @@ export default function AdminRafflesPage() {
 
   const statusOptions = [
     { value: 'DRAFT', label: '초안' },
+    { value: 'READY', label: '준비중' },
     { value: 'ACTIVE', label: '활성' },
     { value: 'CLOSED', label: '종료' },
     { value: 'DRAWN', label: '추첨완료' },
@@ -171,6 +172,7 @@ export default function AdminRafflesPage() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, any> = {
       DRAFT: 'secondary',
+      READY: 'secondary',
       ACTIVE: 'default',
       CLOSED: 'secondary',
       DRAWN: 'destructive',
@@ -179,6 +181,7 @@ export default function AdminRafflesPage() {
 
     const labels: Record<string, string> = {
       DRAFT: '초안',
+      READY: '준비중',
       ACTIVE: '활성',
       CLOSED: '종료',
       DRAWN: '추첨완료',
@@ -190,7 +193,8 @@ export default function AdminRafflesPage() {
 
   const getAvailableStatusOptions = (currentStatus: string) => {
     const transitions: Record<string, string[]> = {
-      DRAFT: ['ACTIVE', 'CANCELLED'],
+      DRAFT: ['READY', 'CANCELLED'],
+      READY: ['DRAFT', 'ACTIVE', 'CANCELLED'],
       ACTIVE: ['CLOSED', 'CANCELLED'],
       CLOSED: ['CANCELLED'],
       DRAWN: [],
@@ -444,7 +448,7 @@ export default function AdminRafflesPage() {
                   <TableCell>{new Date(raffle.raffleDrawAt).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      <Link href={`/admin/raffles/${raffle.id}`}>
+                      <Link href={`/admin/raffles/${raffle.raffleId}`}>
                         <Button size="sm" variant="outline">
                           <Eye className="w-4 h-4" />
                         </Button>
