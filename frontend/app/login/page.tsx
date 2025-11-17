@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { authApi, setAccessToken, setRefreshToken } from '@/lib/api';
+import { authApi, setAccessToken } from '@/lib/api';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
@@ -23,7 +23,6 @@ export default function LoginPage() {
     try {
       const response = await authApi.login(email, password);
       setAccessToken(response.accessToken);
-      setRefreshToken(response.refreshToken);
       toast.success('로그인 성공!');
       router.push('/products');
     } catch (error: any) {
