@@ -52,6 +52,11 @@ spring:
   flyway:
     enabled: true  # Flyway가 마이그레이션 및 테스트 데이터 관리
 
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
 server:
   port: 8080
   servlet:
@@ -170,3 +175,12 @@ logging:
     name: ./logs/application.log
     max-size: 10MB
     max-history: 10
+
+cloud:
+  aws:
+    region: ap-northeast-2
+    s3:
+      bucket: goorm-shopping-s3
+    credentials:
+      access-key:
+      secret-key:
