@@ -17,11 +17,12 @@ public class DiscountPercentMultiPolicy implements DiscountMultiPolicy {
 
   @Override
   public int calculateMultiDiscount(List<DiscountContext> discountContexts) {
+    if (discountContexts.isEmpty()) return 0;
     // 할인율을 동일하게 하기 위해 정렬
     List<DiscountContext> sortedContext = discountContexts.stream()
             .sorted(Comparator.comparingInt(DiscountContext::getAmount))
             .toList();
-    int cost = discountContexts.get(0).getCost();
+    int cost = discountContexts.getFirst().getCost();
 
     for (DiscountContext discountContext : sortedContext) {
       double rate = discountContext.getAmount() / 100.0;

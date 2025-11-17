@@ -13,6 +13,7 @@ import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
@@ -22,6 +23,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -36,6 +38,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
+@Slf4j
 public class CouponIssueService {
 
   // --- 캐시 이름 및 접두사 상수 ---
@@ -124,10 +127,22 @@ public class CouponIssueService {
             .map(CouponIssueResponse::from)
             .collect(Collectors.toList());
 
-    // 목록을 순회하며 개별 쿠폰 캐시에 수동으로 PUT (Cache Warming)
-    responses.forEach(couponResponse -> {
-      couponItemCache.put(couponResponse.getCouponIssueId(), couponResponse);
-    });
+    if (!responses.isEmpty()) {
+      Map<String, CouponIssueResponse> cacheWriteMap = new HashMap<>();
+      responses.forEach(couponResponse -> {
+        cacheWriteMap.put(CACHE_PREFIX + couponResponse.getCouponIssueId(), couponResponse);
+      });
+      // MSET 적용 시 TTL 지정 불가능.
+      for (CouponIssueResponse r : responses) {
+        String key = CACHE_PREFIX + r.getCouponIssueId();
+        couponCacheTemplate.opsForValue().set(key, r, Duration.ofMinutes(60)); // TTL 적용, 1시간
+      }
+    }
+
+//    // 목록을 순회하며 개별 쿠폰 캐시에 수동으로 PUT (Cache Warming)
+//    responses.forEach(couponResponse -> {
+//      couponItemCache.put(couponResponse.getCouponIssueId(), couponResponse);
+//    });
 
     return responses;
   }

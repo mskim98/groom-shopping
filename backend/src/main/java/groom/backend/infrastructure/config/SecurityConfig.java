@@ -36,7 +36,7 @@ public class SecurityConfig {
                         .permitAll()  // Swagger 경로 허용
                         .requestMatchers(HttpMethod.GET, "/v1/product/**").permitAll()  // 상품 조회 허용
                         .requestMatchers(HttpMethod.GET, "/v1/raffles/**").permitAll()  // 래플 조회 허용
-                        .requestMatchers("/actuator/**").permitAll()  // Actuator 모니터링 엔드포인트 허용
+                        .requestMatchers("/actuator", "/actuator/**").permitAll()  // Actuator 모니터링 엔드포인트 허용
                         .anyRequest().authenticated()  // 모든 요청 인증 필요
                 )
                 .formLogin(login -> login.disable()) // 로그인 폼 비활성화

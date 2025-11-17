@@ -97,6 +97,9 @@ public enum ErrorCode {
     // 추첨 시작 전 검증(별도)
     RAFFLE_DRAW_NOT_STARTED             (HttpStatus.BAD_REQUEST, "아직 추첨일이 되지 않았습니다."),
 
+    // 내부 처리 오류
+    RAFFLE_DRAWING_EVENT_PUBLISH_FAILED (HttpStatus.INTERNAL_SERVER_ERROR, "추첨 실행 이벤트 발행에 실패했습니다."),
+
     // ===================== Cart 에러 코드 ====================
     /** 장바구니가 존재하지 않음 */
     CART_NOT_FOUND                      (HttpStatus.NOT_FOUND, "장바구니가 존재하지 않습니다."),
