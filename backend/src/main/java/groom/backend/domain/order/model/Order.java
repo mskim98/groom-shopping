@@ -26,7 +26,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 @Entity
-@Table(name = "\"Order\"")
+@Table(name = "orders")
 @Getter
 @NoArgsConstructor
 public class Order {
@@ -35,30 +35,30 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
-    @Column(name = "userId", nullable = false)
+    @Column(nullable = false)
     private Long userId;
 
-    @Column(name = "subTotal", nullable = false)
+    @Column(nullable = false)
     private Integer subTotal;
 
-    @Column(name = "discountAmount")
+    @Column
     private Integer discountAmount;
 
-    @Column(name = "totalAmount", nullable = false)
+    @Column(nullable = false)
     private Integer totalAmount;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
 
     @CreationTimestamp
-    @Column(name = "createdAt", nullable = false, updatable = false)
+    @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
-    @Column(name = "updatedAt", nullable = false)
+    @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    @Column(name = "couponId")
+    @Column
     private Long couponId;
 
     @OneToOne(mappedBy = "order", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
