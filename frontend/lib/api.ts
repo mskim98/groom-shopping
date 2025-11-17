@@ -25,10 +25,10 @@ export async function apiRequest<T>(
 
   const token = getAccessToken();
 
-  const requestHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...headers as Record<string, string>,
-  };
+    const requestHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...headers as Record<string, string>,
+    };
 
   if (requireAuth && token) {
     requestHeaders['Authorization'] = `Bearer ${token}`;
@@ -194,13 +194,41 @@ export const productApi = {
     apiRequest<any>(`/product/${id}`, {
       requireAuth: true,
     }),
-  
-  createProduct: (data: any) =>
-    apiRequest('/product', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      requireAuth: true,
-    }),
+
+    createProduct: (data: any) => {
+        // 파일 포함 여부 확인
+        const hasFile = data.imageFile instanceof File;
+
+        let body: any;
+
+        if (hasFile) {
+            // multipart/form-data 생성
+            const form = new FormData();
+            form.append(
+                "product",
+                new Blob([JSON.stringify({
+                    name: data.name,
+                    description: data.description,
+                    price: data.price,
+                    stock: data.stock,
+                    category: data.category
+                })], { type: "application/json" })
+            );
+            form.append('image', data.imageFile); // 서버에서 MultipartFile image 로 받으면 됨
+
+            body = form;
+        } else {
+            // 기존 JSON 그대로
+            body = JSON.stringify(data);
+        }
+
+        return apiRequest('/product', {
+            method: 'POST',
+            body,
+            requireAuth: true,
+        });
+    },
+
   
   updateProduct: (id: string, data: any) =>
     apiRequest(`/product/${id}`, {
