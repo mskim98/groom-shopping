@@ -76,8 +76,8 @@ export async function apiRequest<T>(
       const retryResult: ApiResponse<T> = await retryResponse.json();
       return retryResult.data;
     } else {
-      // Redirect to login
-      if (typeof window !== 'undefined') {
+      // Redirect to login (단, 이미 로그인 페이지에 있으면 리다이렉트하지 않음)
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
       throw new Error('인증이 필요합니다. 다시 로그인해주세요.');
