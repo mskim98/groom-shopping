@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 /**
  * <h3>Kafka Consumer: 지연 처리 완료된 쿠폰 "소비(처리)"</h3>
  *
- * Kafka Streams가 지연 처리를 완료한 후 {@code coupon-delay-processed} 토픽으로
+ * Kafka Streams가 지연 처리를 완료한 후 {@code coupon-delay-events} 토픽으로
  * 발행한 메시지를 최종적으로 구독(Consume)하는 클래스입니다.<br>
  *
  * 이 Consumer는 메시지를 받는 즉시 쿠폰을 비활성화하는 실제 비즈니스 로직
@@ -31,10 +31,6 @@ public class CouponDelayConsumer {
    * [중요] @KafkaListener:
    * Spring Kafka가 이 메소드를 지정된 토픽의 '메시지 구독자'로 자동 등록합니다.
    * Kafka에 해당 토픽으로 새 메시지가 들어오면 이 메소드가 자동으로 실행됩니다.
-   *
-   * - topics: 구독할 토픽의 이름을 지정합니다. (Producer가 보낸 'coupon-delay-events'가
-   * 아니라, Streams가 처리 후 보낸 'coupon-delay-processed'임에 유의)
-   *
    * - groupId: "컨슈머 그룹"의 ID를 지정합니다.
    * - 같은 'groupId'를 가진 컨슈머 인스턴스(애플리케이션)들은 "하나의 팀"으로 동작합니다.
    * - 만약 이 애플리케이션을 3대로 스케일 아웃(확장)하면, 3개의 인스턴스가
