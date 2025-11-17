@@ -120,6 +120,8 @@ services:
       - monitoring
     depends_on:
       - loki
+    links:
+      - loki  # Loki 컨테이너 링크 (DNS 해석용)
     environment:
       HOSTNAME: groom-shopping-dev
 
