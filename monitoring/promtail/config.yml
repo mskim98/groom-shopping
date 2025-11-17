@@ -7,6 +7,7 @@ positions:
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
+    tenant_id: dev  # Tenant ID 설정
 
 scrape_configs:
   # Spring Boot 애플리케이션 로그
