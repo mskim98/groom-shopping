@@ -18,15 +18,8 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/v1/product")
@@ -56,12 +49,13 @@ public class ProductCommonController {
                     required = true,
                     content = @Content(schema = @Schema(implementation = CreateProductRequest.class))
             )
-            @Valid @RequestBody CreateProductRequest request) {
-
-        Product product = productService.createProduct(request);
-        ProductResponse productResponse = ProductResponse.from(product);
-
-        return ResponseEntity.ok(productResponse);
+            @RequestPart("product") @Valid CreateProductRequest request,
+            @RequestPart(value = "image", required = false) MultipartFile image
+    ) {
+        // JSON으로 가져옴
+        // 이미지와 같이 가져올 시, form data로 가져옴. product는 json 직렬화 상태로 받음
+        Product product = productService.createProduct(request, image);
+        return ResponseEntity.ok(ProductResponse.from(product));
     }
 
     @Operation(
