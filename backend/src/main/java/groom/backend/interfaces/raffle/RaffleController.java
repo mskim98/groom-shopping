@@ -10,6 +10,7 @@ import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
 import groom.backend.interfaces.raffle.dto.request.*;
+import groom.backend.interfaces.raffle.dto.response.ParticipantResponse;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -256,4 +257,31 @@ public class RaffleController {
         RaffleResponse response = raffleApplicationService.updateRaffleStatus(user, raffleId, raffleRequest);
         return ResponseEntity.ok(response);
     }
+
+    @Operation(
+            summary = "응모자 검색",
+            description = "해당 추첨에 응모한 사람들 조회."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "응모자 검색 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ParticipantResponse.class)))
+    })
+    @GetMapping("/{raffleId}/participants")
+    public ResponseEntity<Page<ParticipantResponse>> searchParticipants(
+            @Parameter(description = "검색 조건")
+            @RequestParam(value = "keyword", required = false, defaultValue = "") String keyword,
+            @PathVariable Long raffleId,
+            @Parameter(description = "페이징 정보", example = "page=0&size=20&sort=createdAt,DESC")
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+
+
+        // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
+        Page<ParticipantResponse> page = raffleTicketApplicationService.searchParticipants(raffleId, keyword, pageable);
+        return ResponseEntity.ok(page);
+    }
+
+
+
+
 }
