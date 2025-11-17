@@ -27,7 +27,7 @@ public class DrawingEventProducer {
 
         future.whenComplete((result, ex) -> {
             if (ex == null) {
-                log.info("추첨 실행 이벤트 발행 성공 - drawingId: {}, partition: {}, offset: {}",
+                log.info("추첨 실행 이벤트 발행 성공 - raffleId: {}, partition: {}, offset: {}",
                         event.getRaffleId(),
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
