@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -48,40 +49,66 @@ public class NotificationApplicationService {
      * @param productId 제품 ID
      * @param currentStock 현재 재고
      * @param thresholdValue 임계값
+     * @param excludeUserId 제외할 사용자 ID (주문한 사용자 등, null 가능)
      */
-    public void createAndSendNotifications(UUID productId, Integer currentStock, Integer thresholdValue) {
+    public void createAndSendNotifications(UUID productId, Integer currentStock, Integer thresholdValue, Long excludeUserId) {
         long startTime = System.currentTimeMillis();
         log.info("[NOTIFICATION_SERVICE_START] productId={}, currentStock={}, thresholdValue={}", 
                 productId, currentStock, thresholdValue);
 
         try {
-            // 1. 제품 정보 조회 (제품명 포함)
+            // 1. 제품 정보 조회 (제품명만 필요, 재고량은 Kafka 이벤트의 currentStock 사용)
             Product product = productRepository.findById(productId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, 
                             "제품을 찾을 수 없습니다: " + productId));
             String productName = product.getName() != null ? product.getName() : "제품";
+            
+
+            Integer stockForNotification = currentStock;
+            if (stockForNotification == null) {
+                // fallback: 제품 조회한 재고량 사용
+                stockForNotification = product.getStock();
+                log.warn("[NOTIFICATION_STOCK_FALLBACK] productId={}, using product.getStock()={}", 
+                        productId, stockForNotification);
+            } else {
+                log.info("[NOTIFICATION_STOCK_USED] productId={}, kafkaEventStock={}, productStock={}", 
+                        productId, stockForNotification, product.getStock());
+            }
 
             // 2. 해당 제품을 장바구니에 담은 사용자 조회
             long queryStartTime = System.currentTimeMillis();
             List<Long> userIds = notificationRepository.findUserIdsWithProductInCart(productId);
             long queryDuration = System.currentTimeMillis() - queryStartTime;
-            log.info("[NOTIFICATION_QUERY_USERS] productId={}, productName={}, userIdCount={}, queryDuration={}ms", 
-                    productId, productName, userIds.size(), queryDuration);
+            log.info("[NOTIFICATION_QUERY_USERS] productId={}, productName={}, userIdCount={}, queryDuration={}ms, stockForNotification={}", 
+                    productId, productName, userIds.size(), queryDuration, stockForNotification);
+
+            // 주문한 사용자 제외
+            if (excludeUserId != null) {
+                int beforeSize = userIds.size();
+                userIds = userIds.stream()
+                        .filter(userId -> !userId.equals(excludeUserId))
+                        .collect(Collectors.toList());
+                int afterSize = userIds.size();
+                if (beforeSize != afterSize) {
+                    log.info("[NOTIFICATION_EXCLUDE_USER] productId={}, excludeUserId={}, beforeCount={}, afterCount={}", 
+                            productId, excludeUserId, beforeSize, afterSize);
+                }
+            }
 
             if (userIds.isEmpty()) {
                 log.info("[NOTIFICATION_NO_USERS] productId={}, productName={}", productId, productName);
                 return;
             }
-            // TODO: 다른 방법도 고안
-            // 3. 사용자 수에 따라 배치 저장 또는 개별 저장 선택
+
+            // 3. 사용자 수에 따라 배치 저장 또는 개별 저장 선택(메모리 효율을 위해)
             long parallelStartTime = System.currentTimeMillis();
             
             if (userIds.size() >= BATCH_THRESHOLD) {
                 // 대량 사용자: 배치 저장 사용 (트랜잭션 그룹화)
-                createAndSendNotificationsBatch(userIds, productId, productName, currentStock, thresholdValue);
+                createAndSendNotificationsBatch(userIds, productId, productName, stockForNotification, thresholdValue);
             } else {
                 // 소량 사용자: 개별 저장 (기존 방식 유지)
-                createAndSendNotificationsIndividual(userIds, productId, productName, currentStock, thresholdValue);
+                createAndSendNotificationsIndividual(userIds, productId, productName, stockForNotification, thresholdValue);
             }
 
             long parallelEndTime = System.currentTimeMillis();
@@ -184,6 +211,18 @@ public class NotificationApplicationService {
      * @param productIds 제품 ID 목록
      */
     public void createAndSendNotificationsForProducts(List<UUID> productIds) {
+        createAndSendNotificationsForProducts(productIds, null, null);
+    }
+
+    /**
+     * 여러 제품 ID를 받아 재고가 임계값 이하인 제품에 대해 알림을 생성하고 SSE로 전송합니다.
+     * 차감 후 재고량이 제공되면 그 값을 사용하고, 없으면 제품을 조회해서 사용합니다.
+     *
+     * @param productIds 제품 ID 목록
+     * @param productStockMap 제품 ID와 차감 후 재고량 맵 (null 가능)
+     * @param excludeUserId 제외할 사용자 ID (주문한 사용자 등, null 가능)
+     */
+    public void createAndSendNotificationsForProducts(List<UUID> productIds, Map<UUID, Integer> productStockMap, Long excludeUserId) {
         long startTime = System.currentTimeMillis();
         log.info("[BATCH_NOTIFICATION_START] productIds={}, count={}, timestamp={}", 
                 productIds, productIds.size(), startTime);
@@ -201,7 +240,8 @@ public class NotificationApplicationService {
             try {
                 long productStartTime = System.currentTimeMillis();
                 
-                // 1. 제품 정보 조회
+                // 1. 제품 정보 조회 (트랜잭션 커밋 후 최신 상태 조회)
+                // @Async로 비동기 실행되므로 트랜잭션이 커밋된 후 실행되어야 함
                 Product product = productRepository.findById(productId)
                         .orElse(null);
 
@@ -212,7 +252,19 @@ public class NotificationApplicationService {
                 }
 
                 // 2. 재고와 임계값 확인
-                Integer currentStock = product.getStock();
+                // 차감 후 재고량이 제공되면 그 값을 사용 (결제 경로에서 전달된 정확한 값)
+                // 없으면 제품을 조회해서 사용 (다른 경로에서 호출된 경우)
+                Integer currentStock;
+                if (productStockMap != null && productStockMap.containsKey(productId)) {
+                    currentStock = productStockMap.get(productId);
+                    log.info("[BATCH_NOTIFICATION_STOCK_FROM_MAP] productId={}, stockFromMap={}, productStock={}", 
+                            productId, currentStock, product.getStock());
+                } else {
+                    currentStock = product.getStock();
+                    log.info("[BATCH_NOTIFICATION_STOCK_FROM_DB] productId={}, stockFromDB={}", 
+                            productId, currentStock);
+                }
+                
                 Integer thresholdValue = product.getThresholdValue() != null ? product.getThresholdValue() : 10;
 
                 log.info("[BATCH_NOTIFICATION_CHECK] productId={}, productName={}, currentStock={}, thresholdValue={}", 
@@ -221,10 +273,14 @@ public class NotificationApplicationService {
                 // 3. 재고가 임계값 이하인지 확인
                 if (currentStock != null && currentStock <= thresholdValue) {
                     // 임계값 이하이면 알림 발송
+                    // currentStock은 이미 차감된 값이어야 하므로 그대로 사용
                     log.info("[BATCH_NOTIFICATION_THRESHOLD_REACHED] productId={}, currentStock={}, thresholdValue={}", 
                             productId, currentStock, thresholdValue);
                     
-                    createAndSendNotifications(productId, currentStock, thresholdValue);
+                    // 재고 차감 후 값 사용 (제품 조회 시점의 재고량은 이미 차감된 값)
+                    // createAndSendNotifications 내부에서도 currentStock을 그대로 사용하므로
+                    // 차감 후 값이 알림 메시지에 표시됨
+                    createAndSendNotifications(productId, currentStock, thresholdValue, excludeUserId);
                     notifiedCount++;
                 } else {
                     log.info("[BATCH_NOTIFICATION_THRESHOLD_NOT_REACHED] productId={}, currentStock={}, thresholdValue={}", 
@@ -283,6 +339,7 @@ public class NotificationApplicationService {
 
     /**
      * 배치 저장 방식: 대량 사용자 처리 (트랜잭션 그룹화)
+     * 메모리 효율을 위해 Chunk 단위로 처리하고 완료를 대기합니다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     private void createAndSendNotificationsBatch(
@@ -302,23 +359,42 @@ public class NotificationApplicationService {
             
             log.info("[NOTIFICATION_BATCH_SAVED] savedCount={}", savedNotifications.size());
             
-            // 3. SSE 전송은 비동기로 처리 (트랜잭션 외부)
-            // 메모리 효율을 위해 스트림 처리로 즉시 전송
-            savedNotifications.forEach(notification -> {
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        sseService.sendNotification(notification.getUserId(), notification);
-                        log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", 
-                                notification.getUserId(), notification.getId());
-                    } catch (Exception e) {
-                        log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", 
-                                notification.getUserId(), e.getMessage());
-                    }
-                }, executorService);
-            });
+            // 3. Chunk 단위로 SSE 전송 (메모리 효율)
+            // 한 번에 처리할 최대 개수: 100개 (메모리 사용량 제한)
+            int chunkSize = 100;
+            List<CompletableFuture<Void>> chunkFutures = new ArrayList<>();
             
-            log.info("[NOTIFICATION_BATCH_COMPLETE] userIdCount={}, savedCount={}", 
-                    userIds.size(), savedNotifications.size());
+            for (int i = 0; i < savedNotifications.size(); i += chunkSize) {
+                int endIndex = Math.min(i + chunkSize, savedNotifications.size());
+                List<Notification> chunk = savedNotifications.subList(i, endIndex);
+                
+                CompletableFuture<Void> chunkFuture = CompletableFuture.runAsync(() -> {
+                    // Chunk 내에서 병렬 처리
+                    List<CompletableFuture<Void>> futures = chunk.stream()
+                            .map(notification -> CompletableFuture.runAsync(() -> {
+                                try {
+                                    sseService.sendNotification(notification.getUserId(), notification);
+                                    log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", 
+                                            notification.getUserId(), notification.getId());
+                                } catch (Exception e) {
+                                    log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", 
+                                            notification.getUserId(), e.getMessage());
+                                }
+                            }, executorService))
+                            .collect(Collectors.toList());
+                    
+                    // Chunk 완료 대기 (메모리 효율: 최대 100개의 Future만 유지)
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                }, executorService);
+                
+                chunkFutures.add(chunkFuture);
+            }
+            
+            // 모든 Chunk 완료 대기 (SSE 전송 완료 보장)
+            CompletableFuture.allOf(chunkFutures.toArray(new CompletableFuture[0])).join();
+            
+            log.info("[NOTIFICATION_BATCH_COMPLETE] userIdCount={}, savedCount={}, chunkCount={}", 
+                    userIds.size(), savedNotifications.size(), chunkFutures.size());
             
         } catch (Exception e) {
             log.error("[NOTIFICATION_BATCH_FAILED] productId={}, error={}", productId, e.getMessage(), e);
@@ -361,6 +437,7 @@ public class NotificationApplicationService {
     
     /**
      * 개별 트랜잭션으로 알림 저장 및 SSE 전송
+     * 중첩된 CompletableFuture를 제거하여 메모리 효율 향상
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     private void saveNotificationInTransaction(
@@ -371,15 +448,14 @@ public class NotificationApplicationService {
         Notification notification = Notification.create(userId, productId, productName, currentStock, thresholdValue);
         Notification saved = notificationRepository.save(notification);
         
-        // SSE 전송은 트랜잭션 커밋 후 비동기로 수행
-        CompletableFuture.runAsync(() -> {
-            try {
-                sseService.sendNotification(userId, saved);
-                log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", userId, saved.getId());
-            } catch (Exception e) {
-                log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", userId, e.getMessage());
-            }
-        }, executorService);
+        // SSE 전송은 트랜잭션 커밋 후 직접 호출
+        // 호출부에서 이미 CompletableFuture로 감싸져 있으므로 중첩 제거
+        try {
+            sseService.sendNotification(userId, saved);
+            log.debug("[NOTIFICATION_SSE_SENT] userId={}, notificationId={}", userId, saved.getId());
+        } catch (Exception e) {
+            log.error("[NOTIFICATION_SSE_FAILED] userId={}, error={}", userId, e.getMessage());
+        }
     }
     
     /**
