@@ -108,9 +108,11 @@ export default function AdminRafflesPage() {
       const formatDateTime = (dateTimeStr: string) => {
         if (!dateTimeStr) return dateTimeStr;
         // 2025-11-07T21:05 -> 2025-11-07T21:05:00
-        return dateTimeStr.includes(':') && !dateTimeStr.includes(':00')
-          ? `${dateTimeStr}:00`
-          : dateTimeStr;
+          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dateTimeStr)) {
+              return `${dateTimeStr}:00`;
+          }
+
+          return dateTimeStr;
       };
 
       const payload = {
