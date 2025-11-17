@@ -1,16 +1,12 @@
 package groom.backend.domain.raffle.entity;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Value;
 
 import java.time.LocalDateTime;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
+@Value
+@Builder(toBuilder = false)
 public class RaffleDrawingEvent {
 
     private Long raffleId;
