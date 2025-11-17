@@ -41,17 +41,18 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: none  # Flyway가 스키마 관리
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     properties:
       hibernate:
         format_sql: true
         show_sql: true
-        # DDL 에러를 경고로만 처리 (기존 스키마와 불일치 시)
         jdbc:
           time_zone: Asia/Seoul
 
   flyway:
-    enabled: false  # 개발 환경에서는 Hibernate ddl-auto: update 사용
+    enabled: true  # Flyway가 마이그레이션 및 테스트 데이터 관리
 
 server:
   port: 8080
