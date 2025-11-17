@@ -117,39 +117,26 @@ export function setAccessToken(token: string): void {
   localStorage.setItem('accessToken', token);
 }
 
-export function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('refreshToken');
 }
 
-export function setRefreshToken(token: string): void {
-  localStorage.setItem('refreshToken', token);
-}
+
 
 export function clearTokens(): void {
   localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
 }
 
 export async function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
-
   try {
     const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ refreshToken }),
     });
 
     if (response.ok) {
       const data = await response.json();
       setAccessToken(data.accessToken);
-      if (data.refreshToken) {
-        setRefreshToken(data.refreshToken);
-      }
       return true;
     }
     return false;
@@ -168,7 +155,7 @@ export const authApi = {
     }),
   
   signup: (email: string, password: string, name: string) =>
-    apiRequest<{ accessToken: string; refreshToken: string }>('/auth/signup', {
+    apiRequest<{ email: string; name: string }>('/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ email, password, name }),
     }),
