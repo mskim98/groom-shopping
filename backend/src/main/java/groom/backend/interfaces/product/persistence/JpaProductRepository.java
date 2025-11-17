@@ -109,6 +109,7 @@ public class JpaProductRepository implements ProductRepository {
                 .isActive(p.getIsActive())
                 .category(p.getCategory() != null ? p.getCategory().name() : null)
                 .status(p.getStatus() != null ? p.getStatus().name() : null)
+                .imageUrl(p.getImageUrl())
                 .build();
     }
 }
