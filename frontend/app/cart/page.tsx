@@ -235,6 +235,22 @@ export default function CartPage() {
       toast.error('장바구니가 비어있습니다.');
       return;
     }
+    
+    // 선택한 쿠폰 정보를 sessionStorage에 저장
+    if (selectedCoupon) {
+      const selectedCouponData = coupons.find(c => String(c.id) === String(selectedCoupon));
+      if (selectedCouponData) {
+        sessionStorage.setItem('selectedCoupon', JSON.stringify({
+          couponId: selectedCoupon,
+          couponName: selectedCouponData.name,
+          couponType: selectedCouponData.type,
+          couponAmount: selectedCouponData.amount,
+        }));
+      }
+    } else {
+      sessionStorage.removeItem('selectedCoupon');
+    }
+    
     router.push('/order');
   };
 

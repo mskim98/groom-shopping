@@ -3,11 +3,11 @@ package groom.backend.infrastructure.config;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import groom.backend.domain.auth.entity.RefreshToken;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import groom.backend.domain.auth.entity.RefreshToken;
+import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
@@ -26,6 +26,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -79,17 +80,7 @@ public class RedisConfig {
     @Bean(name = "tokenRedisTemplate")
     public RedisTemplate<String, RefreshToken> tokenRedisTemplate(RedisConnectionFactory factory) {
 
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
-        objectMapper.activateDefaultTyping(
-                LaissezFaireSubTypeValidator.instance,
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
-
-        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(objectMapper);
+        GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
 
         RedisTemplate<String, RefreshToken> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
@@ -100,8 +91,47 @@ public class RedisConfig {
         return template;
     }
 
+    @Bean(name = "raffleDrawingRedisTemplate")
+    public RedisTemplate<String, RaffleDrawingEvent> raffleDrawingRedisTemplate(RedisConnectionFactory factory) {
 
-    @Bean
+        GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
+
+        RedisTemplate<String, RaffleDrawingEvent> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(serializer);
+        template.setHashValueSerializer(serializer);
+        template.afterPropertiesSet();
+        return template;
+    }
+
+    private GenericJackson2JsonRedisSerializer createGenericSerializer() {
+        return new GenericJackson2JsonRedisSerializer(createPolymorphicObjectMapper());
+    }
+
+    private ObjectMapper createPolymorphicObjectMapper() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        // Java 8+ 날짜 타입 처리
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+        // 폴리모픽 허용 대상만 명시적으로 등록(화이트리스트)
+        PolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
+                .allowIfBaseType(RaffleDrawingEvent.class)
+                .allowIfBaseType(RefreshToken.class)
+                .build();
+
+        // 다형성 직렬화 활성화(필요한 경우에만)
+        objectMapper.activateDefaultTyping(
+                ptv,
+                ObjectMapper.DefaultTyping.NON_FINAL,
+                JsonTypeInfo.As.PROPERTY
+        );
+
+        return objectMapper;
+    }
+
+    @Bean(name = "couponCacheTemplate")
     public RedisTemplate<String, CouponIssueResponse> couponCacheTemplate(
             RedisConnectionFactory redisConnectionFactory,
             ObjectMapper objectMapper) { // 3. (선택적) ObjectMapper 주입
@@ -133,7 +163,7 @@ public class RedisConfig {
     /**
      * @Cacheable, @CacheEvict 등 Spring Cache 추상화가 사용할 CacheManager
      */
-    @Bean
+    @Bean(name = "couponCacheManager")
     public CacheManager couponCacheManager(RedisConnectionFactory redisConnectionFactory) {
 
         // 4. CacheManager 전용 ObjectMapper 설정 (Type 정보 포함)
