@@ -122,6 +122,16 @@ payment:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info  # Prometheus, Health, Info 엔드포인트 활성화
+      base-path: /actuator  # Actuator 기본 경로
+  endpoint:
+    health:
+      show-details: when-authorized  # 권한이 있을 때만 상세 정보 표시
+
 springdoc:
   swagger-ui:
     groups-order: DESC
