@@ -35,11 +35,18 @@ public class RaffleDrawApplicationService {
     private final ProductApplicationService productApplicationService;
     private final NotificationApplicationService notificationApplicationService;
 
+    // 수동 추첨 메서드
     @Transactional
     public void drawRaffleWinners(User user, Long raffleId) {
         // 관리자 권한 검증
         validationService.ensureAdmin(user);
 
+        executeDrawing(raffleId);
+    }
+
+    // 실제 추첨 로직 (kafka 에서 실행)
+    @Transactional
+    public void executeDrawing(Long raffleId) {
         // 추첨 존재 여부 및 상태 검증
         Raffle raffle = validationService.findById(raffleId);
 

@@ -40,10 +40,10 @@ public class Payment {
     private UUID id;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "orderId", nullable = false, unique = true)
+    @JoinColumn(nullable = false, unique = true)
     private Order order;
 
-    @Column(name = "userId", nullable = false)
+    @Column(nullable = false)
     private Long userId;
 
     @Embedded
