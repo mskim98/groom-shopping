@@ -41,7 +41,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: none  # Flyway가 스키마 관리
+      ddl-auto: validate  # Flyway가 스키마 관리
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     properties:
