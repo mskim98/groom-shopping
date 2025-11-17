@@ -32,10 +32,12 @@ public class StockThresholdConsumer {
             long notificationProcessStartTime = System.currentTimeMillis();
             
             // 알림 생성 및 SSE 전송
+            // Kafka 이벤트에서는 주문한 사용자 정보가 없으므로 null 전달
             notificationService.createAndSendNotifications(
                     event.getProductId(), 
                     event.getCurrentStock(), 
-                    event.getThresholdValue()
+                    event.getThresholdValue(),
+                    null  // 주문한 사용자 정보 없음
             );
             
             long notificationProcessEndTime = System.currentTimeMillis();

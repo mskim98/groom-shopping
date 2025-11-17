@@ -40,7 +40,7 @@ public class Notification {
     }
 
     public static Notification create(Long userId, UUID productId, Integer currentStock, Integer thresholdValue) {
-        String message = String.format("재고가 %d개로 얼마 남지 않았어요", currentStock);
+        String message = String.format("재고가 %d개 남았어요", currentStock);
         return new Notification(null, currentStock, thresholdValue, message, false, LocalDateTime.now(), userId, productId);
     }
 
@@ -55,7 +55,7 @@ public class Notification {
      * @return Notification 객체
      */
     public static Notification create(Long userId, UUID productId, String productName, Integer currentStock, Integer thresholdValue) {
-        String message = String.format("%s의 재고가 %d개로 얼마 남지 않았어요", productName, currentStock);
+        String message = String.format("%s의 재고가 %d개 남았어요", productName, currentStock);
         return new Notification(null, currentStock, thresholdValue, message, false, LocalDateTime.now(), userId, productId);
     }
 
@@ -69,7 +69,7 @@ public class Notification {
      * @return Notification 객체
      */
     public static Notification createForRealtime(Long userId, UUID productId, String message) {
-        return new Notification(null, null, null, message, false, LocalDateTime.now(), userId, productId);
+        return new Notification(null, 15, 10, message, false, LocalDateTime.now(), userId, productId);
     }
 }
 

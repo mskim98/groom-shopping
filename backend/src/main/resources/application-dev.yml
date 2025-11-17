@@ -13,6 +13,16 @@ spring:
     redis:
       host: localhost
       port: 6379
+  cache:
+    type: redis
+    redis:
+#      cluster settings
+#      cluster:
+#        nodes:
+#          - redis-node-1:6379
+#          - redis-node-2:6379
+#          - redis-node-3:6379
+      time-to-live: 3600000   # 3600초 = 60분 TTL
   
   kafka:
     bootstrap-servers: localhost:9092
@@ -31,16 +41,28 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate  # Flyway가 스키마 관리
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     properties:
       hibernate:
         format_sql: true
         show_sql: true
+        jdbc:
+          time_zone: Asia/Seoul
+
+  flyway:
+    enabled: true  # Flyway가 마이그레이션 및 테스트 데이터 관리
 
 server:
   port: 8080
   servlet:
     context-path: /api
+  session:
+    cookie:
+      secure: false           # HTTP, HTTPS 전송
+      http-only: true        # JavaScript 접근 차단
+      same-site: lax      # CSRF 방어
 
 jwt:
   access:
@@ -48,7 +70,45 @@ jwt:
   refresh:
     expiration: 604800000 #7일
   security:
-    secretKey: my-custom-secret-key-groom-shopping-dev
+    privateKey: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCsVxDft1PMWVM0
+      TbfFyrla15hcxUv6m6bUhEcm3XwS+HNj1JgRxaLfjPshu5SfrpYe5e8eMgWE7Mmj
+      aUs0id0eImz6JA1miLyjMcoYF/vN+SWR469YsmPhoRgCjeaM/FhKoZ/+1Oelej0o
+      WplxsCNVyKKq998Kjdk/bnGMcwbDvg4bFg3HTWkSxmHGHRDZzUWhtpvKdH7qqzkr
+      rwIr8oJvKVDv72SbqN2V8mRj3/fPtzsmVk8FXqM/Jsu2mZ99XKt3uJ3b7lvsvV5a
+      0aTWejfekZTiACfOaQib09zxY613Abde6vCR1ADqwDpY11KXBv9dNWgXnF9N8bGp
+      p3Ese/ePAgMBAAECggEAIoVYKG/Y9cRowb/VkWWPpk4sQ1zz4LGgA86xT+wqp8Qj
+      nPofMeQkQWJEhZfE6A15HZxSPvqnF1607youucnpxFkB+kMRehnmq0vUXuoi8rm2
+      2FfCrmIhVrdFj3FsHo6Hgv+IBGwSMJfhOz2Woeq10T+cseFvyHXsb+PIE+mQj9Gk
+      IPaaGlYTbv3FJrYxAQpJO/leF7ejdeIIyjRqh0GlUaAZZOC8skInjTqpHqAMR/OCp
+      m80yeO32XRgCdNe93037MLizr7ucR1c7uLV3uHFt/esOShwkrTX/huwjmBbGi18v
+      d5Aahrk3ld1urc1ACehQbvnEBGlA1hau6jVyE5lnQKBgQDkar2OnihzrV1Co5qX
+      F59HI73eW7zCLuhQ3HN2VNbK3VrMzLUiZB9Vg9Qv7cZFLTChEUXs4ZJ39UzVvRDA
+      zucogjNXuGVFevtPzZ3/Hu8hSVfRUJhJgL+lYxMPRWKSz5jNbOx03TEtmF8393VJ
+      PjjjbqiouWPncXsgdKT9ZuFf5QKBgQDBJsVjp9vTCzHfU+YuJf/3Xn61+z9dEhU1
+      UIGC70bDoCu7FQ64m56Yqx57G6k3s0WBYqHY2cB+ORr6O1e7M7m/Va8XtsiC3Ark
+      bye3qddOXGlVQP1v2LmqxaAJ11Fe76tRBVlXxJnz+MFmzrAEWPpjUW0/X5xhVnHd
+      rh6X55I6YwKBgGJb6IaKaobth3RTuRUJEghzRqaCwHSp+FYhqAKzo861pQz9tZ46m
+      Rec7fk5naBaRk+FfaP0urq3Qb/ka1trfTT/ZBaJC+rwe1mxBDFA495kk9FJsFoue9
+      g/Ioz35uurQ3RqTCRCv5OPwqj6AWJpzdt54lzNgEzAnDGsqQOJktFVAoGBAKDF+/
+      GqrFCr9dRWCrgJC1nFfyVNP/3hamPZYiQxtS5qqVvs+Dbz2fxsG1APwzfI8ibziZ
+      JuFks6j1kQgkMhmBBKaxcLHzXFoQ9p8p5vMfdY9phvI0WxGUKrgz4Nyv6B8pDbKf
+      XjgN5SBfHkQyErSyfWhGAG3q0q/lauc2qv58jPAoGAKU3DisaPIiWdK4BBNG1RV
+      FipXQGs/brpk1rvu7cHby9DzmSFFjpe+EpXo6qw7uoJT+Gkb/+6dk+TyuFvCYqYv
+      G5FSJLUvdO33VixWamWQF0J5BwwB0mOIT1LsLxMH8+RGvvfqNAL+wO/HNJ0c2DFW
+      R4QtkjL7Ayyui2idHYS1+g=
+      -----END PRIVATE KEY-----
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArFcQ37dTzFlTNE23xcq5
+      WteYXMVL+pum1IRHJt18EvhzY9SYEcWi34z7IbuUn66WHuXvHjIFhOzJo2lLNInd
+      HiJs+iQNZoi8ozHKGBf7zfklkeOvWLJj4aEYAo3mjPxYSqGf/tTnpXo9KFqZcbAj
+      VciiqvffCo3ZP25xjHMGw74OGxYNx01pEsZhxh0Q2c1FobabynR+6qs5K68CK/KCb
+      ylQ7+9km6jdlfJkY9/3z7c7JlZPBV6jPybLtpmffVyrd7id2+5b7L1eWtGk1no33
+      pGU4gAnzmkIm9Pc8WOtdwG3XurwkdQA6sA6WNdSlwb/XTVoF5xfTfGxqadxLHv3j
+      wIDAQAB
+      -----END PUBLIC KEY-----
 
 payment:
   toss:

@@ -2,9 +2,11 @@ package groom.backend.domain.raffle.repository;
 
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
+import groom.backend.domain.raffle.enums.RaffleStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,4 +21,15 @@ public interface RaffleRepository {
 
     // 추첨용 상품으로 RaffleId 조회
     Optional<Raffle> findByRaffleProductId(UUID raffleProductId);
+
+    // Ready -> Active 전환용
+    Page<Raffle> findByStatusAndEntryStartAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable);
+
+    // Active -> CLOSED 전환용
+    Page<Raffle> findAllByStatusAndEntryEndAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable);
+
+    // Draw 진행용
+    Page<Raffle> findAllByStatusAndRaffleDrawAtBefore(RaffleStatus status, LocalDateTime now, Pageable pageable);
+
+
 }

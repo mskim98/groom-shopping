@@ -32,15 +32,18 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))   // 세션 비활성화
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh").permitAll()
-                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()  // Swagger 경로 허용
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html")
+                        .permitAll()  // Swagger 경로 허용
                         .requestMatchers(HttpMethod.GET, "/v1/product/**").permitAll()  // 상품 조회 허용
                         .requestMatchers(HttpMethod.GET, "/v1/raffles/**").permitAll()  // 래플 조회 허용
+                        .requestMatchers("/actuator/**").permitAll()  // Actuator 모니터링 엔드포인트 허용
                         .anyRequest().authenticated()  // 모든 요청 인증 필요
                 )
                 .formLogin(login -> login.disable()) // 로그인 폼 비활성화
                 .httpBasic(basic -> basic.disable()) // 기본 인증 비활성화
                 .authenticationProvider(authenticationProvider()) // 커스텀 AuthenticationProvider 등록
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class); // JWT 필터를 스프링 시큐리티의 UsernamePasswordAuthenticationFilter 이전에 삽입하여 토큰 기반 인증 처리.
+                .addFilterBefore(jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class); // JWT 필터를 스프링 시큐리티의 UsernamePasswordAuthenticationFilter 이전에 삽입하여 토큰 기반 인증 처리.
 
         return http.build();
     }

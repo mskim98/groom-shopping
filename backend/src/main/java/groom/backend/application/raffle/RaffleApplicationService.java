@@ -182,6 +182,21 @@ public class RaffleApplicationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RAFFLE_NOT_FOUND_FOR_PRODUCT));
     }
 
+    // 추첨 상태 업데이트 (내부용)
+    @Transactional
+    public void updateRaffleStatus(Raffle raffle, RaffleStatus newStatus) {
+        // 최신 상태로 재조회하여 동시성 문제 완화
+        Raffle current = raffleRepository.findById(raffle.getRaffleId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.RAFFLE_NOT_FOUND));
+
+        if (current.getStatus() == newStatus) {
+            return; // 이미 변경된 상태면 무시
+        }
+
+        current.updateStatus(newStatus);
+        raffleRepository.save(current);
+    }
+
 
 
 }

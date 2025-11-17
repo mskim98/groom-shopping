@@ -35,6 +35,13 @@ interface OrderResponse {
   }>;
 }
 
+interface SelectedCoupon {
+  couponId: string;
+  couponName: string;
+  couponType: string;
+  couponAmount: number;
+}
+
 export default function OrderPage() {
   const router = useRouter();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -43,6 +50,7 @@ export default function OrderPage() {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [memo, setMemo] = useState('');
+  const [selectedCoupon, setSelectedCoupon] = useState<SelectedCoupon | null>(null);
   const [createdOrder, setCreatedOrder] = useState<OrderResponse | null>(null);
   const [paymentInProgress, setPaymentInProgress] = useState(false);
   const [paymentCompleted, setPaymentCompleted] = useState(false);
@@ -52,6 +60,19 @@ export default function OrderPage() {
       toast.error('로그인이 필요합니다.');
       router.push('/login');
       return;
+    }
+
+    // sessionStorage에서 선택한 쿠폰 정보 읽기
+    if (typeof window !== 'undefined') {
+      const storedCoupon = sessionStorage.getItem('selectedCoupon');
+      if (storedCoupon) {
+        try {
+          setSelectedCoupon(JSON.parse(storedCoupon));
+        } catch (error) {
+          console.error('Failed to parse selected coupon:', error);
+          sessionStorage.removeItem('selectedCoupon');
+        }
+      }
     }
 
     loadCart();
@@ -71,7 +92,22 @@ export default function OrderPage() {
   };
 
   const calculateTotal = () => {
-    return cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    let discount = 0;
+    
+    if (selectedCoupon) {
+      if (selectedCoupon.couponType === 'PERCENT') {
+        discount = subtotal * (selectedCoupon.couponAmount / 100);
+      } else {
+        discount = selectedCoupon.couponAmount;
+      }
+    }
+    
+    return {
+      subtotal,
+      discount,
+      total: subtotal - discount,
+    };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -86,14 +122,17 @@ export default function OrderPage() {
         return;
       }
 
+      // 선택한 쿠폰 ID를 숫자로 변환
+      const couponId = selectedCoupon ? parseInt(selectedCoupon.couponId, 10) : null;
+
       console.log('Creating order with data:', {
-        couponId: null,
+        couponId,
       });
 
       // 백엔드는 couponId만 필요 (CreateOrderRequest)
       // couponId: null (쿠폰 미적용) 또는 숫자 쿠폰 ID
       const orderData = {
-        couponId: null,
+        couponId,
       };
 
       const order = await orderApi.createOrder(orderData) as OrderResponse;
@@ -109,6 +148,8 @@ export default function OrderPage() {
           address,
           memo,
         }));
+        // 주문 생성 후 쿠폰 정보 제거
+        sessionStorage.removeItem('selectedCoupon');
       }
 
       // 결제 수단 선택 상태로 변경
@@ -437,10 +478,42 @@ export default function OrderPage() {
                   <p>{(item.price * item.quantity).toLocaleString()}원</p>
                 </div>
               ))}
-              <div className="flex justify-between pt-4">
-                <span>총 결제 금액</span>
-                <span className="text-primary">{calculateTotal().toLocaleString()}원</span>
-              </div>
+              
+              {(() => {
+                const totals = calculateTotal();
+                return (
+                  <div className="space-y-2 pt-4 border-t">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">원금액</span>
+                      <span>{totals.subtotal.toLocaleString()}원</span>
+                    </div>
+                    {selectedCoupon && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">사용 쿠폰</span>
+                          <span>
+                            {selectedCoupon.couponName} (
+                            {selectedCoupon.couponType === 'PERCENT'
+                              ? `${selectedCoupon.couponAmount}%`
+                              : `${selectedCoupon.couponAmount.toLocaleString()}원`}
+                            )
+                          </span>
+                        </div>
+                        {totals.discount > 0 && (
+                          <div className="flex justify-between text-destructive">
+                            <span>할인 금액</span>
+                            <span>-{totals.discount.toLocaleString()}원</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div className="flex justify-between pt-2 border-t text-lg font-bold">
+                      <span>총 결제 금액</span>
+                      <span className="text-primary">{totals.total.toLocaleString()}원</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>

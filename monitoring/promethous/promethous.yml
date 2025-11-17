@@ -1,0 +1,60 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'dev'
+    environment: 'development'
+
+scrape_configs:
+  # Prometheus 자체 모니터링
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: [ 'localhost:9090' ]
+
+  # Spring Boot Application Metrics
+  - job_name: 'spring-boot'
+    metrics_path: '/api/actuator/prometheus'
+    scrape_interval: 10s
+    static_configs:
+      - targets: [ 'host.docker.internal:8080' ]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'spring-boot-app'
+
+  # 서버 리소스 모니터링
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: [ 'node-exporter:9100' ]
+
+  # 컨테이너 모니터링 (CPU, Memory, Disk, Network)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: [ 'cadvisor:8080' ]
+
+  # PostgreSQL Database Metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: [ 'postgres-exporter:9187' ]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'postgres-dev'
+
+  # Redis Cache Metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: [ 'redis-exporter:9121' ]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'redis-dev'
+
+  # Nginx Web Server Metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: [ 'nginx-exporter:9113' ]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'nginx-dev'

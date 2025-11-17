@@ -6,7 +6,6 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.security.CustomUserDetails;
 import groom.backend.interfaces.auth.dto.request.LoginRequest;
 import groom.backend.interfaces.auth.dto.request.SignUpRequest;
-import groom.backend.interfaces.auth.dto.request.TokenRefreshRequest;
 import groom.backend.interfaces.auth.dto.request.UserUpdateRequest;
 import groom.backend.interfaces.auth.dto.response.LoginResponse;
 import groom.backend.interfaces.auth.dto.response.SignUpResponse;
@@ -18,6 +17,8 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -57,8 +58,8 @@ public class AuthController {
             }
     )
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
-        LoginResponse loginResponse = authService.login(request);
+    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest loginRequest, HttpServletRequest request, HttpServletResponse response) {
+        LoginResponse loginResponse = authService.login(loginRequest, request, response);
         return ResponseEntity.ok(loginResponse);
     }
 
@@ -71,9 +72,9 @@ public class AuthController {
             }
     )
     @PostMapping("/refresh")
-    public ResponseEntity<TokenRefreshResponse> refresh(@RequestBody @Valid TokenRefreshRequest request) {
-        TokenRefreshResponse response = authService.refreshToken(request);
-        return ResponseEntity.ok(response);
+    public ResponseEntity<TokenRefreshResponse> refresh(HttpServletRequest request, HttpServletResponse response) {
+        TokenRefreshResponse result = authService.refreshToken(request, response);
+        return ResponseEntity.ok(result);
     }
 
     @Operation(
@@ -87,13 +88,15 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(
             @Parameter(hidden = true)
-            @AuthenticationPrincipal CustomUserDetails user
+            @AuthenticationPrincipal CustomUserDetails user,
+            HttpServletRequest request,
+            HttpServletResponse response
     ) {
         if (user == null || user.getUser() == null || user.getUser().getEmail() == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            throw new BusinessException(ErrorCode.ALREADY_LOGGED_OUT);
         }
 
-        authService.logout(user.getUser().getEmail());
+        authService.logout(user.getUser().getEmail(), request, response);
         return ResponseEntity.ok().build();
     }
 

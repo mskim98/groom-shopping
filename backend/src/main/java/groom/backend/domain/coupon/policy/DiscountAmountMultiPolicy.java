@@ -15,6 +15,7 @@ public class DiscountAmountMultiPolicy implements DiscountMultiPolicy {
 
   @Override
   public int calculateMultiDiscount(List<DiscountContext> discountContexts) {
+    if (discountContexts.isEmpty()) return 0;
     return discountContexts.stream()
             .mapToInt(DiscountContext::getAmount)
             .sum();

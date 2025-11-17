@@ -6,6 +6,7 @@ import { ShoppingCart, User, LogOut, Package, Ticket, Gift, Percent } from 'luci
 import { Button } from './ui/button';
 import { getAccessToken, clearTokens, authApi } from '@/lib/api';
 import { useEffect, useState } from 'react';
+import { NotificationBell } from './NotificationBell';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -68,6 +69,7 @@ export function Navbar() {
         <div className="flex items-center gap-2">
           {isLoggedIn ? (
             <>
+              <NotificationBell />
               <Link href="/admin">
                 <Button variant="outline" size="sm">
                   <User className="w-4 h-4 mr-1" />
