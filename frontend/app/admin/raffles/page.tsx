@@ -136,7 +136,7 @@ export default function AdminRafflesPage() {
     if (!executeRaffle) return;
     
     try {
-      await raffleApi.executeRaffle (executeRaffle.raffleId);
+      await raffleApi.executeRaffle(executeRaffle.raffleId);
       toast.success('추첨이 완료되었습니다.');
       setExecuteRaffle(null);
       router.push(`/admin/raffles/${executeRaffle.raffleId}`);
