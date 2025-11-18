@@ -15,9 +15,9 @@ public class ParticipantResponse {
     @Schema(description = "응모자 ID", example = "1")
     private Long userId;
     @Schema(description = "응모자 이름", example = "홍길동")
-    private String username;
+    private String userName;
     @Schema(description = "응모자 Email", example = "user@test.com")
-    private String email;
+    private String userEmail;
     @Schema(description = "응모 일시", example = "2024-01-15T10:00:00")
     private LocalDateTime createdAt;
 

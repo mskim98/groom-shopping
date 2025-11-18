@@ -9,6 +9,8 @@ import java.util.List;
 @Getter
 @Builder
 public class WinnersListResponse {
+    private Long raffleId;
+    private String raffleTitle;
     private LocalDateTime drawAt;
     private int winnersCount;
     private List<WinnerDto> winners;

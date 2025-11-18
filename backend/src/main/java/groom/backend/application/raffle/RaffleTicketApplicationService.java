@@ -77,8 +77,8 @@ public class RaffleTicketApplicationService {
         Page<Participant> page = raffleTicketRepo.searchParticipants(raffleId, keyword, pageable);
         return page.map(p -> ParticipantResponse.builder()
                 .userId(p.getUserId())
-                .username(p.getUserName())
-                .email(p.getUserEmail())
+                .userName(p.getUserName())
+                .userEmail(p.getUserEmail())
                 .createdAt(p.getCreatedAt())
                 .build());
     }

@@ -123,7 +123,7 @@ public class RaffleDrawApplicationService {
 
         List<WinnerDto> dtoList = winners.stream()
                 .map(p -> new WinnerDto(
-                        String.valueOf(p.getUserId()),
+                        p.getUserId(),
                         p.getRank(),
                         p.getUserName(),
                         p.getUserEmail(),
@@ -132,6 +132,8 @@ public class RaffleDrawApplicationService {
                 .collect(Collectors.toList());
 
         return WinnersListResponse.builder()
+                .raffleTitle(raffle.getTitle())
+                .raffleId(raffle.getRaffleId())
                 .drawAt(raffle.getRaffleDrawAt())
                 .winnersCount(dtoList.size())
                 .winners(dtoList)
