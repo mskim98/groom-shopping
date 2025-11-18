@@ -224,7 +224,7 @@ public class RaffleController {
         // 당첨자 알림 전송
         raffleDrawApplicationService.sendRaffleWinnersNotification(raffleId);
 
-        return ResponseEntity.ok().build();
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(
