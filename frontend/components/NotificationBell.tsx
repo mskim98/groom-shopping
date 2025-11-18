@@ -33,7 +33,11 @@ export function NotificationBell() {
     try {
       const unread = await notificationApi.getUnreadNotifications();
       setUnreadCount(unread?.length || 0);
-    } catch (error) {
+    } catch (error: any) {
+      // 로그인 페이지에서는 에러를 무시 (무한루프 방지)
+      if (typeof window !== 'undefined' && window.location.pathname === '/login') {
+        return;
+      }
       console.error('Failed to load unread count:', error);
     }
   }, []);

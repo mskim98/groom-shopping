@@ -52,6 +52,11 @@ spring:
   flyway:
     enabled: true  # Flyway가 마이그레이션 및 테스트 데이터 관리
 
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
 server:
   port: 8080
   servlet:
@@ -120,6 +125,22 @@ payment:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info  # Prometheus, Health, Info 엔드포인트 활성화
+      base-path: /actuator  # Actuator 기본 경로
+  endpoint:
+    health:
+      show-details: when-authorized  # 권한이 있을 때만 상세 정보 표시
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true  # HTTP 요청 히스토그램 활성화
+      slo:
+        http.server.requests: 50ms,100ms,200ms,500ms,1s,2s  # SLO 설정 (백분위수 계산용)
+
 springdoc:
   swagger-ui:
     groups-order: DESC
@@ -140,3 +161,26 @@ springdoc:
   model-and-view-allowed: true
   paths-to-match:
     - /**
+
+logging:
+  level:
+    root: INFO
+    groom.backend: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: ./logs/application.log
+    max-size: 10MB
+    max-history: 10
+
+cloud:
+  aws:
+    region: ap-northeast-2
+    s3:
+      bucket: goorm-shopping-s3
+    credentials:
+      access-key:
+      secret-key:

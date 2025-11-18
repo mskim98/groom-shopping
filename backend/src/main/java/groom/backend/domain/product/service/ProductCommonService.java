@@ -5,12 +5,14 @@ import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
 import groom.backend.domain.product.model.vo.Price;
 import groom.backend.domain.product.repository.ProductCommonRepository;
+import groom.backend.infrastructure.aws.S3Service;
 import groom.backend.interfaces.product.dto.request.CreateProductRequest;
 import groom.backend.interfaces.product.dto.request.UpdateProductRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
@@ -21,6 +23,7 @@ import java.util.UUID;
 public class ProductCommonService {
 
     private final ProductCommonRepository productCommonRepository;
+    private final S3Service s3Service;
 
     @Transactional
     public Product findById(UUID id) {
@@ -33,6 +36,20 @@ public class ProductCommonService {
     public Product createProduct(CreateProductRequest request) {
 
         Product product = request.toEntity();
+
+        return productCommonRepository.save(product);
+    }
+
+    @Transactional
+    public Product createProduct(CreateProductRequest request, MultipartFile image) {
+
+        Product product = request.toEntity();
+
+        // 이미지가 있다면 S3 업로드
+        if (image != null && !image.isEmpty()) {
+            String imageUrl = s3Service.upload(image);
+            product.changeImageUrl(imageUrl);
+        }
 
         return productCommonRepository.save(product);
     }

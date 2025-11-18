@@ -42,6 +42,7 @@ export default function AdminCouponsPage() {
     amount: 0,
     type: 'PERCENT',
     expireDate: '',
+    inactiveDate: '',   // 추가
   });
 
   useEffect(() => {
@@ -140,6 +141,7 @@ export default function AdminCouponsPage() {
       amount: 0,
       type: 'PERCENT',
       expireDate: '',
+      inactiveDate: ''
     });
   };
 
@@ -224,6 +226,18 @@ export default function AdminCouponsPage() {
                   required
                 />
               </div>
+              <div>
+                  <Label htmlFor="inactiveDate">비활성화 일자</Label>
+                  <Input
+                    id="inactiveDate"
+                    type="datetime-local"
+                    value={formData.inactiveDate}
+                    onChange={(e) =>
+                      setFormData({ ...formData, inactiveDate: e.target.value })
+                    }
+                    required
+                  />
+                </div>
               <Button type="submit" className="w-full">등록</Button>
             </form>
           </DialogContent>

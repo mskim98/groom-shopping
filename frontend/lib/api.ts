@@ -25,10 +25,10 @@ export async function apiRequest<T>(
 
   const token = getAccessToken();
 
-  const requestHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...headers as Record<string, string>,
-  };
+    const requestHeaders: Record<string, string> = {
+        ...(restOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...headers as Record<string, string>,
+    };
 
   if (requireAuth && token) {
     requestHeaders['Authorization'] = `Bearer ${token}`;
@@ -76,8 +76,8 @@ export async function apiRequest<T>(
       const retryResult: ApiResponse<T> = await retryResponse.json();
       return retryResult.data;
     } else {
-      // Redirect to login
-      if (typeof window !== 'undefined') {
+      // Redirect to login (단, 이미 로그인 페이지에 있으면 리다이렉트하지 않음)
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
       throw new Error('인증이 필요합니다. 다시 로그인해주세요.');
@@ -201,13 +201,41 @@ export const productApi = {
     apiRequest<any>(`/product/${id}`, {
       requireAuth: true,
     }),
-  
-  createProduct: (data: any) =>
-    apiRequest('/product', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      requireAuth: true,
-    }),
+
+    createProduct: (data: any) => {
+        // 파일 포함 여부 확인
+        const hasFile = data.imageFile instanceof File;
+
+        let body: any;
+
+        if (hasFile) {
+            // multipart/form-data 생성
+            const form = new FormData();
+            form.append(
+                "product",
+                new Blob([JSON.stringify({
+                    name: data.name,
+                    description: data.description,
+                    price: data.price,
+                    stock: data.stock,
+                    category: data.category
+                })], { type: "application/json" })
+            );
+            form.append('image', data.imageFile); // 서버에서 MultipartFile image 로 받으면 됨
+
+            body = form;
+        } else {
+            // 기존 JSON 그대로
+            body = JSON.stringify(data);
+        }
+
+        return apiRequest('/product', {
+            method: 'POST',
+            body,
+            requireAuth: true,
+        });
+    },
+
   
   updateProduct: (id: string, data: any) =>
     apiRequest(`/product/${id}`, {
@@ -282,12 +310,19 @@ export const couponApi = {
       requireAuth: true,
     }),
   
-  createCoupon: (data: any) =>
-    apiRequest('/coupon', {
+  createCoupon: (data: any) => {
+    const { inactiveDate, ...body } = data;
+  
+    const query = inactiveDate
+      ? `?date=${encodeURIComponent(inactiveDate)}`
+      : '';
+  
+    return apiRequest(`/coupon${query}`, {
       method: 'POST',
       body: JSON.stringify(data),
       requireAuth: true,
-    }),
+    });
+  },
   
   updateCoupon: (id: string, data: any) =>
     apiRequest(`/coupon/${id}`, {
@@ -337,7 +372,7 @@ export const raffleApi = {
   createRaffle: (data: any) =>
     apiRequest('/raffles', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
       requireAuth: true,
     }),
 

@@ -48,7 +48,8 @@ public record CreateProductRequest(
                 new Stock(this.stock),
                 this.category,
                 null, // thresholdValue
-                true  // isActive
+                true,  // isActive
+                null
         );
     }
 }
