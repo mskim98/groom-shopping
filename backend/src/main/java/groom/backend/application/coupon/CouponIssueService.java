@@ -249,10 +249,10 @@ public class CouponIssueService {
     }
 
     // 6. 최종 할인액 계산
-    DiscountMultiPolicy discountPercentMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
-    DiscountMultiPolicy discountAmountMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
+    DiscountMultiPolicy discountPercentMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.PERCENT);
+    DiscountMultiPolicy discountAmountMultiStrategy = discountPolicyFactory.getDiscountMultiStrategy(CouponType.DISCOUNT);
 
-    return discountPercentMultiStrategy.calculateMultiDiscount(percent) + discountAmountMultiStrategy.calculateMultiDiscount(amount);
+    return Math.min(cost, discountPercentMultiStrategy.calculateMultiDiscount(percent) + discountAmountMultiStrategy.calculateMultiDiscount(amount));
   }
 
   /**
