@@ -35,10 +35,8 @@ export default function SignupPage() {
 
     try {
       const response = await authApi.signup(email, password, name);
-      setAccessToken(response.accessToken);
-      setRefreshToken(response.refreshToken);
       toast.success('회원가입 성공!');
-      router.push('/products');
+      router.push('/login');
     } catch (error: any) {
       console.error('Signup error:', error);
       const errorMessage = error?.message || '회원가입 실패. 다시 시도해주세요.';

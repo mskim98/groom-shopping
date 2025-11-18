@@ -11,11 +11,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Ticket, Trophy } from 'lucide-react';
 
 interface MyRaffleEntry {
-  raffleId: string;
+  raffleId: number;
   raffleTitle: string;
-  entryCount: number;
-  entryDate: string;
   status: string;
+  entryAt: string;
   isWinner?: boolean;
 }
 
@@ -36,11 +35,10 @@ export default function MyRafflesPage() {
     try {
       // TODO: 백엔드에서 사용자의 응모 내역 API가 제공되면 아래 코드로 교체
       // 현재는 백엔드에서 사용자의 응모 내역을 조회하는 API가 없으므로 빈 배열로 설정
-      // const response = await raffleApi.getMyEntries();
-      // setEntries(response || []);
+      const response = await raffleApi.getMyEntries();
+      setEntries(response.content || []);
 
       console.log('Loading user raffle entries...');
-      setEntries([]);
     } catch (error) {
       console.error('Failed to load entries:', error);
       setEntries([]);
@@ -60,13 +58,13 @@ export default function MyRafflesPage() {
     const variants: Record<string, any> = {
       ACTIVE: 'default',
       CLOSED: 'secondary',
-      READY: 'outline',
+      DRAWN: 'outline',
     };
 
     const labels: Record<string, string> = {
       ACTIVE: '진행중',
       CLOSED: '마감',
-      READY: '대기중',
+        DRAWN: '추첨완료',
     };
 
     return <Badge variant={variants[status] || 'default'}>{labels[status] || status}</Badge>;
@@ -97,11 +95,7 @@ export default function MyRafflesPage() {
                 <div className="flex-1">
                   <h3 className="mb-2">{entry.raffleTitle}</h3>
                   <div className="flex items-center gap-4 text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Ticket className="w-4 h-4" />
-                      <span>응모 {entry.entryCount}회</span>
-                    </div>
-                    <span>응모일: {new Date(entry.entryDate).toLocaleDateString()}</span>
+                    <span>응모일: {new Date(entry.entryAt).toLocaleDateString()}</span>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 items-end">

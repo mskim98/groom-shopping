@@ -5,6 +5,7 @@ import groom.backend.application.product.ProductApplicationService;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.domain.raffle.entity.Participant;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
@@ -12,12 +13,15 @@ import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.domain.raffle.repository.RaffleWinnerRepository;
 import groom.backend.interfaces.raffle.dto.notification.RaffleWinnerNotification;
 import groom.backend.interfaces.raffle.dto.request.RaffleDrawCondition;
+import groom.backend.interfaces.raffle.dto.response.WinnerDto;
+import groom.backend.interfaces.raffle.dto.response.WinnersListResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 추첨 당첨자 선정 및 알림 전송을 담당하는 Application Service입니다.
@@ -110,6 +114,30 @@ public class RaffleDrawApplicationService {
             notificationApplicationService.sendRealtimeNotification(notification.getUserId(), raffle.getWinnerProductId(), notification.getMessage());
         }
 
+    }
+
+    public WinnersListResponse getWinners(Long raffleId) {
+        Raffle raffle = validationService.findById(raffleId);
+
+        List<Participant> winners = raffleWinnerRepo.findWinnersByRaffleId(raffleId);
+
+        List<WinnerDto> dtoList = winners.stream()
+                .map(p -> new WinnerDto(
+                        p.getUserId(),
+                        p.getRank(),
+                        p.getUserName(),
+                        p.getUserEmail(),
+                        p.getCreatedAt()
+                ))
+                .collect(Collectors.toList());
+
+        return WinnersListResponse.builder()
+                .raffleTitle(raffle.getTitle())
+                .raffleId(raffle.getRaffleId())
+                .drawAt(raffle.getRaffleDrawAt())
+                .winnersCount(dtoList.size())
+                .winners(dtoList)
+                .build();
     }
 
 }

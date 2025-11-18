@@ -10,7 +10,7 @@ import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
 import groom.backend.interfaces.raffle.dto.request.*;
-import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import groom.backend.interfaces.raffle.dto.response.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -25,7 +25,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -158,15 +157,15 @@ public class RaffleController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 조회 성공",
                     content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = RaffleResponse.class))),
+                            schema = @Schema(implementation = RaffleDetailResponse.class))),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
     @GetMapping("/{raffleId}")
-    public ResponseEntity<RaffleResponse> getRaffleDetails(
+    public ResponseEntity<RaffleDetailResponse> getRaffleDetails(
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
 
-        RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
+        RaffleDetailResponse response = raffleApplicationService.getRaffleDetails(raffleId);
         return ResponseEntity.ok(response);
     }
 
@@ -198,7 +197,7 @@ public class RaffleController {
         }
 
         raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), entry.getCount());
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(
@@ -256,4 +255,65 @@ public class RaffleController {
         RaffleResponse response = raffleApplicationService.updateRaffleStatus(user, raffleId, raffleRequest);
         return ResponseEntity.ok(response);
     }
+
+    @Operation(
+            summary = "응모자 검색",
+            description = "해당 추첨에 응모한 사람들 조회."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "응모자 검색 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ParticipantResponse.class)))
+    })
+    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @GetMapping("/{raffleId}/participants")
+    public ResponseEntity<Page<ParticipantResponse>> searchParticipants(
+            @Parameter(description = "검색 조건")
+            @RequestParam(value = "keyword", required = false, defaultValue = "") String keyword,
+            @PathVariable Long raffleId,
+            @Parameter(description = "페이징 정보", example = "page=0&size=20&sort=createdAt,DESC")
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
+        Page<ParticipantResponse> page = raffleTicketApplicationService.searchParticipants(raffleId, keyword, pageable);
+        return ResponseEntity.ok(page);
+    }
+
+    @Operation(
+            summary = "당첨자 검색",
+            description = "해당 추첨에 당첨된 사용자 목록 조회."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "당첨자 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = WinnersListResponse.class)))
+    })
+    @CheckPermission(roles = {"ADMIN", "USER"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @GetMapping("/{raffleId}/winners")
+    public ResponseEntity<WinnersListResponse> getWinners(@PathVariable Long raffleId) {
+        WinnersListResponse res = raffleDrawApplicationService.getWinners(raffleId);
+        return ResponseEntity.ok(res);
+    }
+
+    @Operation(
+            summary = "나의 추첨 응모",
+            description = "내가 응모한 항목들을 불러온다",
+            security = { @SecurityRequirement(name = "JWT", scopes = {"ROLE_USER"}) }
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "나의 응모 목록 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = MyRaffleEntryResponse.class)))
+    })
+    @CheckPermission(roles = {"ADMIN","USER"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @GetMapping("/my/entries")
+    public ResponseEntity<Page<MyRaffleEntryResponse>> getMyEntries(@AuthenticationPrincipal(expression = "user") User user,
+                                                                    @PageableDefault(size = 20) Pageable pageable) {
+        if (user == null || user.getEmail() == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+
+        Page<MyRaffleEntryResponse> res = raffleApplicationService.getMyEntries(user.getId(), pageable);
+        return ResponseEntity.ok(res);
+    }
+
 }

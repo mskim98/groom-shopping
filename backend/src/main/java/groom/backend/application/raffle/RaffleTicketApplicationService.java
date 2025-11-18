@@ -1,19 +1,17 @@
 package groom.backend.application.raffle;
 
 import groom.backend.application.cart.CartApplicationService;
+import groom.backend.domain.raffle.entity.Participant;
 import groom.backend.domain.raffle.entity.Raffle;
 import groom.backend.domain.raffle.entity.RaffleTicket;
 import groom.backend.domain.raffle.repository.RaffleTicketRepository;
+import groom.backend.interfaces.raffle.dto.response.ParticipantResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * 추첨 티켓(Raffle Ticket) 관련 비즈니스 로직을 처리하는 서비스 클래스
- *
- * 1. 사용자가 응모 하면 장바구니에 응모 상품을 담는다.
- * 2. 결제 완료 후 티켓을 생성한다.
- */
 import java.util.ArrayList;
 import java.util.List;
 
@@ -73,6 +71,16 @@ public class RaffleTicketApplicationService {
         // saveAll로 한 번에 저장 (JPA는 내부적으로 여러 insert 실행)
         List<RaffleTicket> saved = raffleTicketRepo.saveAll(toSave);
         return saved.size() == toSave.size();
+    }
+
+    public Page<ParticipantResponse> searchParticipants(Long raffleId, String keyword, Pageable pageable) {
+        Page<Participant> page = raffleTicketRepo.searchParticipants(raffleId, keyword, pageable);
+        return page.map(p -> ParticipantResponse.builder()
+                .userId(p.getUserId())
+                .userName(p.getUserName())
+                .userEmail(p.getUserEmail())
+                .createdAt(p.getCreatedAt())
+                .build());
     }
 
 }

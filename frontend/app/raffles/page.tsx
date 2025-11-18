@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Gift, Calendar, Users } from 'lucide-react';
 
 interface Raffle {
-  id: string;
+  raffleId: number;
   title: string;
   description: string;
   status: string;
@@ -79,7 +79,7 @@ export default function RafflesPage() {
           const statusInfo = statusLabels[raffle.status] || statusLabels.DRAFT;
           
           return (
-            <Card key={raffle.id} className="hover:shadow-lg transition-shadow">
+            <Card key={raffle.raffleId} className="hover:shadow-lg transition-shadow">
               <CardContent className="p-6">
                 <div className="flex justify-between items-start mb-4">
                   <Gift className="w-8 h-8 text-primary" />
@@ -108,7 +108,7 @@ export default function RafflesPage() {
               
               <CardFooter className="p-6 pt-0">
                 {raffle.status === 'ACTIVE' && !raffle.userEntered && (
-                  <Link href={`/raffles/${raffle.id}`} className="w-full">
+                  <Link href={`/raffles/${raffle.raffleId}`} className="w-full">
                     <Button className="w-full">응모하기</Button>
                   </Link>
                 )}
@@ -123,7 +123,7 @@ export default function RafflesPage() {
                   </Button>
                 )}
                 {raffle.status === 'DRAWN' && (
-                  <Link href={`/raffles/${raffle.id}/result`} className="w-full">
+                  <Link href={`/raffles/${raffle.raffleId}/result`} className="w-full">
                     <Button className="w-full" variant="outline">
                       결과 보기
                     </Button>
