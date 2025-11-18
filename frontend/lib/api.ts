@@ -20,7 +20,7 @@ interface ApiResponse<T> {
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestOptions = {}
-): Promise<T> {
+): Promise<T | null> {
   const { requireAuth = false, headers = {}, ...restOptions } = options;
 
   const token = getAccessToken();
@@ -96,6 +96,11 @@ export async function apiRequest<T>(
     throw new Error(errorMessage);
   }
 
+    // 204 / 205 No Content 처리: JSON 파싱하지 않음
+    if (response.status === 204 || response.status === 205) {
+        return null;
+    }
+
   const result = await response.json();
 
   // ApiResponse 형식 (success 필드가 있는 경우)
@@ -117,39 +122,46 @@ export function setAccessToken(token: string): void {
   localStorage.setItem('accessToken', token);
 }
 
-export function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('refreshToken');
+export function getRole(): string | null {
+    if (typeof window === 'undefined') return null;
+    const payload = parseJwt(getAccessToken() || '');
+    return payload ? payload.role : null;
 }
 
-export function setRefreshToken(token: string): void {
-  localStorage.setItem('refreshToken', token);
-}
+
 
 export function clearTokens(): void {
   localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
+}
+
+function parseJwt(token: string) {
+    try {
+        const payload = token.split('.')[1];
+        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        );
+        return JSON.parse(jsonPayload);
+    } catch {
+        return null;
+    }
 }
 
 export async function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
-
   try {
     const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ refreshToken }),
     });
 
     if (response.ok) {
       const data = await response.json();
       setAccessToken(data.accessToken);
-      if (data.refreshToken) {
-        setRefreshToken(data.refreshToken);
-      }
       return true;
     }
     return false;
@@ -168,7 +180,7 @@ export const authApi = {
     }),
   
   signup: (email: string, password: string, name: string) =>
-    apiRequest<{ accessToken: string; refreshToken: string }>('/auth/signup', {
+    apiRequest<{ email: string; name: string }>('/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ email, password, name }),
     }),
@@ -356,8 +368,8 @@ export const raffleApi = {
     }>(`/raffles?page=${page}&size=${size}`, {
       requireAuth: true,
     }),
-  
-  getRaffle: (id: string) =>
+
+  getRaffle: (id: number) =>
     apiRequest<any>(`/raffles/${id}`, {
       requireAuth: true,
     }),
@@ -369,33 +381,33 @@ export const raffleApi = {
       requireAuth: true,
     }),
 
-  deleteRaffle: (id: string) =>
+  deleteRaffle: (id: number) =>
     apiRequest(`/raffles/${id}`, {
       method: 'DELETE',
       requireAuth: true,
     }),
 
-  updateRaffle: (id: string, data: any) =>
+  updateRaffle: (id: number, data: any) =>
     apiRequest(`/raffles/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
       requireAuth: true,
     }),
 
-  updateRaffleStatus: (id: string, status: string) =>
+  updateRaffleStatus: (id: number, status: string) =>
     apiRequest(`/raffles/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
       requireAuth: true,
     }),
 
-  executeRaffle: (id: string) =>
+  executeRaffle: (id: number) =>
     apiRequest(`/raffles/${id}/draws`, {
       method: 'POST',
       requireAuth: true,
     }),
 
-  getParticipants: (id: string, page = 0, size = 20) =>
+  getParticipants: (id: number, page = 0, size = 20) =>
     apiRequest<{
       content: any[];
       totalElements: number;
@@ -403,17 +415,26 @@ export const raffleApi = {
       requireAuth: true,
     }),
 
-  getResult: (id: string) =>
-    apiRequest<any>(`/raffles/${id}/result`, {
+  getResult: (id: number) =>
+    apiRequest<any>(`/raffles/${id}/winners`, {
       requireAuth: true,
     }),
 
-  enterRaffle: (id: string, entries: number) =>
-    apiRequest(`/raffles/${id}/enter`, {
+  enterRaffle: (id: number, entries: number) =>
+    apiRequest(`/raffles/${id}/entries`, {
       method: 'POST',
       body: JSON.stringify({ count: entries }),
       requireAuth: true,
     }),
+
+
+    getMyEntries: (page = 0, size = 20) =>
+        apiRequest<{
+            content: any[];
+            totalElements: number;
+        }>(`/raffles/my/entries?page=${page}&size=${size}`, {
+            requireAuth: true,
+        })
 };
 
 // Order API

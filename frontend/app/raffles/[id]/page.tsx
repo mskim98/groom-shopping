@@ -13,12 +13,16 @@ import { Gift, Calendar, Users, Ticket, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface RaffleDetail {
-  id: string;
+  raffleId: number;
   title: string;
   description: string;
   status: string;
-  raffleProductName?: string;
-  winnerProductName?: string;
+  raffleProduct: {
+      name: string;
+  };
+  winnerProduct: {
+      name: string;
+  };
   winnersCount: number;
   maxEntriesPerUser: number;
   entryStartAt: string;
@@ -46,7 +50,7 @@ export default function RaffleDetailPage() {
 
   const loadRaffle = async () => {
     try {
-      const data = await raffleApi.getRaffle(params.id as string);
+      const data = await raffleApi.getRaffle(params.id as number);
       setRaffle(data);
     } catch (error) {
       toast.error('추첨 정보를 불러오는데 실패했습니다.');
@@ -65,9 +69,9 @@ export default function RaffleDetailPage() {
 
     setSubmitting(true);
     try {
-      await raffleApi.enterRaffle(raffle.id, entries);
-      toast.success('응모가 완료되었습니다!');
-      router.push('/raffles');
+      await raffleApi.enterRaffle(raffle.raffleId, entries);
+      toast.success('응모가 완료하기 위해서는 구매를 진행해야 합니다.');
+      router.push('/cart');
     } catch (error) {
       console.error('Enter raffle error:', error);
       toast.error(error instanceof Error ? error.message : '응모에 실패했습니다.');
@@ -130,14 +134,14 @@ export default function RaffleDetailPage() {
                 <Ticket className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-muted-foreground">응모 티켓</p>
-                  <p>{raffle.raffleProductName || '미지정'}</p>
+                  <p>{raffle.raffleProduct.name || '미지정'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <Gift className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-muted-foreground">경품</p>
-                  <p>{raffle.winnerProductName || '미지정'}</p>
+                  <p>{raffle.winnerProduct.name || '미지정'}</p>
                 </div>
               </div>
             </div>
@@ -186,7 +190,7 @@ export default function RaffleDetailPage() {
           {isDrawn && (
             <div className="text-center py-8">
               <p className="text-muted-foreground mb-4">추첨이 완료되었습니다.</p>
-              <Button onClick={() => router.push(`/raffles/${raffle.id}/result`)}>
+              <Button onClick={() => router.push(`/raffles/${raffle.raffleId}/result`)}>
                 결과 보기
               </Button>
             </div>

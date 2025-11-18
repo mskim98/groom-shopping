@@ -3,14 +3,21 @@ package groom.backend.application.raffle;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.domain.auth.repository.UserRepository;
+import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
+import groom.backend.domain.raffle.entity.RaffleMyEntry;
 import groom.backend.domain.raffle.enums.RaffleStatus;
 import groom.backend.domain.raffle.repository.RaffleRepository;
+import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleStatusUpdateRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
+import groom.backend.interfaces.raffle.dto.response.MyRaffleEntryResponse;
+import groom.backend.interfaces.raffle.dto.response.RaffleDetailResponse;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,15 +39,26 @@ public class RaffleApplicationService {
 
     private final RaffleRepository raffleRepository;
     private final RaffleValidationService raffleValidationService;
+    private final ProductRepository productRepository;
+    private final UserRepository UserRepository;
+    private final RaffleTicketRepository raffleTicketRepository;
 
     public Page<RaffleResponse> searchRaffles(RaffleSearchCriteria cond, Pageable pageable) {
         Page<Raffle> page = raffleRepository.search(cond, pageable);
         return page.map(RaffleResponse::from);
     }
 
-    public RaffleResponse getRaffleDetails(Long raffleId) {
+    public RaffleDetailResponse getRaffleDetails(Long raffleId) {
         Raffle raffle = raffleValidationService.findById(raffleId);
-        return RaffleResponse.from(raffle);
+
+        Product raffleProduct = productRepository.findById(raffle.getRaffleProductId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        Product winnerProduct = productRepository.findById(raffle.getWinnerProductId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+
+
+        return RaffleDetailResponse.from(raffle, raffleProduct, winnerProduct);
     }
 
     @Transactional
@@ -133,6 +151,26 @@ public class RaffleApplicationService {
         Raffle saved = raffleRepository.save(raffle);
 
         return RaffleResponse.from(saved);
+    }
+
+
+    public Page<MyRaffleEntryResponse> getMyEntries(Long userId, Pageable pageable) {
+        User user = UserRepository.findById(userId).orElse(null);
+        if (user == null) {
+            return Page.empty(pageable);
+        }
+
+        Page<RaffleMyEntry> page = raffleTicketRepository.getMyEntries(user.getId(), pageable);
+
+        return page.map(e -> MyRaffleEntryResponse.builder()
+                .raffleTicketId(e.getRaffleTicketId())
+                .raffleId(e.getRaffleId())
+                .status(e.getStatus())
+                .raffleTitle(e.getRaffleTitle())
+                .entryAt(e.getEntryAt())
+                .isWinner(e.getIsWinner())
+                .build()
+        );
     }
 
     // 상품 아이디 또는 당첨자 수 변경 여부 확인

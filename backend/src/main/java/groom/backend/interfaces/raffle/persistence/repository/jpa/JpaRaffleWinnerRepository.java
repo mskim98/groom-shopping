@@ -1,5 +1,6 @@
 package groom.backend.interfaces.raffle.persistence.repository.jpa;
 
+import groom.backend.domain.raffle.entity.Participant;
 import groom.backend.domain.raffle.entity.RaffleWinner;
 import groom.backend.interfaces.raffle.dto.notification.RaffleWinnerNotification;
 import groom.backend.domain.raffle.repository.RaffleWinnerRepository;
@@ -39,6 +40,11 @@ public class JpaRaffleWinnerRepository implements RaffleWinnerRepository {
     public RaffleWinner save(RaffleWinner raffleWinner) {
         RaffleWinnerJpaEntity saved = winnerRepository.save(toEntity(raffleWinner));
         return toDomain(saved);
+    }
+
+    @Override
+    public List<Participant> findWinnersByRaffleId(Long raffleId) {
+        return winnerRepository.findWinnersByRaffleId(raffleId);
     }
 
     private RaffleWinner toDomain(RaffleWinnerJpaEntity e) {

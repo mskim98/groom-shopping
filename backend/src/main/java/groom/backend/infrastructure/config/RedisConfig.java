@@ -1,6 +1,8 @@
 package groom.backend.infrastructure.config;
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
@@ -26,7 +28,6 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -80,13 +81,21 @@ public class RedisConfig {
     @Bean(name = "tokenRedisTemplate")
     public RedisTemplate<String, RefreshToken> tokenRedisTemplate(RedisConnectionFactory factory) {
 
-        GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
+        //GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
+        Jackson2JsonRedisSerializer<RefreshToken> jacksonSerializer =
+                new Jackson2JsonRedisSerializer<>(RefreshToken.class);
+
+        ObjectMapper om = new ObjectMapper();
+        om.registerModule(new JavaTimeModule()); // JavaTimeModule 등록
+        // TODO : Deprecated 기능 리팩토링
+        jacksonSerializer.setObjectMapper(om);
 
         RedisTemplate<String, RefreshToken> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
         template.setKeySerializer(new StringRedisSerializer());
-        template.setValueSerializer(serializer);
-        template.setHashValueSerializer(serializer);
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(jacksonSerializer);
+        template.setHashValueSerializer(jacksonSerializer);
         template.afterPropertiesSet();
         return template;
     }
@@ -94,13 +103,21 @@ public class RedisConfig {
     @Bean(name = "raffleDrawingRedisTemplate")
     public RedisTemplate<String, RaffleDrawingEvent> raffleDrawingRedisTemplate(RedisConnectionFactory factory) {
 
-        GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
+        //GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
+        Jackson2JsonRedisSerializer<RaffleDrawingEvent> jacksonSerializer =
+                new Jackson2JsonRedisSerializer<>(RaffleDrawingEvent.class);
+
+        ObjectMapper om = new ObjectMapper();
+        om.registerModule(new JavaTimeModule()); // JavaTimeModule 등록
+        // TODO : Deprecated 기능 리팩토링
+        jacksonSerializer.setObjectMapper(om);
 
         RedisTemplate<String, RaffleDrawingEvent> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
         template.setKeySerializer(new StringRedisSerializer());
-        template.setValueSerializer(serializer);
-        template.setHashValueSerializer(serializer);
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(jacksonSerializer);
+        template.setHashValueSerializer(jacksonSerializer);
         template.afterPropertiesSet();
         return template;
     }
@@ -114,7 +131,7 @@ public class RedisConfig {
         // Java 8+ 날짜 타입 처리
         objectMapper.registerModule(new JavaTimeModule());
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
+        objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
         // 폴리모픽 허용 대상만 명시적으로 등록(화이트리스트)
         PolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
                 .allowIfBaseType(RaffleDrawingEvent.class)

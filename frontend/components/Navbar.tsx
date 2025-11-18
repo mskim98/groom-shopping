@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ShoppingCart, User, LogOut, Package, Ticket, Gift, Percent } from 'lucide-react';
 import { Button } from './ui/button';
-import { getAccessToken, clearTokens, authApi } from '@/lib/api';
+import { getAccessToken, getRole, clearTokens, authApi } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import { NotificationBell } from './NotificationBell';
 
@@ -12,9 +12,16 @@ export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    setIsLoggedIn(!!getAccessToken());
+      const token = getAccessToken();
+    setIsLoggedIn(!!token);
+
+    if(!!token) {
+        setIsAdmin(getRole() == "ROLE_ADMIN")
+    }
+
   }, [pathname]);
 
   const handleLogout = async () => {
@@ -25,6 +32,7 @@ export function Navbar() {
     } finally {
       clearTokens();
       setIsLoggedIn(false);
+      setIsAdmin(false);
       router.push('/');
     }
   };
@@ -70,12 +78,14 @@ export function Navbar() {
           {isLoggedIn ? (
             <>
               <NotificationBell />
-              <Link href="/admin">
-                <Button variant="outline" size="sm">
-                  <User className="w-4 h-4 mr-1" />
-                  관리자
-                </Button>
-              </Link>
+              {isAdmin && (
+                    <Link href="/admin">
+                        <Button variant="outline" size="sm">
+                            <User className="w-4 h-4 mr-1" />
+                            관리자
+                        </Button>
+                    </Link>
+                )}
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 <LogOut className="w-4 h-4 mr-1" />
                 로그아웃

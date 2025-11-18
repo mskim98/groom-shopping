@@ -1,10 +1,14 @@
 package groom.backend.interfaces.raffle.persistence.repository.jpa;
 
+import groom.backend.domain.raffle.entity.Participant;
+import groom.backend.domain.raffle.entity.RaffleMyEntry;
 import groom.backend.domain.raffle.entity.RaffleTicket;
 import groom.backend.domain.raffle.repository.RaffleTicketRepository;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleJpaEntity;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
 import groom.backend.interfaces.raffle.persistence.repository.springData.SpringDataRaffleTicketRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -29,6 +33,11 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
         return toDomainList(saved);
     }
 
+    @Override
+    public Page<Participant> searchParticipants(Long raffleId, String keyword, Pageable pageable) {
+        return ticketRepository.searchParticipants(raffleId, keyword, pageable);
+    }
+
 
     @Override
     public int countDistinctUserByRaffleId(Long raffleId) {
@@ -38,6 +47,12 @@ public class JpaRaffleTicketRepository implements RaffleTicketRepository {
     @Override
     public int countByRaffleIdAndUserId(Long raffleId, Long userId) {
         return ticketRepository.countByRaffle_RaffleIdAndUserId(raffleId, userId);
+    }
+
+    @Override
+    public Page<RaffleMyEntry> getMyEntries(Long userId, Pageable pageable) {
+        return ticketRepository.getMyEnties(userId, pageable);
+
     }
 
     private RaffleTicket toDomain(RaffleTicketJpaEntity e) {
