@@ -377,7 +377,7 @@ export const raffleApi = {
   createRaffle: (data: any) =>
     apiRequest('/raffles', {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify(data),
       requireAuth: true,
     }),
 
