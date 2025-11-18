@@ -12,3 +12,5 @@ logs/application.log
 backend/logs/application.log
 
 *.log
+
+results.json
