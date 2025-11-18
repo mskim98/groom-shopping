@@ -26,7 +26,7 @@ export async function apiRequest<T>(
   const token = getAccessToken();
 
     const requestHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
+        ...(restOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...headers as Record<string, string>,
     };
 
