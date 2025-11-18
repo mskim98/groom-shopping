@@ -22,7 +22,9 @@ public record ProductResponse(
         @Schema(description = "제품 상태", example = "AVAILABLE")
         ProductStatus status,
         @Schema(description = "카테고리", example = "ELECTRONICS")
-        ProductCategory category
+        ProductCategory category,
+        @Schema(description = "이미지 소스")
+        String imageUrl
 ) {
     public static ProductResponse from(Product product) {
         return new ProductResponse(
@@ -32,7 +34,8 @@ public record ProductResponse(
                 product.getPrice(),
                 product.getStock(),
                 product.getStatus(),
-                product.getCategory()
+                product.getCategory(),
+                product.getImageUrl()
         );
     }
 }
