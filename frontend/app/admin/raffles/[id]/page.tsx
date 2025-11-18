@@ -14,7 +14,7 @@ import { ArrowLeft, Trash2, Bell, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface RaffleDetail {
-  id: string;
+  raffleId: number;
   title: string;
   description: string;
   status: string;
@@ -29,17 +29,17 @@ interface RaffleDetail {
 }
 
 interface Participant {
-  userId: string;
+  userId: number;
   userName: string;
   userEmail: string;
-  status: string;
+  createdAt: string;
 }
 
 interface ResultData {
   drawAt: string;
   winnersCount: number;
   winners: Array<{
-    userId: string;
+    userId: number;
     userName: string;
     userEmail: string;
   }>;
