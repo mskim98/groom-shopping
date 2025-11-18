@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 @Getter
 @AllArgsConstructor
 public class WinnerDto {
-    private String userId;
+    private Long userId;
     private Integer rank;
     private String userName;
     private String userEmail;

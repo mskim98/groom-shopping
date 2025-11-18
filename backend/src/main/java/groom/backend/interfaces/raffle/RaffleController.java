@@ -287,7 +287,7 @@ public class RaffleController {
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = WinnersListResponse.class)))
     })
-    @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
+    @CheckPermission(roles = {"ADMIN", "USER"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @GetMapping("/{raffleId}/winners")
     public ResponseEntity<WinnersListResponse> getWinners(@PathVariable Long raffleId) {
         WinnersListResponse res = raffleDrawApplicationService.getWinners(raffleId);
