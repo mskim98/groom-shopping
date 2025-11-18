@@ -24,7 +24,11 @@ public class Product {
     private ProductCategory category;
     private Integer thresholdValue;
     private Boolean isActive;
+    private String imageUrl;
 
+    public void changeImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
     public static Product create(
             UUID id,
             Name name,
@@ -33,7 +37,8 @@ public class Product {
             Stock stock,
             ProductCategory category,
             Integer thresholdValue,
-            Boolean isActive) {
+            Boolean isActive,
+            String imageUrl) {
         Product product = new Product();
         product.id = id;
         product.name = name;
@@ -46,6 +51,7 @@ public class Product {
         product.status = stock.isEmpty()
                 ? ProductStatus.OUT_OF_STOCK
                 : ProductStatus.AVAILABLE;
+        product.imageUrl = imageUrl;
         return product;
     }
 

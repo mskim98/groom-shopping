@@ -6,11 +6,33 @@ positions:
   filename: /tmp/positions.yaml
 
 clients:
-  - url: http://loki:3100/loki/api/v1/push
+  - url: http://loki:3100/loki/api/v1/push  # DNS 이름 사용 (컨테이너 이름)
+    tenant_id: dev  # Tenant ID 설정
 
 scrape_configs:
   # Spring Boot 애플리케이션 로그
   - job_name: spring-boot
+    pipeline_stages:
+      # 로그 레벨 추출
+      - regex:
+          expression: '.*\s(?P<level>DEBUG|INFO|WARN|ERROR)\s.*'
+
+      # HTTP 로그 파싱
+      - regex:
+          expression: '\[(?P<log_type>HTTP_REQUEST|HTTP_ERROR)\]\s+(?P<log_content>.*)'
+
+      # HTTP 로그에서 상세 정보 추출
+      - regex:
+          expression: '.*user=(?P<user>\S+)\s+\|\s+.*method=(?P<method>\w+)\s+\|\s+.*url=(?P<url>\S+)\s+\|\s+.*status=(?P<status>\d+)\s+\|\s+.*duration=(?P<duration>\d+)ms'
+
+      # 라벨 설정
+      - labels:
+          level:
+          log_type:
+          method:
+          status:
+          user:
+
     static_configs:
       - targets:
           - localhost
@@ -18,6 +40,7 @@ scrape_configs:
           job: spring-boot
           application: groom-shopping
           environment: dev
+          service_name: spring-boot
           __path__: /var/log/app/application*.log
 
   # Docker 컨테이너 로그 (선택사항)

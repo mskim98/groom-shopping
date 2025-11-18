@@ -74,7 +74,8 @@ public class JpaProductRepository implements ProductRepository {
                     new Stock(e.getStock() != null ? e.getStock() : 0),
                     category,
                     thresholdValue,
-                    e.getIsActive()
+                    e.getIsActive(),
+                    e.getImageUrl()
             );
         } catch (IllegalArgumentException ex) {
             // 카테고리 변환 실패 시 기본값 사용
@@ -93,7 +94,8 @@ public class JpaProductRepository implements ProductRepository {
                     new Stock(e.getStock() != null ? e.getStock() : 0),
                     category,
                     thresholdValue,
-                    e.getIsActive()
+                    e.getIsActive(),
+                    e.getImageUrl() != null ? e.getImageUrl() : null
             );
         }
     }
@@ -109,6 +111,7 @@ public class JpaProductRepository implements ProductRepository {
                 .isActive(p.getIsActive())
                 .category(p.getCategory() != null ? p.getCategory().name() : null)
                 .status(p.getStatus() != null ? p.getStatus().name() : null)
+                .imageUrl(p.getImageUrl())
                 .build();
     }
 }

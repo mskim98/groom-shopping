@@ -39,7 +39,7 @@ export default function AdminProductsPage() {
     price: 0,
     stock: 0,
     category: 'GENERAL' as 'GENERAL' | 'TICKET' | 'RAFFLE',
-    imageUrl: '',
+    imageFile: null as File | null,
   });
 
   useEffect(() => {
@@ -203,11 +203,15 @@ export default function AdminProductsPage() {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="imageUrl">이미지 URL</Label>
+                <Label htmlFor="imageFile">상품 이미지</Label>
                 <Input
-                  id="imageUrl"
-                  value={formData.imageUrl}
-                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                    id="imageFile"
+                    type="file"
+                    accept="image/*"
+                    accept="image/*"
+                    onChange={(e) =>
+                        setFormData({ ...formData, imageFile: e.target.files?.[0] || null })
+                    }
                 />
               </div>
               <Button type="submit" className="w-full">등록</Button>
