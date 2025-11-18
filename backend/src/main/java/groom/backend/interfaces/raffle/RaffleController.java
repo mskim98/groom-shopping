@@ -11,7 +11,9 @@ import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.interfaces.raffle.dto.mapper.RaffleSearchMapper;
 import groom.backend.interfaces.raffle.dto.request.*;
 import groom.backend.interfaces.raffle.dto.response.ParticipantResponse;
+import groom.backend.interfaces.raffle.dto.response.RaffleDetailResponse;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
+import groom.backend.interfaces.raffle.dto.response.WinnersListResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -26,7 +28,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -159,15 +160,15 @@ public class RaffleController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "추첨 조회 성공",
                     content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = RaffleResponse.class))),
+                            schema = @Schema(implementation = RaffleDetailResponse.class))),
             @ApiResponse(responseCode = "404", description = "추첨을 찾을 수 없음")
     })
     @GetMapping("/{raffleId}")
-    public ResponseEntity<RaffleResponse> getRaffleDetails(
+    public ResponseEntity<RaffleDetailResponse> getRaffleDetails(
             @Parameter(description = "추첨 ID", required = true, example = "1")
             @PathVariable Long raffleId) {
 
-        RaffleResponse response = raffleApplicationService.getRaffleDetails(raffleId);
+        RaffleDetailResponse response = raffleApplicationService.getRaffleDetails(raffleId);
         return ResponseEntity.ok(response);
     }
 
@@ -199,7 +200,7 @@ public class RaffleController {
         }
 
         raffleTicketApplicationService.addToEntryCart(raffleId, user.getId(), entry.getCount());
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(
@@ -279,6 +280,20 @@ public class RaffleController {
         // 인터페이스 계층에서 DTO -> 도메인 기준으로 변환
         Page<ParticipantResponse> page = raffleTicketApplicationService.searchParticipants(raffleId, keyword, pageable);
         return ResponseEntity.ok(page);
+    }
+
+    @Operation(
+            summary = "당첨자 검색",
+            description = "해당 추첨에 당첨된 사용자 목록 조회."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "당첨자 조회 성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = WinnersListResponse.class)))
+    })
+    @GetMapping("/{raffleId}/winners")
+    public WinnersListResponse getWinners(@PathVariable Long raffleId) {
+        return raffleDrawApplicationService.getWinners(raffleId);
     }
 
 
