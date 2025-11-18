@@ -20,7 +20,7 @@ interface ApiResponse<T> {
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestOptions = {}
-): Promise<T> {
+): Promise<T | null> {
   const { requireAuth = false, headers = {}, ...restOptions } = options;
 
   const token = getAccessToken();
@@ -95,6 +95,11 @@ export async function apiRequest<T>(
     const errorMessage = errorData?.message || errorData?.error?.message || `요청 실패: ${response.status}`;
     throw new Error(errorMessage);
   }
+
+    // 204 / 205 No Content 처리: JSON 파싱하지 않음
+    if (response.status === 204 || response.status === 205) {
+        return null;
+    }
 
   const result = await response.json();
 
