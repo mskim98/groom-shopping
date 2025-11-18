@@ -416,7 +416,7 @@ export const raffleApi = {
     }),
 
   getResult: (id: number) =>
-    apiRequest<any>(`/raffles/${id}/result`, {
+    apiRequest<any>(`/raffles/${id}/winners`, {
       requireAuth: true,
     }),
 

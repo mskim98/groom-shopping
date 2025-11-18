@@ -40,6 +40,7 @@ interface ResultData {
   winnersCount: number;
   winners: Array<{
     userId: number;
+    rank: number;
     userName: string;
     userEmail: string;
   }>;
@@ -66,15 +67,15 @@ export default function AdminRaffleDetailPage() {
 
   const loadData = async () => {
     try {
-      const raffleData = await raffleApi.getRaffle(params.id as string);
+      const raffleData = await raffleApi.getRaffle(params.id as number);
       setRaffle(raffleData);
 
-      const participantsData = await raffleApi.getParticipants(params.id as string, 0, 100);
+      const participantsData = await raffleApi.getParticipants(params.id as number, 0, 100);
       setParticipants(participantsData.content || []);
 
       if (raffleData.status === 'DRAWN') {
         try {
-          const resultData = await raffleApi.getResult(params.id as string);
+          const resultData = await raffleApi.getResult(params.id as number);
           setResult(resultData);
         } catch (error) {
           console.error('Failed to load result:', error);
@@ -89,7 +90,7 @@ export default function AdminRaffleDetailPage() {
 
   const handleDelete = async () => {
     try {
-      await raffleApi.deleteRaffle(params.id as string);
+      await raffleApi.deleteRaffle(params.id as number);
       toast.success('추첨이 삭제되었습니다.');
       router.push('/admin/raffles');
     } catch (error) {
@@ -222,7 +223,7 @@ export default function AdminRaffleDetailPage() {
                 <TableHead>번호</TableHead>
                 <TableHead>이름</TableHead>
                 <TableHead>이메일</TableHead>
-                <TableHead>상태</TableHead>
+                <TableHead>응모일</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -231,9 +232,7 @@ export default function AdminRaffleDetailPage() {
                   <TableCell>{index + 1}</TableCell>
                   <TableCell>{participant.userName}</TableCell>
                   <TableCell>{participant.userEmail}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{participant.status}</Badge>
-                  </TableCell>
+                  <TableCell>{new Date(participant.createdAt).toLocaleString()}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -269,19 +268,19 @@ export default function AdminRaffleDetailPage() {
               <TableBody>
                 {result.winners.map((winner, index) => (
                   <TableRow key={winner.userId}>
-                    <TableCell>{index + 1}</TableCell>
+                    <TableCell>{winner.rank}</TableCell>
                     <TableCell>{winner.userName}</TableCell>
                     <TableCell>{winner.userEmail}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            <div className="mt-4">
+           {/* <div className="mt-4">
               <Button onClick={handleNotifyWinners}>
                 <Bell className="w-4 h-4 mr-2" />
                 당첨자에게 알림 발송
               </Button>
-            </div>
+            </div>*/}
           </CardContent>
         </Card>
       )}

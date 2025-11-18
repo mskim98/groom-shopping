@@ -18,6 +18,7 @@ interface ResultData {
   winnersCount: number;
   winners: Array<{
     userId: string;
+    rank: number;
     userName: string;
     userEmail: string;
   }>;
@@ -35,7 +36,7 @@ export default function RaffleResultPage() {
 
   const loadResult = async () => {
     try {
-      const data = await raffleApi.getResult(params.id as string);
+      const data = await raffleApi.getResult(params.id as number);
       setResult(data);
     } catch (error) {
       toast.error('추첨 결과를 불러오는데 실패했습니다.');
@@ -93,7 +94,7 @@ export default function RaffleResultPage() {
               <TableBody>
                 {result.winners.map((winner, index) => (
                   <TableRow key={winner.userId}>
-                    <TableCell>{index + 1}</TableCell>
+                    <TableCell>{winner.rank}</TableCell>
                     <TableCell>{winner.userName}</TableCell>
                     <TableCell>{winner.userEmail}</TableCell>
                   </TableRow>
