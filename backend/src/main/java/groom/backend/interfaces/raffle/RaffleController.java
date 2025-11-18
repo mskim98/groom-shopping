@@ -306,11 +306,11 @@ public class RaffleController {
     })
     @CheckPermission(roles = {"ADMIN","USER"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @GetMapping("/my/entries")
-    public ResponseEntity<Page<MyRaffleEntryResponse>> getMyEntries(@AuthenticationPrincipal(expression = "user") User user) {
+    public ResponseEntity<Page<MyRaffleEntryResponse>> getMyEntries(@AuthenticationPrincipal(expression = "user") User user,
+                                                                    @PageableDefault(size = 20) Pageable pageable) {
         if (user == null || user.getEmail() == null) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
-        Pageable pageable = Pageable.ofSize(20);
 
         Page<MyRaffleEntryResponse> res = raffleApplicationService.getMyEntries(user.getId(), pageable);
         return ResponseEntity.ok(res);
