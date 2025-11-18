@@ -1,6 +1,7 @@
 package groom.backend.domain.raffle.repository;
 
 import groom.backend.domain.raffle.entity.Participant;
+import groom.backend.domain.raffle.entity.RaffleMyEntry;
 import groom.backend.domain.raffle.entity.RaffleTicket;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -20,4 +21,6 @@ public interface RaffleTicketRepository {
 
     // 도메인 수준의 검색 기준을 사용하도록 변경
     Page<Participant> searchParticipants(Long raffleId, String keyword, Pageable pageable);
+
+    Page<RaffleMyEntry> getMyEntries(Long userId, Pageable pageable);
 }

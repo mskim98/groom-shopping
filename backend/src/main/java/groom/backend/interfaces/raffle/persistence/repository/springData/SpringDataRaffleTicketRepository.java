@@ -1,6 +1,7 @@
 package groom.backend.interfaces.raffle.persistence.repository.springData;
 
 import groom.backend.domain.raffle.entity.Participant;
+import groom.backend.domain.raffle.entity.RaffleMyEntry;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleTicketJpaEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,4 +24,19 @@ public interface SpringDataRaffleTicketRepository extends JpaRepository<RaffleTi
       """)
     Page<Participant> searchParticipants(@Param("raffleId") Long raffleId, @Param("keyword") String keyword, Pageable pageable);
 
+    @Query("""
+      SELECT new groom.backend.domain.raffle.entity.RaffleMyEntry(
+        rt.raffleTicketId,
+        rt.raffle.raffleId,
+        rt.raffle.status,
+        rt.raffle.title,
+        rt.createdAt,
+        CASE WHEN rw.raffleWinnerId IS NOT NULL THEN true ELSE false END
+      )
+      FROM RaffleTicketJpaEntity rt
+      LEFT JOIN rt.raffle r
+      LEFT JOIN RaffleWinnerJpaEntity rw ON rw.raffleTicket = rt
+      WHERE rt.userId = :#{#userId}
+      """)
+    Page<RaffleMyEntry> getMyEnties(@Param("userId") Long userId, Pageable pageable);
 }
