@@ -16,6 +16,7 @@ interface Product {
   price: number;
   imageUrl?: string;
   stock: number;
+  category: string;
 }
 
 export default function ProductsPage() {
@@ -27,8 +28,14 @@ export default function ProductsPage() {
   const loadProducts = async (currentPage: number) => {
     setLoading(true);
     try {
-      const response = await productApi.getProducts(currentPage, 20, 'id,desc');
-      setProducts(response.content);
+      const response = await productApi.getProducts(currentPage, 20, 'category,asc&sort=id,desc');
+
+      // GENERAL 카테고리만 필터링
+      const filteredProducts = response.content.filter(
+          (product: Product) => product.category === 'GENERAL'
+      );
+
+      setProducts(filteredProducts);
       setTotalPages(response.totalPages);
     } catch (error) {
       console.error('Failed to load products:', error);
