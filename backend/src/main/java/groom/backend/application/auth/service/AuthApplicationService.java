@@ -20,6 +20,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -67,31 +68,36 @@ public class AuthApplicationService {
 
     @Transactional
     public LoginResponse login(LoginRequest loginRequest, HttpServletRequest request, HttpServletResponse response) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword())
-        );
 
-        Object principal = authentication.getPrincipal();
-        User user = ((CustomUserDetails) principal).getUser();
+        try {
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword())
+            );
 
-        // Access Token 생성
-        String accessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
+            Object principal = authentication.getPrincipal();
+            User user = ((CustomUserDetails) principal).getUser();
 
-        // Refresh Token 생성
-        String refreshToken = jwtTokenProvider.createRefreshToken(user.getEmail(), user.getRole());
+            // Access Token 생성
+            String accessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
 
-        // Refresh Token 저장(Redis)
-        String userAgent = request.getHeader("User-Agent");
-        String ipAddress = getClientIp(request);
-        refreshTokenService.saveRefreshToken(user.getEmail(), refreshToken, userAgent, ipAddress);
+            // Refresh Token 생성
+            String refreshToken = jwtTokenProvider.createRefreshToken(user.getEmail(), user.getRole());
 
-        // Refresh Token을 HttpOnly Cookie로 설정
-        Cookie refreshTokenCookie = createRefreshTokenCookie(refreshToken);
-        response.addCookie(refreshTokenCookie);
+            // Refresh Token 저장(Redis)
+            String userAgent = request.getHeader("User-Agent");
+            String ipAddress = getClientIp(request);
+            refreshTokenService.saveRefreshToken(user.getEmail(), refreshToken, userAgent, ipAddress);
 
-        log.info("로그인 성공: {}", user.getEmail());
+            // Refresh Token을 HttpOnly Cookie로 설정
+            Cookie refreshTokenCookie = createRefreshTokenCookie(refreshToken);
+            response.addCookie(refreshTokenCookie);
 
-        return new LoginResponse(accessToken, user.getName(), user.getRole());
+            log.info("로그인 성공: {}", user.getEmail());
+
+            return new LoginResponse(accessToken, user.getName(), user.getRole());
+        } catch (BadCredentialsException e) {
+            throw new BusinessException(ErrorCode.LOGIN_FAILED);
+        }
     }
 
     @Transactional
