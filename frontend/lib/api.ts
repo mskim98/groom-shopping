@@ -368,8 +368,8 @@ export const raffleApi = {
     }>(`/raffles?page=${page}&size=${size}`, {
       requireAuth: true,
     }),
-  
-  getRaffle: (id: string) =>
+
+  getRaffle: (id: number) =>
     apiRequest<any>(`/raffles/${id}`, {
       requireAuth: true,
     }),
@@ -381,33 +381,33 @@ export const raffleApi = {
       requireAuth: true,
     }),
 
-  deleteRaffle: (id: string) =>
+  deleteRaffle: (id: number) =>
     apiRequest(`/raffles/${id}`, {
       method: 'DELETE',
       requireAuth: true,
     }),
 
-  updateRaffle: (id: string, data: any) =>
+  updateRaffle: (id: number, data: any) =>
     apiRequest(`/raffles/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
       requireAuth: true,
     }),
 
-  updateRaffleStatus: (id: string, status: string) =>
+  updateRaffleStatus: (id: number, status: string) =>
     apiRequest(`/raffles/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
       requireAuth: true,
     }),
 
-  executeRaffle: (id: string) =>
+  executeRaffle: (id: number) =>
     apiRequest(`/raffles/${id}/draws`, {
       method: 'POST',
       requireAuth: true,
     }),
 
-  getParticipants: (id: string, page = 0, size = 20) =>
+  getParticipants: (id: number, page = 0, size = 20) =>
     apiRequest<{
       content: any[];
       totalElements: number;
@@ -415,17 +415,26 @@ export const raffleApi = {
       requireAuth: true,
     }),
 
-  getResult: (id: string) =>
+  getResult: (id: number) =>
     apiRequest<any>(`/raffles/${id}/result`, {
       requireAuth: true,
     }),
 
-  enterRaffle: (id: string, entries: number) =>
-    apiRequest(`/raffles/${id}/enter`, {
+  enterRaffle: (id: number, entries: number) =>
+    apiRequest(`/raffles/${id}/entries`, {
       method: 'POST',
       body: JSON.stringify({ count: entries }),
       requireAuth: true,
     }),
+
+
+    getMyEntries: (page = 0, size = 20) =>
+        apiRequest<{
+            content: any[];
+            totalElements: number;
+        }>(`/raffles/my/entries?page=${page}&size=${size}`, {
+            requireAuth: true,
+        })
 };
 
 // Order API
