@@ -14,7 +14,7 @@ public interface SpringDataRaffleTicketRepository extends JpaRepository<RaffleTi
     int countDistinctUserByRaffleId(Long raffleId);
 
     @Query("""
-      SELECT new groom.backend.domain.raffle.entity.Participant(u.id, u.name, u.email, rt.createdAt)
+      SELECT new groom.backend.domain.raffle.entity.Participant(u.id, null ,u.name, u.email, rt.createdAt)
       FROM RaffleTicketJpaEntity rt, UserJpaEntity u
       WHERE rt.raffle.raffleId = :raffleId
         AND u.id = rt.userId

@@ -3,6 +3,8 @@ package groom.backend.application.raffle;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.domain.product.model.Product;
+import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.domain.raffle.criteria.RaffleSearchCriteria;
 import groom.backend.domain.raffle.criteria.RaffleValidationCriteria;
 import groom.backend.domain.raffle.entity.Raffle;
@@ -11,6 +13,7 @@ import groom.backend.domain.raffle.repository.RaffleRepository;
 import groom.backend.interfaces.raffle.dto.request.RaffleRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleStatusUpdateRequest;
 import groom.backend.interfaces.raffle.dto.request.RaffleUpdateRequest;
+import groom.backend.interfaces.raffle.dto.response.RaffleDetailResponse;
 import groom.backend.interfaces.raffle.dto.response.RaffleResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,15 +35,24 @@ public class RaffleApplicationService {
 
     private final RaffleRepository raffleRepository;
     private final RaffleValidationService raffleValidationService;
+    private final ProductRepository productRepository;
 
     public Page<RaffleResponse> searchRaffles(RaffleSearchCriteria cond, Pageable pageable) {
         Page<Raffle> page = raffleRepository.search(cond, pageable);
         return page.map(RaffleResponse::from);
     }
 
-    public RaffleResponse getRaffleDetails(Long raffleId) {
+    public RaffleDetailResponse getRaffleDetails(Long raffleId) {
         Raffle raffle = raffleValidationService.findById(raffleId);
-        return RaffleResponse.from(raffle);
+
+        Product raffleProduct = productRepository.findById(raffle.getRaffleProductId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        Product winnerProduct = productRepository.findById(raffle.getWinnerProductId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+
+
+        return RaffleDetailResponse.from(raffle, raffleProduct, winnerProduct);
     }
 
     @Transactional

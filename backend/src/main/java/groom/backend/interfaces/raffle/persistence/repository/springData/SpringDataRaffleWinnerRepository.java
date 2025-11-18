@@ -1,5 +1,6 @@
 package groom.backend.interfaces.raffle.persistence.repository.springData;
 
+import groom.backend.domain.raffle.entity.Participant;
 import groom.backend.interfaces.raffle.dto.notification.RaffleWinnerNotification;
 import groom.backend.interfaces.raffle.dto.request.RaffleDrawCondition;
 import groom.backend.interfaces.raffle.persistence.Entity.RaffleWinnerJpaEntity;
@@ -48,4 +49,13 @@ public interface SpringDataRaffleWinnerRepository extends JpaRepository<RaffleWi
 
     // raffle_winners 테이블의 행(선정된 당첨자) 총수
     int countByRaffleTicket_Raffle_RaffleId(Long raffleId);
+
+    @Query("""
+      SELECT new groom.backend.domain.raffle.entity.Participant(u.id, rw.rank, u.name, u.email, rt.createdAt)
+      FROM RaffleTicketJpaEntity rt
+      JOIN RaffleWinnerJpaEntity rw ON rt.raffleTicketId = rw.raffleTicket.raffleTicketId
+      JOIN UserJpaEntity u ON u.id = rt.userId
+      WHERE rt.raffle.raffleId = :raffleId
+      """)
+    List<Participant> findWinnersByRaffleId(@Param("raffleId") Long raffleId);
 }
