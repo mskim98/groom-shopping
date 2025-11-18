@@ -48,12 +48,12 @@ CROSS JOIN (
 WHERE u.email = 'admin@admin.com';
 
 -- 5. Raffle 데이터 추가
--- 먼저 TICKET과 RAFFLE 카테고리의 제품 조회
+-- 모든 TICKET 상품에 대해 RAFFLE 상품을 매핑하여 Raffle 생성
 INSERT INTO raffles (raffle_product_id, winner_product_id, title, description, winners_count, max_entries_per_user, entry_start_at, entry_end_at, raffle_draw_at, status, created_at, updated_at)
 SELECT
-    ticket_product.id,
-    raffle_product.id,
-    'Monthly Premium Raffle #' || ROW_NUMBER() OVER (ORDER BY ticket_product.id),
+    t.id as raffle_product_id,
+    r.id as winner_product_id,
+    'Raffle for ' || t.name || ' #' || ROW_NUMBER() OVER (ORDER BY t.id),
     'Limited edition monthly raffle event - Enter to win exclusive prizes!',
     5,
     3,
@@ -64,22 +64,21 @@ SELECT
     NOW(),
     NOW()
 FROM (
-    SELECT id FROM product
+    SELECT id, name FROM product
     WHERE category = 'TICKET'
     AND is_active = TRUE
-    LIMIT 3
-) ticket_product
+) t
 CROSS JOIN (
     SELECT id FROM product
     WHERE category = 'RAFFLE'
     AND is_active = TRUE
-    LIMIT 3
-) raffle_product;
+    LIMIT 1
+) r;
 
 -- ============================================
 -- V7 마이그레이션 완료
 -- - 쿠폰 6개 생성 (다양한 CouponType)
 -- - 테스트 관리자 계정 생성 (admin@admin.com)
 -- - 관리자 사용자 카트 생성 및 상품 5개 추가
--- - Raffle 3개 생성 (준비 상태)
+-- - 모든 TICKET 상품에 대해 Raffle 생성 (10개 TICKET × 1개 RAFFLE)
 -- ============================================
