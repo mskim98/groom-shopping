@@ -1,53 +1,111 @@
 import http from 'k6/http';
 import { check, group, sleep } from 'k6';
 
-// Order 도메인 부하 테스트
-// 실제 API:
-// - GET /v1/cart (Cart inquiry)
-// - POST /v1/cart/add (Add to cart with UUID productId)
-// - PATCH /v1/cart/increase-quantity, /v1/cart/decrease-quantity (Cart quantity management)
-// - POST /v1/order (Create order with CreateOrderRequest - only couponId)
-// - GET /v1/order/{orderId} (Order detail with UUID orderId)
+/**
+ * Order 도메인 전문 부하 테스트
+ *
+ * 목표: 주문 및 장바구니 API의 성능 검증
+ * - 장바구니 조회/관리
+ * - 상품 추가/수량 변경
+ * - 주문 생성
+ * - 주문 조회
+ */
+
 export const options = {
   stages: [
-    { duration: '30s', target: 10 },   // 램프업: 10 VU
+    { duration: '30s', target: 10 },   // 워밍업: 10 VU
     { duration: '1m', target: 30 },    // 증가: 30 VU
-    { duration: '1m', target: 50 },    // 최대: 50 VU (주문은 트래픽이 적음)
+    { duration: '2m', target: 50 },    // 최대: 50 VU
+    { duration: '1m', target: 20 },    // 감소: 20 VU
     { duration: '30s', target: 0 },    // 쿨다운
   ],
   thresholds: {
     http_req_duration: ['p(95)<1000', 'p(99)<2000'],
-    http_req_failed: ['rate<0.1'],
+    http_req_failed: ['rate<0.05'],
   },
 };
 
 const BASE_URL = 'http://localhost:8080/api/v1';
 
-// 테스트용 UUID (실제 DB에 있는 상품 ID로 변경 필요)
-const TEST_PRODUCT_ID = '550e8400-e29b-41d4-a716-446655440000';
+let products = [];
 
-let authToken = '';
+/**
+ * 초기화: 실제 DB 데이터 로드
+ */
+export function setup() {
+  console.log('🔄 Setup: 상품 데이터 로드 시작...');
 
-// 로그인 함수
-function login() {
-  const loginPayload = JSON.stringify({
-    email: `user_${__VU}@test.com`,
-    password: 'password123',
-  });
+  const setupData = { products: [] };
 
-  const loginRes = http.post(`${BASE_URL}/auth/login`, loginPayload, {
+  // 상품 데이터 로드
+  const productRes = http.get(`${BASE_URL}/product?page=0&size=100`, {
     headers: { 'Content-Type': 'application/json' },
   });
 
-  if (loginRes.status === 200) {
-    authToken = loginRes.json('accessToken');
+  if (productRes.status === 200) {
+    const content = productRes.json('content');
+    if (content && Array.isArray(content)) {
+      // productId → id로 변환
+      const products = content.map(p => ({
+        ...p,
+        id: p.productId || p.id
+      }));
+
+      setupData.products = products;
+      setupData.generalProducts = products.filter((p) => p.category === 'GENERAL');
+      console.log(`✅ 상품 ${content.length}개 로드됨`);
+      console.log(`   └─ GENERAL: ${setupData.generalProducts.length}개`);
+    }
+  } else {
+    console.error(`❌ 상품 로드 실패: ${productRes.status}`);
   }
+
+  return setupData;
 }
 
-export default function () {
-  // 각 VU마다 한 번씩 로그인
+/**
+ * 테스트 메인 로직
+ */
+export default function (setupData) {
+  const allProducts = setupData.products || [];
+  const generalProducts = setupData.generalProducts || [];
+
+  if (generalProducts.length === 0) {
+    console.error('❌ GENERAL 상품이 없습니다');
+    return;
+  }
+
+  // 테스트 사용자 선택 (user_1 ~ user_20)
+  const userNum = ((__VU - 1) % 20) + 1;
+  const testUser = {
+    email: `user_${userNum}@test.com`,
+    password: 'password123',
+  };
+
+  // ==================== 1. 인증 ====================
+  let authToken = '';
+
+  group('Auth: 로그인', () => {
+    const loginRes = http.post(
+      `${BASE_URL}/auth/login`,
+      JSON.stringify(testUser),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    check(loginRes, {
+      'status is 200': (r) => r.status === 200,
+      'has accessToken': (r) => r.json('accessToken') !== null,
+      'response time < 500ms': (r) => r.timings.duration < 500,
+    });
+
+    if (loginRes.status === 200) {
+      authToken = loginRes.json('accessToken');
+    }
+  }
+
   if (!authToken) {
-    login();
+    console.error('❌ 로그인 실패');
+    return;
   }
 
   const headers = {
@@ -55,21 +113,27 @@ export default function () {
     Authorization: `Bearer ${authToken}`,
   };
 
-  group('1. 장바구니 조회', () => {
+  sleep(0.5);
+
+  // ==================== 2. 장바구니 조회 ====================
+  group('Cart: 장바구니 조회', () => {
     const cartRes = http.get(`${BASE_URL}/cart`, { headers });
 
     check(cartRes, {
-      'cart status is 200': (r) => r.status === 200,
-      'cart has cartId': (r) => r.json('cartId') !== null,
-      'cart response time < 500ms': (r) => r.timings.duration < 500,
+      'status is 200': (r) => r.status === 200,
+      'has cartId': (r) => r.json('cartId') !== null,
+      'response time < 500ms': (r) => r.timings.duration < 500,
     });
   });
 
-  sleep(1);
+  sleep(0.3);
 
-  group('2. 장바구니에 상품 추가', () => {
+  // ==================== 3. 장바구니에 상품 추가 ====================
+  const selectedProduct = generalProducts[__ITER % generalProducts.length];
+
+  group('Cart: 장바구니에 상품 추가', () => {
     const addToCartPayload = JSON.stringify({
-      productId: TEST_PRODUCT_ID,
+      productId: selectedProduct.id,
       quantity: 1,
     });
 
@@ -78,16 +142,18 @@ export default function () {
     });
 
     check(addRes, {
-      'add to cart status 200 or 400': (r) => r.status === 200 || r.status === 400,
-      'add response time < 1000ms': (r) => r.timings.duration < 1000,
+      'status is 200': (r) => r.status === 200,
+      'has cartItemId': (r) => r.json('cartItemId') !== null,
+      'response time < 1000ms': (r) => r.timings.duration < 1000,
     });
   });
 
-  sleep(1);
+  sleep(0.3);
 
-  group('3. 장바구니 수량 증가', () => {
+  // ==================== 4. 장바구니 수량 증가 ====================
+  group('Cart: 장바구니 수량 증가', () => {
     const increaseQuantityPayload = JSON.stringify({
-      productId: TEST_PRODUCT_ID,
+      productId: selectedProduct.id,
     });
 
     const increaseRes = http.patch(`${BASE_URL}/cart/increase-quantity`, increaseQuantityPayload, {
@@ -95,15 +161,17 @@ export default function () {
     });
 
     check(increaseRes, {
-      'increase status 200 or 400': (r) => r.status === 200 || r.status === 400,
-      'increase response time < 500ms': (r) => r.timings.duration < 500,
+      'status is 200': (r) => r.status === 200 || r.status === 400,
+      'response time < 500ms': (r) => r.timings.duration < 500,
     });
   });
 
-  sleep(1);
+  sleep(0.3);
 
-  group('4. 주문 생성', () => {
-    // CreateOrderRequest only contains couponId (optional)
+  // ==================== 5. 주문 생성 ====================
+  let orderId = null;
+
+  group('Order: 주문 생성', () => {
     const createOrderPayload = JSON.stringify({
       couponId: null,
     });
@@ -113,11 +181,79 @@ export default function () {
     });
 
     check(orderRes, {
-      'order create status 201 or 400': (r) => r.status === 201 || r.status === 400,
-      'order has orderId': (r) => r.status !== 201 || r.json('orderId') !== null,
-      'order response time < 2000ms': (r) => r.timings.duration < 2000,
+      'status is 201': (r) => r.status === 201,
+      'has orderId': (r) => r.json('id') !== null,
+      'has totalAmount': (r) => r.json('totalAmount') > 0,
+      'response time < 2000ms': (r) => r.timings.duration < 2000,
+    });
+
+    if (orderRes.status === 201) {
+      orderId = orderRes.json('id');
+    }
+  });
+
+  sleep(1);
+
+  // ==================== 6. 주문 상세 조회 ====================
+  if (orderId) {
+    group('Order: 주문 상세 조회', () => {
+      const orderDetailRes = http.get(`${BASE_URL}/order/${orderId}`, { headers });
+
+      check(orderDetailRes, {
+        'status is 200': (r) => r.status === 200,
+        'has orderId': (r) => r.json('id') === orderId,
+        'response time < 1000ms': (r) => r.timings.duration < 1000,
+      });
+    });
+
+    sleep(0.5);
+  }
+
+  // ==================== 7. 주문 목록 조회 ====================
+  group('Order: 주문 목록 조회', () => {
+    const ordersRes = http.get(`${BASE_URL}/order?page=0&size=20`, { headers });
+
+    check(ordersRes, {
+      'status is 200': (r) => r.status === 200,
+      'has content': (r) => r.json('content') !== null,
+      'response time < 1000ms': (r) => r.timings.duration < 1000,
     });
   });
 
-  sleep(2);
+  sleep(1);
+
+  // ==================== 8. 장바구니 초기화 ====================
+  group('Cart: 장바구니 비우기', () => {
+    const cartRes = http.get(`${BASE_URL}/cart`, { headers });
+
+    if (cartRes.status === 200) {
+      const items = cartRes.json('items');
+      if (items && items.length > 0) {
+        const removePayload = JSON.stringify({
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        });
+
+        const removeRes = http.delete(`${BASE_URL}/cart/remove`, removePayload, {
+          headers,
+        });
+
+        check(removeRes, {
+          'status is 200': (r) => r.status === 200,
+        });
+      }
+    }
+  });
+
+  sleep(1);
+}
+
+/**
+ * 테스트 완료
+ */
+export function teardown(setupData) {
+  console.log('✅ Order 테스트 완료');
+  console.log(`   테스트된 상품: ${setupData.products.length}개`);
 }
