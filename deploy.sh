@@ -65,9 +65,16 @@ echo "📦 Docker Compose 명령어: $DOCKER_COMPOSE_CMD"
 echo "📦 기존 컨테이너를 중지하고 제거합니다..."
 $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod down || true
 
-# 이미지 빌드 및 컨테이너 시작
+# 실행 중인 빌드 프로세스 중단 (있는 경우)
+echo "🛑 실행 중인 빌드 프로세스를 확인하고 중단합니다..."
+$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod down || true
+docker ps -a | grep -E "prod-|build" | awk '{print $1}' | xargs -r docker stop || true
+
+# 이미지 빌드 및 컨테이너 시작 (프론트엔드만 명시적으로 빌드)
 echo "🔨 이미지를 빌드하고 컨테이너를 시작합니다..."
-$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod up --build -d
+echo "📦 프론트엔드만 빌드합니다 (백엔드는 제외)..."
+$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod build frontend
+$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod up -d
 
 # 컨테이너 상태 확인
 echo "⏳ 컨테이너가 시작될 때까지 대기합니다..."
@@ -78,8 +85,8 @@ echo "📊 컨테이너 상태:"
 $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod ps
 
 # 로그 확인
-echo "📝 최근 로그 (백엔드):"
-$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod logs --tail=50 backend
+echo "📝 최근 로그 (프론트엔드):"
+$DOCKER_COMPOSE_CMD -f docker-compose.prod.yml --env-file .env.prod logs --tail=50 frontend
 
 echo ""
 echo "✅ 배포가 완료되었습니다!"
