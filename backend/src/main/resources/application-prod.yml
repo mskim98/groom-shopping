@@ -1,0 +1,193 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: jdbc:postgresql://${SPRING_DATASOURCE_HOST:db}:${SPRING_DATASOURCE_PORT:5432}/${POSTGRES_DB}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+  cache:
+    type: redis
+    redis:
+      time-to-live: 3600000   # 3600초 = 60분 TTL
+  
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:kafka:9093}
+    streams:
+      application-id: coupon-delay-app
+      properties:
+        processing.guarantee: exactly_once_v2
+        transaction.state.log.replication.factor: 1
+        transaction.state.log.min.isr: 1
+        commit.interval.ms: 1000
+        cache.max.bytes.buffering: 10485760
+        num.stream.threads: 1
+        state.dir: ./tmp/kafka-streams
+
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Flyway가 스키마 관리
+    properties:
+      hibernate:
+        format_sql: false
+        show_sql: false
+        jdbc:
+          time_zone: Asia/Seoul
+    show-sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  session:
+    cookie:
+      secure: true           # HTTPS 전용
+      http-only: true        # JavaScript 접근 차단
+      same-site: lax         # CSRF 방어
+
+jwt:
+  access:
+    expiration: 1800000 #30분
+  refresh:
+    expiration: 604800000 #7일
+  security:
+    privateKey: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCsVxDft1PMWVM0
+      TbfFyrla15hcxUv6m6bUhEcm3XwS+HNj1JgRxaLfjPshu5SfrpYe5e8eMgWE7Mmj
+      aUs0id0eImz6JA1miLyjMcoYF/vN+SWR469YsmPhoRgCjeaM/FhKoZ/+1Oelej0o
+      WplxsCNVyKKq998Kjdk/bnGMcwbDvg4bFg3HTWkSxmHGHRDZzUWhtpvKdH7qqzkr
+      rwIr8oJvKVDv72SbqN2V8mRj3/fPtzsmVk8FXqM/Jsu2mZ99XKt3uJ3b7lvsvV5a
+      0aTWejfekZTiACfOaQib09zxY613Abde6vCR1ADqwDpY11KXBv9dNWgXnF9N8bGp
+      p3Ese/ePAgMBAAECggEAIoVYKG/Y9cRowb/VkWWPpk4sQ1zz4LGgA86xT+wqp8Qj
+      nPofMeQkQWJEhZfE6A15HZxSPvqnF1607youucnpxFkB+kMRehnmq0vUXuoi8rm2
+      2FfCrmIhVrdFj3FsHo6Hgv+IBGwSMJfhOz2Woeq10T+cseFvyHXsb+PIE+mQj9Gk
+      IPaaGlYTbv3FJrYxAQpJO/leF7ejdeIIyjRqh0GlUaAZZOC8skInjTqpHqAMR/OCp
+      m80yeO32XRgCdNe93037MLizr7ucR1c7uLV3uHFt/esOShwkrTX/huwjmBbGi18v
+      d5Aahrk3ld1urc1ACehQbvnEBGlA1hau6jVyE5lnQKBgQDkar2OnihzrV1Co5qX
+      F59HI73eW7zCLuhQ3HN2VNbK3VrMzLUiZB9Vg9Qv7cZFLTChEUXs4ZJ39UzVvRDA
+      zucogjNXuGVFevtPzZ3/Hu8hSVfRUJhJgL+lYxMPRWKSz5jNbOx03TEtmF8393VJ
+      PjjjbqiouWPncXsgdKT9ZuFf5QKBgQDBJsVjp9vTCzHfU+YuJf/3Xn61+z9dEhU1
+      UIGC70bDoCu7FQ64m56Yqx57G6k3s0WBYqHY2cB+ORr6O1e7M7m/Va8XtsiC3Ark
+      bye3qddOXGlVQP1v2LmqxaAJ11Fe76tRBVlXxJnz+MFmzrAEWPpjUW0/X5xhVnHd
+      rh6X55I6YwKBgGJb6IaKaobth3RTuRUJEghzRqaCwHSp+FYhqAKzo861pQz9tZ46m
+      Rec7fk5naBaRk+FfaP0urq3Qb/ka1trfTT/ZBaJC+rwe1mxBDFA495kk9FJsFoue9
+      g/Ioz35uurQ3RqTCRCv5OPwqj6AWJpzdt54lzNgEzAnDGsqQOJktFVAoGBAKDF+/
+      GqrFCr9dRWCrgJC1nFfyVNP/3hamPZYiQxtS5qqVvs+Dbz2fxsG1APwzfI8ibziZ
+      JuFks6j1kQgkMhmBBKaxcLHzXFoQ9p8p5vMfdY9phvI0WxGUKrgz4Nyv6B8pDbKf
+      XjgN5SBfHkQyErSyfWhGAG3q0q/lauc2qv58jPAoGAKU3DisaPIiWdK4BBNG1RV
+      FipXQGs/brpk1rvu7cHby9DzmSFFjpe+EpXo6qw7uoJT+Gkb/+6dk+TyuFvCYqYv
+      G5FSJLUvdO33VixWamWQF0J5BwwB0mOIT1LsLxMH8+RGvvfqNAL+wO/HNJ0c2DFW
+      R4QtkjL7Ayyui2idHYS1+g=
+      -----END PRIVATE KEY-----
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArFcQ37dTzFlTNE23xcq5
+      WteYXMVL+pum1IRHJt18EvhzY9SYEcWi34z7IbuUn66WHuXvHjIFhOzJo2lLNInd
+      HiJs+iQNZoi8ozHKGBf7zfklkeOvWLJj4aEYAo3mjPxYSqGf/tTnpXo9KFqZcbAj
+      VciiqvffCo3ZP25xjHMGw74OGxYNx01pEsZhxh0Q2c1FobabynR+6qs5K68CK/KCb
+      ylQ7+9km6jdlfJkY9/3z7c7JlZPBV6jPybLtpmffVyrd7id2+5b7L1eWtGk1no33
+      pGU4gAnzmkIm9Pc8WOtdwG3XurwkdQA6sA6WNdSlwb/XTVoF5xfTfGxqadxLHv3j
+      wIDAQAB
+      -----END PUBLIC KEY-----
+
+payment:
+  toss:
+    secret-key: ${TOSS_SECRET_KEY:test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6}
+    api-url: ${TOSS_API_URL:https://api.tosspayments.com}
+    
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 50ms,100ms,200ms,500ms,1s,2s
+
+springdoc:
+  swagger-ui:
+    groups-order: DESC
+    tags-sorter: alpha
+    operations-sorter: method
+    disable-swagger-default-url: true
+    display-request-duration: true
+    defaultModelsExpandDepth: 2
+    defaultModelExpandDepth: 2
+    config-url: /api/v3/api-docs/swagger-config
+    url: /api/v3/api-docs
+  api-docs:
+    path: /v3/api-docs
+  show-actuator: true
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+  writer-with-default-pretty-printer: true
+  model-and-view-allowed: true
+  paths-to-match:
+    - /**
+
+logging:
+  level:
+    root: INFO
+    groom.backend: INFO
+    org.springframework.web: WARN
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: ./logs/application.log
+    max-size: 10MB
+    max-history: 30
+
+cloud:
+  aws:
+    region: ${AWS_REGION:ap-northeast-2}
+    s3:
+      bucket: ${AWS_S3_BUCKET:goorm-shopping-s3}
+    credentials:
+      access-key: ${AWS_ACCESS_KEY}
+      secret-key: ${AWS_SECRET_KEY}
+
