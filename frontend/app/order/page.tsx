@@ -123,7 +123,7 @@ export default function OrderPage() {
       }
 
       // 선택한 쿠폰 ID를 숫자로 변환
-      const couponId = selectedCoupon ? parseInt(selectedCoupon.couponId, 10) : null;
+      const couponId = selectedCoupon ? parseInt(selectedCoupon.couponIssueId, 10) : null;
 
       console.log('Creating order with data:', {
         couponId,

@@ -73,6 +73,7 @@ export default function CartPage() {
               const couponDetail = await couponApi.getCoupon(String(issue.couponId));
               return {
                 id: String(issue.couponId),
+                couponIssueId: issue.couponIssueId,
                 ...couponDetail,
               };
             } catch (error) {
@@ -240,8 +241,10 @@ export default function CartPage() {
     if (selectedCoupon) {
       const selectedCouponData = coupons.find(c => String(c.id) === String(selectedCoupon));
       if (selectedCouponData) {
+        console.log(selectedCouponData)
         sessionStorage.setItem('selectedCoupon', JSON.stringify({
           couponId: selectedCoupon,
+          couponIssueId: selectedCouponData.couponIssueId,
           couponName: selectedCouponData.name,
           couponType: selectedCouponData.type,
           couponAmount: selectedCouponData.amount,
