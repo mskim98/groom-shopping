@@ -157,7 +157,34 @@ public class CouponIssueService {
    */
   public Integer calculateDiscount(Long couponIssueId, Long userId, Integer cost) {
     // 다건 할인 계산 메서드를 List.of()로 감싸서 호출
-    return calculateDiscount(List.of(couponIssueId), userId, cost);
+
+    // 1. 캐시 조회 (GET)
+    String key = CACHE_PREFIX + couponIssueId;
+    CouponIssueResponse cached = couponCacheTemplate.opsForValue().get(key);
+
+    CouponIssueResponse couponDto = cached;
+
+    // 2. 캐시 미스 → DB에서 개별 조회
+    if (couponDto == null) {
+      CouponIssue issue = couponIssueRepository.findById(couponIssueId)
+              .orElseThrow(() -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
+
+      couponDto = CouponIssueResponse.from(issue);
+
+      // 3. 캐시 저장
+      couponCacheTemplate.opsForValue().set(key, couponDto);
+      // (TTL 필요 시 expire(key, ttl) 가능)
+    }
+
+    // 4. 보안 검증 (소유주/만료일/활성여부)
+    checkCouponUsable(couponDto, userId);
+
+    // 5. 할인 정책 선택
+    DiscountContext context = CouponContextMapper.from(couponDto, cost);
+    DiscountPolicy policy = discountPolicyFactory.getDiscountStrategy(couponDto.getCouponType());
+
+    // 6. 최종 할인 계산
+    return Math.min(cost, policy.calculateDiscount(context));
   }
 
   /**
@@ -288,6 +315,7 @@ public class CouponIssueService {
    * 쿠폰 검증 (Entity)
    */
   private void checkCouponUsable(CouponIssue issue, Long userId) {
+    log.info("user id {}vs user id {}", issue.getUserId(), userId);
     // 사용자 확인, 활성화 여부 확인
     if (!issue.getUserId().equals(userId))
       throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
@@ -302,6 +330,7 @@ public class CouponIssueService {
    * 쿠폰 검증 (DTO) - 오버로딩
    */
   private void checkCouponUsable(CouponIssueResponse dto, Long userId) {
+    log.info("user id {}vs user id {}", dto.getUserId(), userId);
     // 사용자 확인
     if (!dto.getUserId().equals(userId))
       throw new BusinessException(ErrorCode.COUPON_USER_MATCH_FAILED);
