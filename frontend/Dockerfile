@@ -17,8 +17,7 @@ COPY package*.json ./
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 120000 && \
-    npm config set network-timeout 300000
+    npm config set fetch-retry-maxtimeout 120000
 
 # npm 설치 (package-lock.json이 있으면 npm ci, 없으면 npm install)
 # 네트워크 오류 시 자동 재시도
