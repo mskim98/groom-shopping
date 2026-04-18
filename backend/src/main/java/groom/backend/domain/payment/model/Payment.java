@@ -2,6 +2,7 @@ package groom.backend.domain.payment.model;
 
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.payment.model.enums.PaymentMethod;
+import groom.backend.domain.payment.model.enums.PaymentStateTransition;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.model.vo.Money;
 import groom.backend.domain.payment.model.vo.PaymentKey;
@@ -209,6 +210,7 @@ public class Payment {
 
     // 비즈니스 로직: 결제 준비 상태로 변경
     public void ready(String paymentKey) {
+        PaymentStateTransition.validate(this.status, PaymentStatus.READY);
         this.paymentKey = PaymentKey.of(paymentKey);
         this.status = PaymentStatus.READY;
         this.requestedAt = LocalDateTime.now();
@@ -216,6 +218,7 @@ public class Payment {
 
     // 비즈니스 로직: 결제 승인 (기본 정보)
     public void approve(String paymentKey, String transactionId) {
+        PaymentStateTransition.validate(this.status, PaymentStatus.DONE);
         this.paymentKey = PaymentKey.of(paymentKey);
         this.transactionId = TransactionId.of(transactionId);
         this.status = PaymentStatus.DONE;
@@ -224,14 +227,15 @@ public class Payment {
 
     // 비즈니스 로직: 결제 승인 (Toss Payment API 응답으로부터)
     public void approveWithTossResponse(String paymentKey, String lastTransactionKey,
-                                       Integer balanceAmount, Integer suppliedAmount,
-                                       Integer vat, Integer taxFreeAmount,
-                                       Integer taxExemptionAmount, String mId,
-                                       String version, String type, String currency,
-                                       Boolean useEscrow, Boolean cultureExpense,
-                                       Boolean isPartialCancelable, LocalDateTime requestedAt,
-                                       String paymentMethodDetails, String receipt,
-                                       String checkout) {
+                                        Integer balanceAmount, Integer suppliedAmount,
+                                        Integer vat, Integer taxFreeAmount,
+                                        Integer taxExemptionAmount, String mId,
+                                        String version, String type, String currency,
+                                        Boolean useEscrow, Boolean cultureExpense,
+                                        Boolean isPartialCancelable, LocalDateTime requestedAt,
+                                        String paymentMethodDetails, String receipt,
+                                        String checkout) {
+        PaymentStateTransition.validate(this.status, PaymentStatus.DONE);
         this.paymentKey = PaymentKey.of(paymentKey);
         this.lastTransactionKey = lastTransactionKey;
         this.status = PaymentStatus.DONE;
@@ -256,23 +260,20 @@ public class Payment {
 
     // 비즈니스 로직: 결제 취소
     public void cancel() {
-        if (this.status != PaymentStatus.DONE) {
-            throw new IllegalStateException("완료된 결제만 취소할 수 있습니다.");
-        }
+        PaymentStateTransition.validate(this.status, PaymentStatus.CANCELED);
         this.status = PaymentStatus.CANCELED;
         this.canceledAt = LocalDateTime.now();
     }
 
     // 비즈니스 로직: 부분 취소
     public void partialCancel() {
-        if (this.status != PaymentStatus.DONE && this.status != PaymentStatus.PARTIAL_CANCELED) {
-            throw new IllegalStateException("완료된 결제만 부분 취소할 수 있습니다.");
-        }
+        PaymentStateTransition.validate(this.status, PaymentStatus.PARTIAL_CANCELED);
         this.status = PaymentStatus.PARTIAL_CANCELED;
     }
 
     // 비즈니스 로직: 결제 실패 처리
     public void fail(String failureCode, String failureMessage) {
+        PaymentStateTransition.validate(this.status, PaymentStatus.FAILED);
         this.status = PaymentStatus.FAILED;
         this.failureCode = failureCode;
         this.failureMessage = failureMessage;
@@ -280,6 +281,7 @@ public class Payment {
 
     // 비즈니스 로직: 결제 만료 처리
     public void expire() {
+        PaymentStateTransition.validate(this.status, PaymentStatus.EXPIRED);
         this.status = PaymentStatus.EXPIRED;
     }
 
@@ -288,12 +290,23 @@ public class Payment {
         if (this.method != PaymentMethod.VIRTUAL_ACCOUNT) {
             throw new IllegalStateException("가상계좌 결제만 입금 대기 상태로 변경할 수 있습니다.");
         }
+        PaymentStateTransition.validate(this.status, PaymentStatus.WAITING_FOR_DEPOSIT);
         this.status = PaymentStatus.WAITING_FOR_DEPOSIT;
     }
 
-    // 비즈니스 로직: 결제 상태 변경
+    // 비즈니스 로직: 결제 상태 변경 (State Machine 규칙 적용)
     public void changeStatus(PaymentStatus newStatus) {
+        PaymentStateTransition.validate(this.status, newStatus);
         this.status = newStatus;
+    }
+
+    /**
+     * 이미 승인된 결제인지 여부 (멱등성 체크용)
+     */
+    public boolean isAlreadyApproved() {
+        return this.status == PaymentStatus.DONE
+                || this.status == PaymentStatus.PARTIAL_CANCELED
+                || this.status == PaymentStatus.CANCELED;
     }
 
     @Override
