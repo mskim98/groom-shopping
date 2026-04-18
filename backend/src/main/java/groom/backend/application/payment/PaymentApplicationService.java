@@ -9,6 +9,7 @@ import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.model.enums.OrderStatus;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
@@ -43,96 +44,142 @@ public class PaymentApplicationService {
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
+    private final PaymentCompensationService paymentCompensationService;
     private final ObjectMapper objectMapper;
 
     /**
-     * 결제 승인 - Toss Payments API 호출 후 상태 변경
+     * 결제 승인.
+     * <p>
+     * 전체 흐름: [멱등성] paymentKey로 완료된 결제가 있는지 선조회 → 있으면 그대로 반환 (중복 승인 차단) Toss Payments 승인 API 호출 (Idempotency-Key:
+     * paymentKey) DB 후처리(Payment DONE 전이, Order CONFIRMED, 재고 차감, 티켓 발급)를 하나의 트랜잭션으로 DB 후처리 실패 시 Toss 취소 API로 자동 환불(보상
+     * 트랜잭션). 취소도 실패하면 재시도 테이블에 기록
+     * <p>
+     * <p>
+     * 주의: 이 메서드 자체는 {@code @Transactional} 이 아니다. Toss API 호출과 DB 트랜잭션을 분리해야 DB 롤백만으로 복구되지 않는 "외부 승인 + 내부 실패" 부분 실패를
+     * 정확히 탐지하고 보상할 수 있기 때문이다.
      */
-    @Transactional
     public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
+        // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
+        var existing = paymentRepository.findByPaymentKey(paymentKey);
+        if (existing.isPresent() && existing.get().isAlreadyApproved()) {
+            log.info("[PAYMENT_IDEMPOTENT_HIT] Already approved - PaymentKey: {}, Status: {}",
+                    paymentKey, existing.get().getStatus());
+            return existing.get();
+        }
+
         // 결제 조회
         Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
+
+        if (payment.isAlreadyApproved()) {
+            log.info("[PAYMENT_IDEMPOTENT_HIT] Order already has approved payment - OrderId: {}, Status: {}",
+                    orderId, payment.getStatus());
+            return payment;
+        }
 
         // 금액 검증
         if (!payment.getAmountValue().equals(amount)) {
             throw new IllegalArgumentException("결제 금액이 일치하지 않습니다.");
         }
 
+        // [2] Toss 승인 API 호출 (Idempotency-Key: paymentKey → 재시도해도 이중 결제 없음)
+        TossPaymentResponse response;
         try {
-            // Toss Payments API 결제 승인 요청
             TossPaymentConfirmRequest request = new TossPaymentConfirmRequest(
-                    paymentKey,
-                    orderId.toString(),
-                    amount
-            );
-            TossPaymentResponse response = tossPaymentClient.confirmPayment(request);
-
+                    paymentKey, orderId.toString(), amount);
+            response = tossPaymentClient.confirmPayment(request, paymentKey);
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
-
-            // Toss Payment API 응답 데이터로 Payment 승인 처리
-            String paymentMethodDetailsJson = convertPaymentMethodDetails(response);
-            String receiptJson = convertObjectToJson(response.getReceipt());
-            String checkoutJson = convertObjectToJson(response.getCheckout());
-            LocalDateTime requestedAtDateTime = parseDateTime(response.getRequestedAt());
-
-            payment.approveWithTossResponse(
-                    response.getPaymentKey(),
-                    response.getLastTransactionKey(),
-                    response.getBalanceAmount() != null ? response.getBalanceAmount() : response.getTotalAmount(),
-                    response.getSuppliedAmount() != null ? response.getSuppliedAmount() : response.getTotalAmount(),
-                    response.getVat() != null ? response.getVat() : 0,
-                    response.getTaxFreeAmount() != null ? response.getTaxFreeAmount() : 0,
-                    response.getTaxExemptionAmount() != null ? response.getTaxExemptionAmount() : 0,
-                    response.getMId(),
-                    response.getVersion(),
-                    response.getType(),
-                    response.getCurrency(),
-                    response.getUseEscrow(),
-                    response.getCultureExpense(),
-                    response.getIsPartialCancelable(),
-                    requestedAtDateTime,
-                    paymentMethodDetailsJson,
-                    receiptJson,
-                    checkoutJson
-            );
-            paymentRepository.save(payment);
-
-            // Order 상태 변경 (PENDING -> CONFIRMED)
-            Order order = payment.getOrder();
-            order.changeStatus(OrderStatus.CONFIRMED);
-            orderRepository.save(order);
-
-            // 재고 차감 및 차감된 상품 ID와 차감 후 재고량 수집
-            List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
-
-            // TICKET 카테고리 상품 처리 (Raffle 티켓 생성)
-            processTicketProducts(order);
-
-            log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
-                    payment.getId(), orderId);
-
-            // 비동기로 알림 처리 (응답 시간에 영향 없음)
-            // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
-            // 주문한 사용자는 알림에서 제외
-            paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
-
-            // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
-            paymentNotificationService.clearCartItems(order);
-
-            return payment;
-
         } catch (Exception e) {
-            // 결제 실패 처리
-            payment.fail("PAYMENT_FAILED", e.getMessage());
-            paymentRepository.save(payment);
-
-            log.error("[PAYMENT_CONFIRM_FAILED] Payment failed - OrderId: {}, Error: {}",
-                    orderId, e.getMessage());
-
+            // Toss 승인 자체가 실패 → 외부 승인 없음. DB 상태만 FAILED로 기록 (보상 불필요)
+            markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
             throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
         }
+
+        // [3] DB 후처리 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
+        try {
+            return applyApprovedPaymentInTx(orderId, response);
+        } catch (Exception dbError) {
+            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션)
+            log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
+                    orderId, paymentKey, dbError.getMessage(), dbError);
+            paymentCompensationService.compensate(
+                    payment.getId(),
+                    response.getPaymentKey(),
+                    amount,
+                    "DB 후처리 실패: " + dbError.getMessage()
+            );
+            markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    /**
+     * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급이 모두 하나의 커밋 단위에서 실행
+     */
+    @Transactional
+    public Payment applyApprovedPaymentInTx(UUID orderId, TossPaymentResponse response) {
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
+
+        String paymentMethodDetailsJson = convertPaymentMethodDetails(response);
+        String receiptJson = convertObjectToJson(response.getReceipt());
+        String checkoutJson = convertObjectToJson(response.getCheckout());
+        LocalDateTime requestedAtDateTime = parseDateTime(response.getRequestedAt());
+
+        payment.approveWithTossResponse(
+                response.getPaymentKey(),
+                response.getLastTransactionKey(),
+                response.getBalanceAmount() != null ? response.getBalanceAmount() : response.getTotalAmount(),
+                response.getSuppliedAmount() != null ? response.getSuppliedAmount() : response.getTotalAmount(),
+                response.getVat() != null ? response.getVat() : 0,
+                response.getTaxFreeAmount() != null ? response.getTaxFreeAmount() : 0,
+                response.getTaxExemptionAmount() != null ? response.getTaxExemptionAmount() : 0,
+                response.getMId(),
+                response.getVersion(),
+                response.getType(),
+                response.getCurrency(),
+                response.getUseEscrow(),
+                response.getCultureExpense(),
+                response.getIsPartialCancelable(),
+                requestedAtDateTime,
+                paymentMethodDetailsJson,
+                receiptJson,
+                checkoutJson
+        );
+        paymentRepository.save(payment);
+
+        Order order = payment.getOrder();
+        order.changeStatus(OrderStatus.CONFIRMED);
+        orderRepository.save(order);
+
+        List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
+        processTicketProducts(order);
+
+        log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
+                payment.getId(), orderId);
+
+        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
+        paymentNotificationService.clearCartItems(order);
+
+        return payment;
+    }
+
+    /**
+     * 별도 트랜잭션으로 결제 실패 상태만 기록 (메인 트랜잭션 롤백 후에도 FAILED 상태는 남겨야 하므로 REQUIRES_NEW.)
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void markPaymentFailed(UUID paymentId, String code, String message) {
+        paymentRepository.findById(paymentId).ifPresent(p -> {
+            if (p.getStatus() != PaymentStatus.DONE) {
+                try {
+                    p.fail(code, message);
+                    paymentRepository.save(p);
+                } catch (IllegalStateException ignored) {
+                    // 이미 종료 상태면 더 이상 전이하지 않음 (State Machine이 차단).
+                }
+            }
+        });
     }
 
     /**
@@ -319,7 +366,7 @@ public class PaymentApplicationService {
 
             // 재고 차감 전 값 저장
             int stockBefore = product.getStock();
-            
+
             product.decreaseStock(orderItem.getQuantity());
             productRepository.save(product);
 
@@ -329,7 +376,8 @@ public class PaymentApplicationService {
             // 차감된 상품 ID와 차감 후 재고량 저장
             results.add(new PaymentNotificationService.StockReductionResult(product.getId(), stockAfter));
 
-            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockBefore: {}, StockAfter: {}",
+            log.info(
+                    "[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockBefore: {}, StockAfter: {}",
                     product.getId(), orderItem.getQuantity(), stockBefore, stockAfter);
         }
 

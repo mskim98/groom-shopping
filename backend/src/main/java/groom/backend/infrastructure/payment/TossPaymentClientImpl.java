@@ -31,14 +31,14 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     private String apiUrl;
 
     @Override
-    public TossPaymentResponse confirmPayment(TossPaymentConfirmRequest request) {
+    public TossPaymentResponse confirmPayment(TossPaymentConfirmRequest request, String idempotencyKey) {
         String url = apiUrl + "/v1/payments/confirm";
 
-        HttpHeaders headers = createHeaders();
+        HttpHeaders headers = createHeaders(idempotencyKey);
         HttpEntity<TossPaymentConfirmRequest> entity = new HttpEntity<>(request, headers);
 
-        log.info("[TOSS_API_REQUEST] Confirm payment - PaymentKey: {}, OrderId: {}, Amount: {}",
-                request.getPaymentKey(), request.getOrderId(), request.getAmount());
+        log.info("[TOSS_API_REQUEST] Confirm payment - PaymentKey: {}, OrderId: {}, Amount: {}, IdempotencyKey: {}",
+                request.getPaymentKey(), request.getOrderId(), request.getAmount(), idempotencyKey);
 
         try {
             ResponseEntity<TossPaymentResponse> response = restTemplate.exchange(
@@ -60,17 +60,17 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     }
 
     @Override
-    public TossPaymentResponse cancelPayment(String paymentKey, String cancelReason) {
+    public TossPaymentResponse cancelPayment(String paymentKey, String cancelReason, String idempotencyKey) {
         String url = apiUrl + "/v1/payments/" + paymentKey + "/cancel";
 
-        HttpHeaders headers = createHeaders();
+        HttpHeaders headers = createHeaders(idempotencyKey);
         Map<String, String> body = new HashMap<>();
         body.put("cancelReason", cancelReason);
 
         HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
 
-        log.info("[TOSS_API_REQUEST] Cancel payment - PaymentKey: {}, Reason: {}",
-                paymentKey, cancelReason);
+        log.info("[TOSS_API_REQUEST] Cancel payment - PaymentKey: {}, Reason: {}, IdempotencyKey: {}",
+                paymentKey, cancelReason, idempotencyKey);
 
         try {
             ResponseEntity<TossPaymentResponse> response = restTemplate.exchange(
@@ -90,9 +90,14 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         }
     }
 
-    private HttpHeaders createHeaders() {
+    private HttpHeaders createHeaders(String idempotencyKey) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+
+        // Toss Payments Idempotency-Key: 재시도 시 동일 키면 이전 응답을 돌려준다 → 이중 결제 방지.
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            headers.set("Idempotency-Key", idempotencyKey);
+        }
 
         // Basic Auth: Secret Key를 Base64로 인코딩
         // 원본 시크릿 키 상태 확인
