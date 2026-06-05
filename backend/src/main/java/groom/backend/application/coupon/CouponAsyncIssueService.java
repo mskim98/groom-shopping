@@ -40,7 +40,11 @@ public class CouponAsyncIssueService {
     private final UserRepository userRepository;
     private final RedisTemplate<String, String> redisTemplate; // 요청별 처리 상태 저장(polling 용)
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate; // 7.1 String 템플릿 재사용
+    private final CouponQueueRedisRepository couponQueueRedisRepository; // 대기 순번(ZSet)
     private final ObjectMapper objectMapper;
+
+    // 대기 순번 응답용 (position = 내 앞 대기 인원, waiting = 전체 대기 인원)
+    public record QueuePosition(long position, long waiting) {}
 
     /**
      * 발급 요청을 큐에 적재하고 즉시 requestId 를 반환한다. (컨트롤러는 202 Accepted)
@@ -49,6 +53,9 @@ public class CouponAsyncIssueService {
         String requestId = UUID.randomUUID().toString();
         // 초기 상태 WAITING 기록 (polling 시 "대기 중" 표시용)
         redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
+
+        // 대기열(ZSet)에 등록 → 본인의 추정 대기 순번을 보여줄 수 있다.
+        couponQueueRedisRepository.enqueue(couponId, userId);
 
         CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId);
         // key = couponId → 같은 쿠폰 요청은 같은 파티션(직렬 처리)
@@ -79,7 +86,20 @@ public class CouponAsyncIssueService {
                     new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(), "FAILED", reason));
             log.warn("[COUPON_ASYNC_FAILED] requestId={}, couponId={}, reason={}",
                     event.requestId(), event.couponId(), reason);
+        } finally {
+            // 성공/실패 무관하게 대기열에서 제거 → 뒤 사용자의 앞 대기 인원이 줄어든다.
+            couponQueueRedisRepository.remove(event.couponId(), event.userId());
         }
+    }
+
+    /**
+     * 사용자의 현재 대기 순번을 조회한다. position = 내 앞 대기 인원(추정), waiting = 전체 대기 인원.
+     * 큐에 없으면(이미 처리됨/미등록) position 0 으로 응답한다.
+     */
+    public QueuePosition getPosition(Long couponId, Long userId) {
+        Long rank = couponQueueRedisRepository.rank(couponId, userId);
+        long waiting = couponQueueRedisRepository.size(couponId);
+        return new QueuePosition(rank != null ? rank : 0L, waiting);
     }
 
     /**
