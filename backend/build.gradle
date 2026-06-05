@@ -38,6 +38,11 @@ dependencies {
 
     implementation 'org.apache.kafka:kafka-streams'
 
+    // Resilience4j - 서킷브레이커/재시도 (외부 PG 장애 격리, Cascading Failure 방지)
+    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+    // Spring AOP - Resilience4j·@Retryable 어노테이션이 프록시 기반으로 동작하는 데 필요
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+
     // Flyway - DB 마이그레이션 도구
     implementation 'org.flywaydb:flyway-core:8.5.13'
 

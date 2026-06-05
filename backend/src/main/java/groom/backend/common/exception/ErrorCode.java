@@ -126,7 +126,13 @@ public enum ErrorCode {
 
     COUPON_INVALID_POLICY(HttpStatus.BAD_REQUEST, "쿠폰 정책에 맞지 않은 사용방식입니다."),
     COUPON_OUT_OF_STOCK(HttpStatus.CONFLICT, "발급 수량이 소진되었습니다."),
-    COUPON_ALREADY_ISSUED(HttpStatus.CONFLICT, "이미 발급받은 쿠폰입니다.");
+    COUPON_ALREADY_ISSUED(HttpStatus.CONFLICT, "이미 발급받은 쿠폰입니다."),
+
+    // ===================== Payment 에러 코드 ====================
+    /** 서킷브레이커 OPEN - PG 일시 장애로 결제 차단 (사용자에게 잠시 후 재시도 안내) */
+    PAYMENT_TEMPORARILY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "결제 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."),
+    /** PG(Toss) 호출 실패 (timeout·5xx 등) */
+    PAYMENT_PG_FAILURE(HttpStatus.BAD_GATEWAY, "결제 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
 
 
     // HTTP 상태 코드

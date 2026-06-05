@@ -128,6 +128,31 @@ http:
       max-total: 50                  # 풀 전체 최대 커넥션
       max-per-route: 20              # 목적지당 최대 커넥션
 
+# Resilience4j - 외부 PG(Toss) 호출 서킷브레이커·재시도 (인스턴스명 toss)
+resilience4j:
+  circuitbreaker:
+    instances:
+      toss:
+        sliding-window-type: COUNT_BASED          # 최근 N건 기준으로 실패율 집계
+        sliding-window-size: 20                    # 최근 20건
+        minimum-number-of-calls: 10                # 최소 10건은 모여야 회로 판단 (초반 노이즈 방지)
+        failure-rate-threshold: 50                 # 실패율 50% 초과 시 OPEN
+        slow-call-duration-threshold: 2s           # 2s 초과 호출은 '느린 호출'로 집계
+        slow-call-rate-threshold: 80               # 느린 호출 80% 초과 시 OPEN
+        wait-duration-in-open-state: 30s           # OPEN 유지 시간 (이후 HALF_OPEN)
+        permitted-number-of-calls-in-half-open-state: 5   # HALF_OPEN 에서 탐색 허용 호출 수
+        automatic-transition-from-open-to-half-open-enabled: true
+  retry:
+    instances:
+      toss:
+        max-attempts: 3                            # 최초 1회 + 재시도 2회
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          # 회로가 OPEN 이면 재시도해도 즉시 막히므로 재시도 대상에서 제외
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+
   jackson:
     serialization:
       write-dates-as-timestamps: false
