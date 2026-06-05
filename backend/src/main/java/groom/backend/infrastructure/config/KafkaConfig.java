@@ -10,11 +10,15 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.apache.kafka.common.TopicPartition;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.util.backoff.ExponentialBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -207,6 +211,16 @@ public class KafkaConfig {
 
         // 1. 이 리스너 팩토리가 사용할 Consumer 설정을 연결합니다.
         factory.setConsumerFactory(couponDelayEventConsumerFactory());
+
+        // [DLQ + 지수 백오프] 처리 실패 시 1s·2s·4s 로 재시도(maxElapsedTime 7s ≈ 3회) 후, 그래도 실패하면
+        // 전용 DLQ 토픽(coupon-delay-dlq)으로 이관한다. 정상 파이프라인은 막히지 않는다.
+        ExponentialBackOff backOff = new ExponentialBackOff(1000L, 2.0);
+        backOff.setMaxElapsedTime(7000L);
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                couponDelayEventKafkaTemplate(),
+                // partition -1 → 브로커가 파티션을 배정 (전용 DLQ 토픽으로 라우팅)
+                (record, ex) -> new TopicPartition("coupon-delay-dlq", -1));
+        factory.setCommonErrorHandler(new DefaultErrorHandler(recoverer, backOff));
 
         // 2. [중요] AckMode (메시지 처리 완료 '확인' 모드)
         //    ContainerProperties.AckMode.RECORD:
