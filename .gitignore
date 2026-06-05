@@ -14,3 +14,7 @@ backend/logs/application.log
 *.log
 
 results.json
+
+backend/docs/
+
+backend/gradlew.bat
