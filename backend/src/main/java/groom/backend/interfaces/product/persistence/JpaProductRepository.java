@@ -66,7 +66,7 @@ public class JpaProductRepository implements ProductRepository {
                     ? e.getThresholdValue() 
                     : 10;
             
-            return Product.create(
+            Product product = Product.create(
                     e.getId(),
                     new Name(e.getName() != null ? e.getName() : ""),
                     new Description(e.getDescription()),
@@ -77,6 +77,9 @@ public class JpaProductRepository implements ProductRepository {
                     e.getIsActive(),
                     e.getImageUrl()
             );
+            // 낙관적 락 version 을 도메인에 옮겨 담는다 (저장 시 되돌려 보내 충돌 감지).
+            product.assignVersion(e.getVersion());
+            return product;
         } catch (IllegalArgumentException ex) {
             // 카테고리 변환 실패 시 기본값 사용
             ProductCategory category = ProductCategory.GENERAL;
@@ -86,7 +89,7 @@ public class JpaProductRepository implements ProductRepository {
                     ? e.getThresholdValue() 
                     : 10;
             
-            return Product.create(
+            Product product = Product.create(
                     e.getId(),
                     new Name(e.getName() != null ? e.getName() : ""),
                     new Description(e.getDescription()),
@@ -97,6 +100,8 @@ public class JpaProductRepository implements ProductRepository {
                     e.getIsActive(),
                     e.getImageUrl() != null ? e.getImageUrl() : null
             );
+            product.assignVersion(e.getVersion());
+            return product;
         }
     }
 
@@ -112,6 +117,7 @@ public class JpaProductRepository implements ProductRepository {
                 .category(p.getCategory() != null ? p.getCategory().name() : null)
                 .status(p.getStatus() != null ? p.getStatus().name() : null)
                 .imageUrl(p.getImageUrl())
+                .version(p.getVersion())   // 낙관적 락 version round-trip (신규 상품은 null → INSERT)
                 .build();
     }
 }

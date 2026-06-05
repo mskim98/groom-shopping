@@ -25,9 +25,17 @@ public class Product {
     private Integer thresholdValue;
     private Boolean isActive;
     private String imageUrl;
+    // 낙관적 락 버전. 영속 데이터를 로드할 때 채워지고, 저장 시 그대로 되돌려 보내(round-trip) 충돌을 감지한다.
+    // 신규 생성 상품은 null (최초 INSERT 시 DB/Hibernate 가 0으로 채움).
+    private Long version;
 
     public void changeImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
+    }
+
+    // 매퍼 전용: 로드한 JPA 엔티티의 version 을 도메인에 옮겨 담는다 (저장 시 다시 내보내 낙관적 락 성립).
+    public void assignVersion(Long version) {
+        this.version = version;
     }
     public static Product create(
             UUID id,

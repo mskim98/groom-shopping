@@ -3,6 +3,7 @@ package groom.backend.application.payment;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentCompletedEvent;
+import groom.backend.application.product.ProductStockService;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.application.raffle.RaffleValidationService;
@@ -57,6 +58,7 @@ public class PaymentApplicationService {
     private final PaymentNotificationService paymentNotificationService;
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 완료 이벤트 Outbox 적재
+    private final ProductStockService productStockService; // 낙관적 락 기반 재고 차감(충돌 자동 재시도)
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -411,25 +413,15 @@ public class PaymentApplicationService {
         List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
 
         for (OrderItem orderItem : order.getOrderItems()) {
-            Product product = productRepository.findById(orderItem.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
-
-            // 재고 차감 전 값 저장
-            int stockBefore = product.getStock();
-
-            product.decreaseStock(orderItem.getQuantity());
-            productRepository.save(product);
-
-            // 차감 후 재고량 확인 (차감 후 값)
-            int stockAfter = product.getStock();
+            // 낙관적 락 + 자동 재시도로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
+            int stockAfter = productStockService.decreaseWithOptimisticLock(
+                    orderItem.getProductId(), orderItem.getQuantity());
 
             // 차감된 상품 ID와 차감 후 재고량 저장
-            results.add(new PaymentNotificationService.StockReductionResult(product.getId(), stockAfter));
+            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
 
-            log.info(
-                    "[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockBefore: {}, StockAfter: {}",
-                    product.getId(), orderItem.getQuantity(), stockBefore, stockAfter);
+            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
+                    orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
         }
 
         return results;

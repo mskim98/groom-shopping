@@ -132,7 +132,10 @@ public enum ErrorCode {
     /** 서킷브레이커 OPEN - PG 일시 장애로 결제 차단 (사용자에게 잠시 후 재시도 안내) */
     PAYMENT_TEMPORARILY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "결제 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."),
     /** PG(Toss) 호출 실패 (timeout·5xx 등) */
-    PAYMENT_PG_FAILURE(HttpStatus.BAD_GATEWAY, "결제 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    PAYMENT_PG_FAILURE(HttpStatus.BAD_GATEWAY, "결제 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."),
+
+    /** 재고 차감 낙관적 락 충돌이 재시도 후에도 해소되지 않음 */
+    PRODUCT_STOCK_CONFLICT(HttpStatus.CONFLICT, "주문이 많아 처리에 실패했습니다. 잠시 후 다시 시도해주세요.");
 
 
     // HTTP 상태 코드

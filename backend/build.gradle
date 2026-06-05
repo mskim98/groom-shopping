@@ -42,6 +42,8 @@ dependencies {
     implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
     // Spring AOP - Resilience4j·@Retryable 어노테이션이 프록시 기반으로 동작하는 데 필요
     implementation 'org.springframework.boot:spring-boot-starter-aop'
+    // Spring Retry - 낙관적 락 충돌(@Retryable) 자동 재시도
+    implementation 'org.springframework.retry:spring-retry'
 
     // Flyway - DB 마이그레이션 도구
     implementation 'org.flywaydb:flyway-core:8.5.13'
