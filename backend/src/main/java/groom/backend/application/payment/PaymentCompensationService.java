@@ -1,7 +1,10 @@
 package groom.backend.application.payment;
 
+import groom.backend.application.payment.event.PaymentCompensationDlqEvent;
 import groom.backend.domain.payment.model.PaymentCompensation;
+import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
+import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,6 +32,7 @@ public class PaymentCompensationService {
     // private final : 스프링이 주입하는 협력 객체. 외부에서 못 바꾸게 막아 안전하게 사용.
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
+    private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
 
     /**
      * 즉시 보상(환불)을 시도한다. 실패 시 재시도 대상으로 기록
@@ -110,6 +114,19 @@ public class PaymentCompensationService {
             log.error("[PAYMENT_COMPENSATION_FAILED] PaymentKey: {}, RetryCount: {}, Status: {}, Error: {}",
                     compensation.getPaymentKey(), compensation.getRetryCount(),
                     compensation.getStatus(), e.getMessage());
+
+            // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
+            if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
+                dlqProducer.publish(new PaymentCompensationDlqEvent(
+                        compensation.getId(),
+                        compensation.getPaymentId(),
+                        compensation.getPaymentKey(),
+                        compensation.getAmount(),
+                        compensation.getReason(),
+                        e.getMessage(),
+                        compensation.getRetryCount(),
+                        LocalDateTime.now()));
+            }
         }
     }
 }
