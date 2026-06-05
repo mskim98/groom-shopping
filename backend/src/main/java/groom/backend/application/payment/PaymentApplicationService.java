@@ -1,6 +1,8 @@
 package groom.backend.application.payment;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.event.PaymentCompletedEvent;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.application.raffle.RaffleValidationService;
@@ -9,7 +11,9 @@ import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.model.enums.OrderStatus;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
+import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
+import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
@@ -52,6 +56,7 @@ public class PaymentApplicationService {
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
+    private final PaymentOutboxRepository paymentOutboxRepository; // 결제 완료 이벤트 Outbox 적재
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -180,10 +185,31 @@ public class PaymentApplicationService {
         log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
                 payment.getId(), orderId);
 
+        // [Outbox] 결제 완료 이벤트를 '같은 트랜잭션'으로 적재 → 커밋 = 이벤트 영구 보존(at-least-once)
+        // 별도 publisher 가 Kafka 로 발행. 알림은 아직 아래 직접 호출도 유지(Strangler 점진 전환).
+        appendPaymentCompletedOutbox(payment);
+
         paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
         paymentNotificationService.clearCartItems(order);
 
         return payment;
+    }
+
+    // 결제 완료 이벤트를 Outbox 테이블에 적재한다. 호출 트랜잭션(REQUIRES_NEW)에 합류해 결제와 원자적으로 커밋된다.
+    private void appendPaymentCompletedOutbox(Payment payment) {
+        PaymentCompletedEvent event = new PaymentCompletedEvent(
+                payment.getId(), payment.getOrder().getId(), payment.getAmountValue(), LocalDateTime.now());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            // 직렬화 실패(사실상 발생 불가)는 결제 자체를 막지 않도록 로깅만 한다.
+            log.error("[OUTBOX_APPEND_SKIP] paymentId={}, error={}", payment.getId(), e.getMessage());
+            return;
+        }
+        // DB 저장 실패는 그대로 전파 → 트랜잭션 롤백(결제와 이벤트의 원자성 보장)
+        paymentOutboxRepository.save(
+                PaymentOutbox.create(payment.getId(), PaymentCompletedEvent.EVENT_TYPE, payload));
     }
 
     /**
