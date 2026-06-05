@@ -118,6 +118,16 @@ payment:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
 
+# 외부 PG(Toss) HTTP 클라이언트 타임아웃·커넥션 풀 설정 (RestTemplateConfig 에서 주입)
+http:
+  client:
+    toss:
+      connect-timeout: 3s            # TCP 핸드셰이크 한도
+      response-timeout: 5s           # 응답 수신 한도
+      connection-request-timeout: 2s # 풀에서 커넥션 획득 대기 한도
+      max-total: 50                  # 풀 전체 최대 커넥션
+      max-per-route: 20              # 목적지당 최대 커넥션
+
   jackson:
     serialization:
       write-dates-as-timestamps: false
