@@ -1,5 +1,6 @@
 package groom.backend.interfaces.coupon;
 
+import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.coupon.service.CouponCommonService;
@@ -33,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 // @Tag : Swagger 문서에서 이 컨트롤러의 API들을 'Coupon' 그룹으로 묶어 보여준다.
 @Tag(name = "Coupon", description = "쿠폰 발급 및 사용, 조회 API")
@@ -53,6 +55,7 @@ public class CouponController {
   // 의존성 주입 제어를 스프링에 넘기며, 외부에서 접근/교체할 수 없게 해(private) 안전하게 사용한다.
   private final CouponCommonService couponCommonService;
   private final CouponIssueService couponIssueService;
+  private final CouponAsyncIssueService couponAsyncIssueService;
 
   @GetMapping("/{coupon_id}")
   @Operation(summary = "단일 쿠폰 조회", description = "지정된 id의 쿠폰을 조회합니다.")
@@ -149,6 +152,41 @@ public class CouponController {
     }
 
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
+  }
+
+  @Operation(
+          summary = "쿠폰 비동기 발급 (대규모 트래픽용)",
+          description = """
+          발급 요청을 큐에 적재하고 즉시 requestId 를 반환합니다(202 Accepted).
+          동일 쿠폰 요청은 단일 컨슈머가 직렬 처리하므로 분산 락 없이 동시성이 해소됩니다.
+          처리 결과는 상태 조회 API 로 polling 합니다.
+          """
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "202", description = "요청 접수(처리 대기)"),
+          @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
+  })
+  @PostMapping("/issue-async/{coupon_id}")
+  public ResponseEntity<Map<String, String>> issueCouponAsync(
+          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
+          @AuthenticationPrincipal(expression = "user") User user,
+          @Parameter(description = "쿠폰 ID", example = "1")
+          @PathVariable("coupon_id") Long couponId) {
+    String requestId = couponAsyncIssueService.enqueue(couponId, user.getId());
+    // 202 Accepted: "요청은 받았고 처리는 비동기로 진행 중"
+    return ResponseEntity.accepted().body(Map.of("requestId", requestId, "status", "WAITING"));
+  }
+
+  @Operation(
+          summary = "쿠폰 비동기 발급 상태 조회",
+          description = "requestId 로 발급 처리 상태(WAITING/SUCCESS/FAILED:사유/UNKNOWN)를 조회합니다."
+  )
+  @GetMapping("/issue-async/{request_id}/status")
+  public ResponseEntity<Map<String, String>> getIssueStatus(
+          @Parameter(description = "발급 요청 ID")
+          @PathVariable("request_id") String requestId) {
+    String status = couponAsyncIssueService.getStatus(requestId);
+    return ResponseEntity.ok(Map.of("requestId", requestId, "status", status));
   }
 
   @Operation(
