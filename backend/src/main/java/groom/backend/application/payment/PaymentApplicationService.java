@@ -3,8 +3,11 @@ package groom.backend.application.payment;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentCompletedEvent;
+import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.application.raffle.RaffleValidationService;
 import groom.backend.domain.order.model.Order;
@@ -59,6 +62,7 @@ public class PaymentApplicationService {
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 완료 이벤트 Outbox 적재
     private final ProductStockService productStockService; // 낙관적 락 기반 재고 차감(충돌 자동 재시도)
+    private final ProductStockRedisRepository productStockRedisRepository; // Redis 재고 선점(결제 진입 전 게이트)
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -104,6 +108,10 @@ public class PaymentApplicationService {
             throw new IllegalArgumentException("결제 금액이 일치하지 않습니다.");
         }
 
+        // [1.5] Redis 재고 선점 - 결제 진입 직전 재고를 먼저 잡아, 부족하면 Toss 호출 없이 즉시 실패(비용 절감).
+        // 미초기화 상품은 건너뛰고 DB 낙관적 락이 최종 방어한다. 이후 단계 실패 시 선점을 복원한다.
+        List<OrderItem> reservedItems = preReserveStock(orderId);
+
         // [2] Toss 승인 API 호출 (Idempotency-Key: paymentKey → 재시도해도 이중 결제 없음)
         TossPaymentResponse response;
         try {
@@ -113,7 +121,8 @@ public class PaymentApplicationService {
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
-            // Toss 승인 자체가 실패 → 외부 승인 없음. DB 상태만 FAILED로 기록 (보상 불필요)
+            // Toss 승인 자체가 실패 → 외부 승인 없음. 선점한 Redis 재고를 복원하고 DB 상태만 FAILED로 기록.
+            releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
             selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
             throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
@@ -124,7 +133,8 @@ public class PaymentApplicationService {
         try {
             return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
         } catch (Exception dbError) {
-            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션)
+            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 선점 복원 + 자동 환불(보상 트랜잭션)
+            releaseStock(reservedItems);
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
                     orderId, paymentKey, dbError.getMessage(), dbError);
             paymentCompensationService.compensate(
@@ -135,6 +145,38 @@ public class PaymentApplicationService {
             );
             selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    // 주문의 모든 항목에 대해 Redis 재고를 선점한다. 부족하면 이미 선점한 것을 복원하고 즉시 실패.
+    // 반환: 실제 Redis 에 선점된 항목 목록(미초기화 항목은 제외 — 복원 대상이 아님).
+    private List<OrderItem> preReserveStock(UUID orderId) {
+        Order order = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("주문을 찾을 수 없습니다: " + orderId));
+
+        List<OrderItem> reserved = new java.util.ArrayList<>();
+        for (OrderItem item : order.getOrderItems()) {
+            long result = productStockRedisRepository.preReserve(item.getProductId(), item.getQuantity());
+            if (result == -2L) {
+                // Redis 미초기화 → 게이트 건너뜀(DB 낙관적 락이 최종 방어)
+                log.warn("[STOCK_RESERVE_FALLBACK] Redis 미초기화, DB 폴백 - ProductId: {}", item.getProductId());
+                continue;
+            }
+            if (result == -1L) {
+                // 재고 부족 → 이미 선점한 항목 복원 후 즉시 실패(Toss 호출 안 함)
+                releaseStock(reserved);
+                log.info("[STOCK_RESERVE_OUT] ProductId: {}, Quantity: {}", item.getProductId(), item.getQuantity());
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+            }
+            reserved.add(item);
+        }
+        return reserved;
+    }
+
+    // 선점한 Redis 재고를 복원한다 (결제 실패·보상 시 Redis-DB 정합 유지).
+    private void releaseStock(List<OrderItem> items) {
+        for (OrderItem item : items) {
+            productStockRedisRepository.release(item.getProductId(), item.getQuantity());
         }
     }
 
@@ -435,6 +477,9 @@ public class PaymentApplicationService {
 
             product.increaseStock(orderItem.getQuantity());
             productRepository.save(product);
+
+            // Redis 선점 재고도 함께 복원해 Redis-DB 드리프트를 막는다.
+            productStockRedisRepository.release(orderItem.getProductId(), orderItem.getQuantity());
 
             log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}, Current: {}",
                     product.getId(), orderItem.getQuantity(), product.getStock());
