@@ -21,18 +21,27 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 
+// @Slf4j : log 객체 생성.
 @Slf4j
+// @Service : 주문 유스케이스를 조립하는 응용 서비스 빈.
 @Service
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
+// @Transactional(readOnly = true) : 기본 읽기 전용. 쓰기 메서드(createOrder)에만 @Transactional 추가.
 @Transactional(readOnly = true)
 public class OrderApplicationService {
 
+    // private final : 주문 생성에 필요한 협력 객체들. 스프링이 주입하고 교체 불가 → 안전하게 사용.
     private final OrderRepository orderRepository;
     private final SpringDataCartItemRepository cartItemRepository;
     private final SpringDataProductRepository productRepository;
-    private final CouponIssueService couponIssueService;
-    private final PaymentRepository paymentRepository;
+    private final CouponIssueService couponIssueService; // 쿠폰 할인액 계산 협력
+    private final PaymentRepository paymentRepository;   // 주문과 함께 결제(PENDING) 자동 생성
 
+    // 주문 생성 데이터 흐름:
+    // 1) 장바구니 조회 → 2) 상품 검증(존재/판매중/재고) → 3) OrderItem 스냅샷 생성
+    // 4) 금액 계산 → 5) 쿠폰 할인 적용 → 6) 주문 저장 → 7) 결제(PENDING) 자동 생성
+    // @Transactional : 위 단계 중 하나라도 실패하면 전부 롤백되어 어중간한 주문이 남지 않게 한다.
     @Transactional
     public Order createOrder(Long userId, Long couponId) {
 
@@ -116,6 +125,7 @@ public class OrderApplicationService {
         // 쿠폰 할인 적용 (쿠폰이 있는 경우)
         if (couponId != null) {
             Integer discountAmount = couponIssueService.calculateDiscount(couponId, userId, order.getSubTotal());
+            System.out.println("discountAmount : " + discountAmount);
             order.setDiscountAmount(discountAmount);
             log.info("Coupon applied - couponId: {}, discountAmount: {}", couponId, discountAmount);
         }

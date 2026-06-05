@@ -30,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
@@ -37,14 +38,20 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 사용자에게 발급된 쿠폰을 관리하는 서비스 (캐싱 적용 리팩토링)
  */
+// @Service : 비즈니스 로직을 담는 계층임을 스프링에 알려 빈으로 등록한다.
 @Service
+// @RequiredArgsConstructor : final 필드를 받는 생성자를 만들어 생성자 기반 의존성 주입을 한다.
 @RequiredArgsConstructor
+// @Transactional(readOnly = true) : 클래스 기본값을 '읽기 전용 트랜잭션'으로 둔다.
+// 조회 메서드는 그대로 두고, 데이터를 바꾸는 메서드에만 @Transactional 을 따로 붙여 쓰기를 허용한다.
 @Transactional(readOnly = true)
+// @Slf4j : Lombok이 log 객체를 생성한다.
 @Slf4j
 public class CouponIssueService {
 
@@ -62,14 +69,18 @@ public class CouponIssueService {
     private static final long LOCK_WAIT_SECONDS = 3L;
     private static final long LOCK_LEASE_SECONDS = 5L;
 
+    // private final 의존성들 : 스프링이 생성자로 주입(제어의 역전)하고,
+    // 외부에서 바꿀 수 없게 막아(private final) 서비스가 항상 같은 협력 객체를 안전하게 쓰도록 한다.
     private final CouponRepository couponRepository;
     private final CouponIssueRepository couponIssueRepository;
     private final DiscountPolicyFactory discountPolicyFactory;
-    private final CacheManager couponCacheManager; // CacheManager 주입
-
-    private final RedisTemplate<String, CouponIssueResponse> couponCacheTemplate;
-    private final RedissonClient redissonClient;
-    private final CouponStockRedisRepository couponStockRedisRepository;
+    private final CacheManager couponCacheManager; // 스프링 Cache 추상화 진입점
+    private final RedisTemplate<String, CouponIssueResponse> couponCacheTemplate; // 쿠폰 DTO 캐시 직접 조작용
+    private final RedissonClient redissonClient; // 분산 락(다중 서버에서 동시성 제어)용
+    private final CouponStockRedisRepository couponStockRedisRepository; // Redis 재고 Lua 연산 담당
+    // 자기호출 우회: persistIssuedCoupon / issueCouponInDbOnly 의 @Transactional 이
+    // issueCoupon() 내부 직접 호출로 무효화되지 않도록 프록시를 거쳐 호출한다.
+    private final ObjectProvider<CouponIssueService> selfProvider;
 
 
     /**
@@ -83,11 +94,20 @@ public class CouponIssueService {
      * <p>
      * 기존 {@code findByIdForUpdate} (JPA 비관적 락) 방식 대비 DB 커넥션 점유 시간이 사라져 트래픽 급증 시 커넥션 풀 고갈을 방지
      */
+    // @CacheEvict : 발급에 성공하면 그 사용자의 '쿠폰 목록 캐시'를 지워(무효화)
+    // 다음 조회 때 새로 발급된 쿠폰이 반드시 보이도록 한다(캐시-DB 불일치 방지).
+    // propagation = NOT_SUPPORTED : 클래스 기본값 @Transactional(readOnly=true) 를 덮어써
+    // 이 메서드를 '비트랜잭션'으로 실행한다. Redisson 락 + Lua 실행 구간 동안 DB 커넥션을
+    // 점유하지 않고(커넥션 풀 고갈 방지), 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에
+    // 합류(REQUIRED)해 쿠폰 차감 쓰기가 유실되는 일을 막는다.
     @CacheEvict(cacheNames = COUPON_LIST_CACHE_NAME, key = "#user.id")
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public CouponIssueResponse issueCoupon(Long couponId, User user) {
+        // 쿠폰별 락 객체 획득. 키가 쿠폰마다 다르므로 다른 쿠폰끼리는 서로 막지 않는다.
         RLock lock = redissonClient.getLock(COUPON_LOCK_KEY_PREFIX + couponId);
         boolean acquired = false;
         try {
+            // tryLock : 최대 waitTime 동안만 락을 기다리고, 잡으면 leaseTime 뒤 자동 해제(데드락 방지).
             acquired = lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS);
             if (!acquired) {
                 // 대기 한도를 넘으면 무한 대기 대신 빠른 실패로 떨어뜨린다.
@@ -106,7 +126,7 @@ public class CouponIssueService {
                     // Redis에 재고가 없으면 DB에서 초기화 후 재시도 대신, DB 기반 폴백으로 발급
                     log.warn("[COUPON_STOCK_FALLBACK] Redis stock not initialized, falling back to DB. couponId={}",
                             couponId);
-                    return issueCouponInDbOnly(couponId, user);
+                    return selfProvider.getObject().issueCouponInDbOnly(couponId, user);
                 }
                 default -> {
                     // SUCCESS - DB 영속화 진행
@@ -114,7 +134,7 @@ public class CouponIssueService {
             }
 
             try {
-                return persistIssuedCoupon(couponId, user);
+                return selfProvider.getObject().persistIssuedCoupon(couponId, user);
             } catch (RuntimeException dbError) {
                 // DB 저장 실패 → Redis 재고/발급자 SET 롤백으로 상태 일치 유지
                 couponStockRedisRepository.rollbackIssue(couponId, user.getId());
@@ -134,7 +154,10 @@ public class CouponIssueService {
     /**
      * Redis 성공 이후 DB 영속화. 트랜잭션 경계시작
      */
-    @Transactional
+    // propagation = REQUIRES_NEW : 항상 독립된 read-write 새 트랜잭션으로 DB 영속화를 묶는다.
+    // ✅ 자기호출 함정 해결: issueCoupon() 이 selfProvider.getObject() 로 프록시를 거쳐 호출.
+    // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 쓰기 트랜잭션이 보장된다.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public CouponIssueResponse persistIssuedCoupon(Long couponId, User user) {
         Coupon coupon = couponRepository.findById(couponId).orElseThrow(
                 () -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
@@ -164,7 +187,10 @@ public class CouponIssueService {
     /**
      * Redis 재고가 없을 때의 폴백. DB 비관적 락으로 기존 로직을 유지
      */
-    @Transactional
+    // propagation = REQUIRES_NEW : DB 비관적 락 + 발급 저장을 항상 독립된 쓰기 트랜잭션으로 묶는다.
+    // ✅ 자기호출 함정 해결: issueCoupon() 이 selfProvider.getObject() 로 프록시를 거쳐 호출.
+    // ✅ readOnly 합류 방지: REQUIRES_NEW 라 비관적 락(FOR UPDATE)이 정상 동작하는 쓰기 트랜잭션 보장.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public CouponIssueResponse issueCouponInDbOnly(Long couponId, User user) {
         Coupon coupon = couponRepository.findByIdForUpdate(couponId).orElseThrow(
                 () -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
@@ -203,6 +229,8 @@ public class CouponIssueService {
     /**
      * 사용자의 쿠폰 '목록' 조회 목록 캐시(@Cacheable)와 함께, 조회된 단건들을 수동으로 단건 캐시('coupon-item-cache')에 저장 (Cache Warming)
      */
+    // @Cacheable : 같은 userId 로 다시 호출되면 메서드를 실행하지 않고 캐시 값을 바로 반환한다.
+    // (DB 부하를 줄이는 핵심. 데이터가 바뀌면 위의 @CacheEvict 가 캐시를 비워준다)
     @Cacheable(cacheNames = COUPON_LIST_CACHE_NAME, key = "#userId")
     public List<CouponIssueResponse> searchMyCoupon(Long userId) {
         List<CouponIssue> issues = couponIssueRepository.findByUserIdAndIsActiveTrueAndDeletedAtAfter(userId,
@@ -353,6 +381,8 @@ public class CouponIssueService {
     /**
      * 쿠폰 사용 확정 메서드 (수정) couponId -> couponIssueId로 파라미터명 변경, @CacheEvict 키 수정
      */
+    // @Caching : 여러 개의 캐시 어노테이션을 한 메서드에 함께 적용할 때 사용한다.
+    // 쿠폰을 사용하면 단건 캐시와 목록 캐시 둘 다 비워야 옛 데이터가 남지 않는다.
     @Caching(evict = {
             // 1. 단건 쿠폰 캐시에서 이 쿠폰을 제거 (키 이름 수정)
             @CacheEvict(cacheNames = COUPON_ITEM_CACHE_NAME, key = "#couponIssueId"),

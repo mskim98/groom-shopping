@@ -9,10 +9,14 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+// @Repository : 영속성 계층 빈. 도메인의 PaymentRepository 인터페이스를 JPA로 '구현'한 어댑터.
+// 도메인은 인터페이스만 알고, 실제 DB 접근은 Spring Data JPA에 위임한다(의존성 역전).
 @Repository
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
 public class PaymentRepositoryImpl implements PaymentRepository {
 
+    // private final : 실제 DB 쿼리를 수행하는 Spring Data 리포지토리. 스프링이 주입.
     private final SpringDataPaymentRepository springDataPaymentRepository;
 
     @Override

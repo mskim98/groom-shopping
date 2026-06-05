@@ -34,14 +34,23 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
+// @Tag : Swagger 문서에서 이 컨트롤러의 API들을 'Coupon' 그룹으로 묶어 보여준다.
 @Tag(name = "Coupon", description = "쿠폰 발급 및 사용, 조회 API")
+// @Validated : 파라미터(@PathVariable, @RequestParam 등)의 검증 어노테이션을 동작하게 한다.
 @Validated
+// @Slf4j : Lombok이 'log' 라는 Logger 객체를 자동 생성해줘 직접 선언할 필요가 없다.
 @Slf4j
+// @RestController : @Controller + @ResponseBody. 반환값을 자동으로 JSON 본문으로 변환한다.
 @RestController
+// @RequiredArgsConstructor : final 필드만 받는 생성자를 Lombok이 만들어, 스프링이 생성자 주입을 하게 한다.
 @RequiredArgsConstructor
+// @RequestMapping : 이 컨트롤러의 모든 URL 앞에 공통으로 붙는 기본 경로.
 @RequestMapping("/v1/coupon")
+// @CheckPermission : 커스텀 권한 검사 어노테이션(AOP). USER 또는 ADMIN 권한이 있어야 접근 가능.
 @CheckPermission(roles = {"USER", "ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
 public class CouponController {
+  // private final : 값이 한 번 주입되면 바뀌지 않도록 막고(final),
+  // 의존성 주입 제어를 스프링에 넘기며, 외부에서 접근/교체할 수 없게 해(private) 안전하게 사용한다.
   private final CouponCommonService couponCommonService;
   private final CouponIssueService couponIssueService;
 
@@ -99,12 +108,19 @@ public class CouponController {
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰",
                   content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
   })
+  // 쿠폰 발급 요청 처리 흐름:
+  // 1) 요청 → 2) 사용자/요청시간 검증 → 3) 발급 서비스 호출 → 4) 응답(201 Created)
+  // @PostMapping : HTTP POST 요청을 이 메서드에 매핑한다(자원 '생성' 의미).
   @PostMapping("/issue/{coupon_id}")
   public ResponseEntity<CouponIssueResponse> issueCoupon(
+          // @AuthenticationPrincipal : JWT 인증 필터가 검증을 마친 뒤 SecurityContext에 담아둔
+          // 사용자 정보를 파라미터로 자동 주입한다. 토큰 검증은 Security 계층이 이미 끝냈다.
           @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
           @AuthenticationPrincipal(expression = "user") User user,
+          // @RequestHeader : HTTP 요청 헤더의 값을 파라미터로 받는다(여기선 클라이언트 시각).
           @Parameter(description = "클라이언트 기준 UTC 시간", required = true, example = "Wed, 06 Nov 2025 15:00:00 GMT")
           @RequestHeader("Request-Date") Instant clientInstant,
+          // @PathVariable : URL 경로의 {coupon_id} 부분을 파라미터로 추출한다.
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId) {
 

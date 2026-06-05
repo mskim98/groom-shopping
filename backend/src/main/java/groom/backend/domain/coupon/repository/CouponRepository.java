@@ -14,12 +14,17 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
+// @Repository : JPA 기반 쿠폰 영속성 계층. 기본 CRUD는 JpaRepository가 제공한다.
 @Repository
 public interface CouponRepository extends JpaRepository<Coupon, Long> {
+  // @Lock(PESSIMISTIC_WRITE) : 조회하는 동안 해당 행에 DB 쓰기 락을 걸어
+  // 다른 트랜잭션이 동시에 수량을 못 바꾸게 한다(Redis 재고가 없을 때의 폴백 경로에서 사용).
+  // @Query : 메서드 이름 규칙 대신 직접 JPQL을 지정한다. @Param 은 쿼리의 :couponId 자리에 인자를 바인딩.
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT c FROM Coupon c WHERE c.id = :couponId")
   Optional<Coupon> findByIdForUpdate(@Param("couponId") Long couponId);
 
+  // @Modifying : SELECT가 아닌 UPDATE/DELETE 쿼리임을 알려준다(이게 없으면 실행되지 않음).
   @Modifying
   @Query("UPDATE Coupon c SET c.isActive = false where c.id = :couponId")
   Integer updateIsActiveFalse(@Param("couponId") Long couponId);

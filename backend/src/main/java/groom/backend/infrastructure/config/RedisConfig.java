@@ -30,10 +30,14 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
+// @Configuration : 빈을 정의하는 설정 클래스.
 @Configuration
+// @EnableCaching : @Cacheable, @CacheEvict 같은 스프링 캐시 어노테이션을 동작하게 켠다.
+//                  (이게 없으면 CouponIssueService의 캐시 어노테이션이 무시된다)
 @EnableCaching
 public class RedisConfig {
 
+    // @Value : application.yml 의 Redis 접속 정보를 주입.
     @Value("${spring.data.redis.host}")
     private String host;
 
@@ -44,15 +48,19 @@ public class RedisConfig {
     public static final String COUPON_ITEM_CACHE_NAME = "coupon-item-cache";
     public static final String COUPON_LIST_CACHE_NAME = "user-coupons-list-cache";
 
+    // @Bean : Redis 연결 팩토리를 빈으로 등록(Lettuce는 비동기/논블로킹 Redis 클라이언트).
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
         return new LettuceConnectionFactory(host, port);
     }
 
+    // @Bean : 쿠폰 재고용 기본 RedisTemplate. 키/값을 모두 문자열로 직렬화한다.
+    // (CouponStockRedisRepository 의 Lua 스크립트가 이 템플릿으로 재고를 다룬다)
     @Bean
     public RedisTemplate<String, String> redisTemplate(RedisConnectionFactory factory) {
         RedisTemplate<String, String> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
+        // 직렬화기 지정: 지정하지 않으면 JDK 직렬화가 적용돼 redis-cli로 값을 읽기 어려워진다.
         template.setKeySerializer(new StringRedisSerializer());
         template.setValueSerializer(new StringRedisSerializer());
         return template;
@@ -148,6 +156,9 @@ public class RedisConfig {
         return objectMapper;
     }
 
+    // @Bean(name = ...) : 같은 타입의 빈이 여러 개라 이름으로 구분한다.
+    // 주입받는 쪽은 변수명을 'couponCacheTemplate'으로 맞추거나 @Qualifier로 이 빈을 지정한다.
+    // 쿠폰 발급 응답(DTO)을 JSON으로 캐싱하기 위한 전용 템플릿.
     @Bean(name = "couponCacheTemplate")
     public RedisTemplate<String, CouponIssueResponse> couponCacheTemplate(
             RedisConnectionFactory redisConnectionFactory,
@@ -180,6 +191,8 @@ public class RedisConfig {
     /**
      * @Cacheable, @CacheEvict 등 Spring Cache 추상화가 사용할 CacheManager
      */
+    // @Bean(name = "couponCacheManager") : @Cacheable/@CacheEvict 가 실제로 값을 넣고 빼는 저장소 관리자.
+    // 캐시 이름별로 TTL(만료시간)을 다르게 줘서, 오래된 캐시가 무한정 남지 않도록 한다.
     @Bean(name = "couponCacheManager")
     public CacheManager couponCacheManager(RedisConnectionFactory redisConnectionFactory) {
 

@@ -26,26 +26,36 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+// @Slf4j : log 객체 생성.
 @Slf4j
+// @Service : 결제 유스케이스를 오케스트레이션하는 응용 서비스 빈.
 @Service
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
+// @Transactional(readOnly = true) : 기본은 읽기 전용. 쓰기 메서드에만 @Transactional 을 따로 붙인다.
 @Transactional(readOnly = true)
 public class PaymentApplicationService {
 
+    // private final : 결제 처리에 필요한 협력 객체들. 스프링이 주입하고 외부에서 못 바꾸게 해 안전하게 사용.
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
-    private final TossPaymentClient tossPaymentClient;
+    private final TossPaymentClient tossPaymentClient; // 외부 Toss 결제 API 호출 클라이언트
     private final RaffleRepository raffleRepository;
     private final RaffleValidationService raffleValidationService;
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
-    private final PaymentCompensationService paymentCompensationService;
-    private final ObjectMapper objectMapper;
+    private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
+    private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
+    // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
+    // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
+    private final ObjectProvider<PaymentApplicationService> selfProvider;
 
     /**
      * 결제 승인.
@@ -55,9 +65,14 @@ public class PaymentApplicationService {
      * 트랜잭션). 취소도 실패하면 재시도 테이블에 기록
      * <p>
      * <p>
-     * 주의: 이 메서드 자체는 {@code @Transactional} 이 아니다. Toss API 호출과 DB 트랜잭션을 분리해야 DB 롤백만으로 복구되지 않는 "외부 승인 + 내부 실패" 부분 실패를
-     * 정확히 탐지하고 보상할 수 있기 때문이다.
+     * 주의: 이 메서드는 {@code NOT_SUPPORTED} 로 비트랜잭션 실행된다. Toss API 호출 구간 동안 DB 커넥션을 점유하지 않고,
+     * DB 후처리({@link #applyApprovedPaymentInTx})만 별도의 새 트랜잭션({@code REQUIRES_NEW})으로 분리해 "외부 승인 + 내부 실패"
+     * 부분 실패를 정확히 탐지·보상할 수 있게 한다.
      */
+    // propagation = NOT_SUPPORTED : 클래스 기본값 @Transactional(readOnly=true) 를 메서드 레벨에서 덮어써
+    // 이 메서드를 '비트랜잭션'으로 실행한다. 이렇게 해야 ① Toss API 호출 동안 커넥션을 점유하지 않고
+    // ② 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에 합류(REQUIRED)해 쓰기가 유실되는 일을 막는다.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
         // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
         var existing = paymentRepository.findByPaymentKey(paymentKey);
@@ -92,13 +107,15 @@ public class PaymentApplicationService {
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
             // Toss 승인 자체가 실패 → 외부 승인 없음. DB 상태만 FAILED로 기록 (보상 불필요)
-            markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
+            // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
+            selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
             throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
         }
 
         // [3] DB 후처리 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
+        // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
-            return applyApprovedPaymentInTx(orderId, response);
+            return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
         } catch (Exception dbError) {
             // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션)
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
@@ -109,7 +126,7 @@ public class PaymentApplicationService {
                     amount,
                     "DB 후처리 실패: " + dbError.getMessage()
             );
-            markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
         }
     }
@@ -117,7 +134,11 @@ public class PaymentApplicationService {
     /**
      * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급이 모두 하나의 커밋 단위에서 실행
      */
-    @Transactional
+    // propagation = REQUIRES_NEW : 결제 상태 변경 + 주문 확정 + 재고 차감 + 티켓 발급을 항상
+    // '독립된 새 트랜잭션'으로 묶어, 중간에 하나라도 실패하면 전부 롤백한다(All-or-Nothing).
+    // ✅ 자기호출 함정 해결: confirmPayment() 가 selfProvider.getObject() 로 프록시를 거쳐 호출.
+    // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 항상 read-write 새 트랜잭션 생성.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Payment applyApprovedPaymentInTx(UUID orderId, TossPaymentResponse response) {
         Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
@@ -168,7 +189,11 @@ public class PaymentApplicationService {
     /**
      * 별도 트랜잭션으로 결제 실패 상태만 기록 (메인 트랜잭션 롤백 후에도 FAILED 상태는 남겨야 하므로 REQUIRES_NEW.)
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    // propagation = REQUIRES_NEW : 항상 '새 트랜잭션'을 열어 독립적으로 커밋하여,
+    // 바깥 트랜잭션이 롤백돼도 'FAILED 기록'은 별도로 남긴다.
+    // ✅ 자기호출 함정 해결: confirmPayment() 가 selfProvider.getObject() 로 프록시를 거쳐
+    //    호출하므로 REQUIRES_NEW 가 정상 적용된다(독립 커밋 보장).
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPaymentFailed(UUID paymentId, String code, String message) {
         paymentRepository.findById(paymentId).ifPresent(p -> {
             if (p.getStatus() != PaymentStatus.DONE) {

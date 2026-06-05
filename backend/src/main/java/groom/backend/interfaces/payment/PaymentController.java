@@ -29,14 +29,21 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// @Slf4j : Lombok이 log 객체 생성.
 @Slf4j
+// @RestController : 응답을 JSON 본문으로 직렬화하는 REST 컨트롤러.
 @RestController
+// @RequestMapping : 결제 API 공통 기본 경로.
 @RequestMapping("/v1/payment")
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
+// @Tag : Swagger 문서에서 'Payment' 그룹으로 묶는다.
 @Tag(name = "Payment", description = "결제 관련 API")
+// @SecurityRequirement : Swagger UI에 이 API들이 JWT 인증을 요구함을 표시한다.
 @SecurityRequirement(name = "JWT")
 public class PaymentController {
 
+    // private final : 스프링이 생성자로 한 번만 주입하고 이후 교체 불가 → 안전한 의존성 사용.
     private final PaymentApplicationService paymentApplicationService;
 
     /**
@@ -53,9 +60,13 @@ public class PaymentController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    // 결제 승인 흐름: 요청 → 인증 사용자 확인 → 결제 서비스 호출(Toss 승인) → 응답
+    // @PostMapping : POST /v1/payment/confirm 에 매핑.
     @PostMapping("/confirm")
     public ResponseEntity<PaymentResponse> confirmPayment(
+            // @AuthenticationPrincipal : 인증 완료된 사용자 정보 자동 주입(hidden=true 라 Swagger엔 숨김).
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
+            // @RequestBody : HTTP 요청 본문(JSON)을 ConfirmPaymentRequest 객체로 변환한다.
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
                     description = "결제 승인 요청",
                     required = true,
@@ -94,6 +105,7 @@ public class PaymentController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    // @CheckPermission : 결제 취소는 민감 작업이므로 ADMIN 권한만 허용(관리자 백오피스 전용).
     @CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.BO)
     @PostMapping("/cancel")
     public ResponseEntity<PaymentResponse> cancelPayment(

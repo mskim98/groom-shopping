@@ -16,13 +16,17 @@ import org.springframework.transaction.annotation.Transactional;
  * Toss 결제 승인 후 내부 DB 처리(재고 차감, 주문 상태 변경)가 실패하면 즉시 Toss 취소 API를 호출해 자동 환불을 시도, 즉시 취소마저 실패한 건은
  * {@code payment_compensation} 테이블에 기록되고, {@link #retryPendingCompensations()} 스케줄러가 지수 백오프로 주기적으로 재시도
  */
+// @Slf4j : log 객체 생성.
 @Slf4j
+// @Service : 보상(환불) 유스케이스를 담당하는 응용 서비스 빈.
 @Service
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
 public class PaymentCompensationService {
 
     private static final int RETRY_BATCH_SIZE = 50;
 
+    // private final : 스프링이 주입하는 협력 객체. 외부에서 못 바꾸게 막아 안전하게 사용.
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
 
@@ -34,6 +38,7 @@ public class PaymentCompensationService {
      * @param amount        승인 금액 (기록용)
      * @param failureReason 내부 DB 실패 원인
      */
+    // @Transactional : 보상 기록 저장(save)을 트랜잭션으로 보장한다.
     @Transactional
     public void compensate(UUID paymentId, String paymentKey, Integer amount, String failureReason) {
         PaymentCompensation compensation = PaymentCompensation.builder()
@@ -53,6 +58,8 @@ public class PaymentCompensationService {
     /**
      * @Scheduled 배치 - 30초마다 실패한 보상 트랜잭션을 재시도
      */
+    // @Scheduled(fixedDelayString) : 사용자 요청과 무관하게 스프링이 주기적으로 자동 호출한다.
+    // 직전 실행이 끝난 뒤 지정 시간(기본 30초) 뒤 다시 실행 → 일시적 네트워크 오류로 못한 환불을 재시도.
     @Scheduled(fixedDelayString = "${payment.compensation.retry-delay-ms:30000}")
     public void retryPendingCompensations() {
         List<PaymentCompensation> retryables = compensationRepository.findRetryable(
@@ -78,8 +85,10 @@ public class PaymentCompensationService {
     /**
      * Toss 취소 API 호출, 멱등성 키(paymentKey + 재시도 횟수)로 이중 환불을 방지
      */
+    // @Transactional : 환불 결과(성공/실패)에 따른 상태 변경 저장을 트랜잭션으로 보장한다.
     @Transactional
     public void executeCompensation(PaymentCompensation compensation) {
+        // 멱등성 키 : 같은 키로는 Toss가 중복 취소를 막아준다. 재시도 횟수를 섞어 매 시도를 구분.
         String idempotencyKey = compensation.getPaymentKey() + ":compensate:" + compensation.getRetryCount();
         try {
             tossPaymentClient.cancelPayment(

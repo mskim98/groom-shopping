@@ -28,14 +28,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+// @Slf4j : log 객체 생성.
 @Slf4j
+// @RestController : 응답을 JSON으로 반환하는 REST 컨트롤러.
 @RestController
+// @RequestMapping : 주문 API 공통 기본 경로.
 @RequestMapping("/v1/order")
+// @RequiredArgsConstructor : final 필드 생성자 주입.
 @RequiredArgsConstructor
+// @Tag : Swagger 문서 'Order' 그룹.
 @Tag(name = "Order", description = "주문 관련 API")
+// @SecurityRequirement : JWT 인증 필요 API임을 문서에 표시.
 @SecurityRequirement(name = "JWT")
 public class OrderController {
 
+    // private final : 스프링이 생성자로 주입, 외부에서 교체 불가 → 안전한 의존성 사용.
     private final OrderApplicationService orderApplicationService;
 
     @Operation(
@@ -49,7 +56,10 @@ public class OrderController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다.")
     })
+    // 주문 생성 흐름: 요청 → 인증 사용자/요청값 검증 → 주문 서비스 호출 → 201 응답
+    // @PostMapping : POST 요청 매핑.
     @PostMapping
+    // @ResponseStatus(CREATED) : 정상 처리 시 HTTP 201(Created) 상태 코드로 응답한다.
     @ResponseStatus(HttpStatus.CREATED)
     public ResponseEntity<OrderResponse> createOrder(
             @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user") User user,
@@ -58,6 +68,8 @@ public class OrderController {
                     required = true,
                     content = @Content(schema = @Schema(implementation = CreateOrderRequest.class))
             )
+            // @Valid : 요청 DTO의 검증 규칙(@NotNull 등)을 컨트롤러 진입 전 자동 검사한다.
+            // @RequestBody : 요청 본문 JSON을 CreateOrderRequest 객체로 변환.
             @Valid @RequestBody CreateOrderRequest request
     ) {
 

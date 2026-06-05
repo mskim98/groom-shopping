@@ -16,11 +16,15 @@ import org.springframework.stereotype.Repository;
  * <p>
  * 키: {@code coupon:stock:{couponId}} - 남은 재고 (INT), {@code coupon:issued_users:{couponId}} - 이미 발급받은 userId SET
  */
+// @Slf4j : Lombok이 log 객체 생성.
 @Slf4j
+// @Repository : 데이터 저장소 접근 계층임을 표시한다(여기선 DB가 아닌 Redis 접근 담당).
 @Repository
+// @RequiredArgsConstructor : final 필드(redisTemplate) 생성자 주입.
 @RequiredArgsConstructor
 public class CouponStockRedisRepository {
 
+    // Redis 키 규칙. 키에 couponId 를 붙여 쿠폰마다 재고/발급자 집합을 분리한다.
     public static final String STOCK_KEY_PREFIX = "coupon:stock:";
     public static final String ISSUED_USERS_KEY_PREFIX = "coupon:issued_users:";
 
@@ -46,6 +50,7 @@ public class CouponStockRedisRepository {
             Long.class
     );
 
+    // RedisTemplate : 스프링이 제공하는 Redis 명령 실행 도구. private final 로 안전하게 주입받는다.
     private final RedisTemplate<String, String> redisTemplate;
 
     /**

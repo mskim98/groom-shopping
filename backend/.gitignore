@@ -41,3 +41,5 @@ out/
 .vscode/
 
 .DS_Store
+# Local environment secrets
+.env

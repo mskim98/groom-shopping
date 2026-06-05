@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+// 도메인 계층의 저장소 '인터페이스'(추상화). 구현 기술(JPA 등)에 의존하지 않게 하여
+// 도메인이 인프라를 모르도록 분리한다. 실제 구현은 interfaces 계층의 PaymentRepositoryImpl 이 담당한다.
 public interface PaymentRepository {
 
     Payment save(Payment payment);
