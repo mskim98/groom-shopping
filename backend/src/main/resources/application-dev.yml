@@ -3,6 +3,11 @@ spring:
     activate:
       on-profile: dev
 
+  # bootRun 은 콘솔을 직접 잡지 않아 색이 자동으로 꺼진다 → always 로 강제해 색 출력 유지
+  output:
+    ansi:
+      enabled: always
+
   datasource:
     url: jdbc:postgresql://localhost:5432/shopping_db_dev
     username: dev
@@ -44,8 +49,10 @@ spring:
       ddl-auto: validate  # Flyway가 스키마 관리
     properties:
       hibernate:
+        # show_sql 은 System.out 으로 직접 SQL을 찍어 1초 폴러 때문에 콘솔이 도배된다 → OFF.
+        # 쿼리를 봐야 할 때만 show_sql: true 로 켜고, 그때 logback 의 org.hibernate.SQL 도 함께 DEBUG 로 올린다.
         format_sql: true
-        show_sql: true
+        show_sql: false
         jdbc:
           time_zone: Asia/Seoul
 
@@ -61,6 +68,9 @@ server:
   port: 8080
   servlet:
     context-path: /api
+  tomcat:
+    mbeanregistry:
+      enabled: true        # tomcat_threads_* (busy/current/max) 노출 → HTTP 요청 스레드풀 병목 추적
   session:
     cookie:
       secure: false           # HTTP, HTTPS 전송

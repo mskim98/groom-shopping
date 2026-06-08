@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.kafka.stream;
 
+import groom.backend.application.coupon.CouponQueueRedisRepository;
 import groom.backend.domain.coupon.service.CouponService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,11 @@ public class CouponDelayConsumer {
    * 실제 쿠폰 비활성화 로직을 담고 있는 도메인 서비스
    */
   private final CouponService couponService;
+
+  /**
+   * 비활성화(이벤트 종료) 시 대기열/순번 키를 즉시 정리하기 위한 Redis 대기열 레포지토리 (7.3a)
+   */
+  private final CouponQueueRedisRepository couponQueueRedisRepository;
 
   /**
    * Kafka 토픽의 메시지를 구독하는 리스너 메소드입니다.
@@ -53,6 +59,10 @@ public class CouponDelayConsumer {
     try {
       // 전달받은 이벤트의 couponId를 사용하여 실제 비즈니스 로직(쿠폰 비활성화) 실행
       couponService.disableCoupon(event.getCouponId());
+
+      // [7.3a] 이벤트 종료 → 대기열/순번 카운터(coupon:seq, coupon:queue) 즉시 정리(idle TTL 대기 없이).
+      couponQueueRedisRepository.clear(event.getCouponId());
+
       log.info("[KAFKA_CONSUME_SUCCESS] couponId={}", event.getCouponId());
 
     } catch (Exception e) {

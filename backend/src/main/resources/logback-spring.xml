@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
+    <!-- Spring Boot 색상 변환 규칙(%clr) 등록: 콘솔 로그에 ANSI 색 적용 가능해진다 -->
+    <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+
     <springProfile name="dev">
-        <!-- 콘솔 로그 (기존 로그) -->
+        <!-- 콘솔 로그 (색상 적용): 레벨/시간/스레드/로거를 색으로 구분해 가독성 향상 -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+                <pattern>%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} [%clr(%thread){magenta}] %clr(%-5level) %clr(%logger{36}){cyan} - %msg%n</pattern>
                 <charset>UTF-8</charset>
             </encoder>
         </appender>
@@ -30,7 +33,8 @@
         </root>
 
         <!-- 애플리케이션 로그 (더 자세한 로그) -->
-        <logger name="groom.backend" level="DEBUG">
+        <!-- additivity="false": 이 로거가 자체 appender로 출력한 뒤 root 로거로 또 전파(중복 출력)되는 것을 막는다 -->
+        <logger name="groom.backend" level="DEBUG" additivity="false">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="FILE"/>
         </logger>
@@ -40,9 +44,11 @@
         <logger name="org.springframework.web" level="DEBUG"/>
 
         <!-- Hibernate 로그 (쿼리 로그) -->
+        <!-- 1초 폴러(PaymentEventPublisher)가 매 초 SELECT 를 날려 콘솔이 도배되므로 SQL 로그는 기본 OFF.
+             쿼리를 봐야 할 때만 아래 두 줄을 DEBUG / TRACE 로 올리면 된다. -->
         <logger name="org.hibernate" level="INFO"/>
-        <logger name="org.hibernate.SQL" level="DEBUG"/>
-        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+        <logger name="org.hibernate.SQL" level="INFO"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="INFO"/>
     </springProfile>
 
     <!-- 운영 환경 설정 (선택사항) -->

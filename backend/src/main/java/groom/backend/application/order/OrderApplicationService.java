@@ -1,6 +1,8 @@
 package groom.backend.application.order;
 
 import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.repository.OrderRepository;
@@ -49,7 +51,8 @@ public class OrderApplicationService {
         List<CartItemJpaEntity> cartItemProducts = cartItemRepository.findByUserId(userId);
 
         if (cartItemProducts.isEmpty()) {
-            throw new IllegalArgumentException("장바구니가 비어있습니다.");
+            // 빈 카트 주문은 미처리 예외(500)가 아니라 비즈니스 예외(400)로 처리한다.
+            throw new BusinessException(ErrorCode.CART_EMPTY);
         }
 
         // productId(UUID) 만 리스트로 추출
@@ -61,7 +64,7 @@ public class OrderApplicationService {
         List<ProductJpaEntity> products = productRepository.findByIdIn(productIds);
 
         if (products.size() != productIds.size()) {
-            throw new IllegalArgumentException("일부 상품 정보를 찾을 수 없습니다.");
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
         }
 
         Map<UUID, ProductJpaEntity> productMap = products.stream()
@@ -82,24 +85,17 @@ public class OrderApplicationService {
             ProductJpaEntity product = productMap.get(productId);
 
             if (product == null) {
-                throw new IllegalArgumentException("상품을 찾을 수 없습니다: " + productId);
+                throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
             }
 
             // 상품 상태 확인
             if (!product.getIsActive()) {
-                throw new IllegalArgumentException(
-                        String.format("상품을 구매할 수 없습니다: %s", product.getName())
-                );
+                throw new BusinessException(ErrorCode.PRODUCT_NOT_ACTIVE);
             }
 
             // 재고 확인
             if (product.getStock() < quantity) {
-                throw new IllegalArgumentException(
-                        String.format("재고가 부족합니다. 상품: %s, 요청: %d, 재고: %d",
-                                product.getName(),
-                                quantity,
-                                product.getStock())
-                );
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
             }
 
             // OrderItem 생성 (주문 시점의 상품 정보 스냅샷)
@@ -161,11 +157,11 @@ public class OrderApplicationService {
     // 주문 상세 조회
     public Order getOrderById(UUID orderId, Long userId) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new IllegalArgumentException("주문을 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
 
         // 본인의 주문만 조회 가능
         if (!order.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("조회 권한이 없습니다.");
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
         }
 
         return order;

@@ -197,6 +197,12 @@ public class PaymentApplicationService {
         String checkoutJson = convertObjectToJson(response.getCheckout());
         LocalDateTime requestedAtDateTime = parseDateTime(response.getRequestedAt());
 
+        // 상태머신은 PENDING → READY → DONE 만 허용한다. 결제창에서 paymentKey 를 받아 confirm 에 진입한
+        // 시점이 곧 'READY' 이므로, 아직 PENDING 이면 여기서 READY 로 전이한 뒤 승인(DONE)한다.
+        if (payment.getStatus() == PaymentStatus.PENDING) {
+            payment.ready(response.getPaymentKey());
+        }
+
         payment.approveWithTossResponse(
                 response.getPaymentKey(),
                 response.getLastTransactionKey(),
@@ -291,6 +297,10 @@ public class PaymentApplicationService {
         // Payment 승인 처리 (테스트용 paymentKey 생성)
         String testPaymentKey = "test_" + UUID.randomUUID().toString();
         String testTransactionId = "tx_test_" + UUID.randomUUID().toString();
+        // PENDING → READY → DONE 상태머신 준수 (PENDING 이면 READY 로 먼저 전이)
+        if (payment.getStatus() == PaymentStatus.PENDING) {
+            payment.ready(testPaymentKey);
+        }
         payment.approve(testPaymentKey, testTransactionId);
         paymentRepository.save(payment);
 
@@ -454,35 +464,53 @@ public class PaymentApplicationService {
     private List<PaymentNotificationService.StockReductionResult> reduceProductStock(Order order) {
         List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
 
-        for (OrderItem orderItem : order.getOrderItems()) {
-            // 낙관적 락 + 자동 재시도로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
-            int stockAfter = productStockService.decreaseWithOptimisticLock(
-                    orderItem.getProductId(), orderItem.getQuantity());
+        // 부분 차감 보상용: 상품별 차감은 REQUIRES_NEW 로 즉시 독립 커밋되므로, 다중상품 주문 중간에
+        // 한 건이라도 실패하면 '이미 커밋된 앞선 차감'이 그대로 남는 edge case 가 있다.
+        // → 성공한 차감 항목을 추적해 두고, 실패 시 같은 낙관적 락 경로로 DB 재고를 복원한 뒤 예외를 전파해
+        //   재고 누락(차감됐는데 주문은 롤백되는 유실)을 보상한다.
+        List<OrderItem> decremented = new java.util.ArrayList<>();
+        try {
+            for (OrderItem orderItem : order.getOrderItems()) {
+                // 낙관적 락 + 자동 재시도로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
+                int stockAfter = productStockService.decreaseWithOptimisticLock(
+                        orderItem.getProductId(), orderItem.getQuantity());
+                decremented.add(orderItem);
 
-            // 차감된 상품 ID와 차감 후 재고량 저장
-            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
+                // 차감된 상품 ID와 차감 후 재고량 저장
+                results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
 
-            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
-                    orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
+                log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
+                        orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
+            }
+            return results;
+        } catch (RuntimeException e) {
+            // 보상: 이미 독립 커밋된 차감 항목을 복원(증가)한다. 복원 자체 실패는 운영 인지를 위해 로깅만(best-effort).
+            log.error("[STOCK_REDUCE_PARTIAL_FAIL] 다중상품 차감 중 실패 - 복원 시도 {}건, error={}",
+                    decremented.size(), e.getMessage());
+            for (OrderItem done : decremented) {
+                try {
+                    productStockService.increaseWithOptimisticLock(done.getProductId(), done.getQuantity());
+                    log.info("[STOCK_REDUCE_COMPENSATED] 부분 차감 복원 - ProductId: {}, Quantity: {}",
+                            done.getProductId(), done.getQuantity());
+                } catch (RuntimeException restoreEx) {
+                    log.error("[STOCK_REDUCE_COMPENSATE_FAIL] 부분 차감 복원 실패(수동 처리 필요) - ProductId: {}, Quantity: {}, error={}",
+                            done.getProductId(), done.getQuantity(), restoreEx.getMessage());
+                }
+            }
+            throw e;
         }
-
-        return results;
     }
 
     private void restoreProductStock(Order order) {
         for (OrderItem orderItem : order.getOrderItems()) {
-            Product product = productRepository.findById(orderItem.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "상품을 찾을 수 없습니다: " + orderItem.getProductId()));
-
-            product.increaseStock(orderItem.getQuantity());
-            productRepository.save(product);
+            // 낙관적 락 + 자동 재시도 경로로 통일(기존 직접 findById→increaseStock→save 는 @Version 충돌 시 재시도 없이 실패).
+            productStockService.increaseWithOptimisticLock(orderItem.getProductId(), orderItem.getQuantity());
 
             // Redis 선점 재고도 함께 복원해 Redis-DB 드리프트를 막는다.
             productStockRedisRepository.release(orderItem.getProductId(), orderItem.getQuantity());
 
-            log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}, Current: {}",
-                    product.getId(), orderItem.getQuantity(), product.getStock());
+            log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}",
+                    orderItem.getProductId(), orderItem.getQuantity());
         }
     }
 

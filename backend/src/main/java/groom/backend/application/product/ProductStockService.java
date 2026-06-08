@@ -40,7 +40,8 @@ public class ProductStockService {
     @Retryable(
             retryFor = ObjectOptimisticLockingFailureException.class,
             maxAttempts = 3,
-            backoff = @Backoff(delay = 100, multiplier = 2)
+            backoff = @Backoff(delay = 100, multiplier = 2),
+            listeners = "stockRetryListener" // 재시도 횟수 Micrometer 노출(정량 실측)
     )
     public int decreaseWithOptimisticLock(UUID productId, int quantity) {
         // 프록시 경유 호출이라야 REQUIRES_NEW 가 매 시도마다 새 트랜잭션을 연다.
@@ -63,9 +64,47 @@ public class ProductStockService {
      * 재시도 한도(3회)를 모두 소진한 뒤 호출되는 복구 메서드. 사용자 가시 예외로 변환한다.
      */
     // @Recover : 첫 인자는 재시도 대상 예외, 나머지는 원본 메서드 시그니처와 동일해야 한다.
+    // 반환형(int)으로 차감 경로의 recover 임을 구분한다(증가 경로의 void recover 와 분리).
     @Recover
     public int recover(ObjectOptimisticLockingFailureException e, UUID productId, int quantity) {
         log.error("[STOCK_CONFLICT_GIVEUP] 재고 차감 재시도 실패 - productId={}, quantity={}", productId, quantity);
+        throw new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT);
+    }
+
+    /**
+     * 낙관적 락 기반 재고 증가 (충돌 시 자동 재시도). 결제 취소 복구·부분 차감 보상에서 공용으로 쓴다.
+     * <p>
+     * 기존 취소 경로의 직접 {@code findById→increaseStock→save} 는 @Version 충돌 시 재시도 없이 실패했는데,
+     * 차감과 동일하게 '재시도 바깥 / REQUIRES_NEW 안쪽' 구조로 통일해 동시성 안정성을 맞춘다.
+     */
+    @Retryable(
+            retryFor = ObjectOptimisticLockingFailureException.class,
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 100, multiplier = 2),
+            listeners = "stockRetryListener" // 재시도 횟수 Micrometer 노출(정량 실측)
+    )
+    public void increaseWithOptimisticLock(UUID productId, int quantity) {
+        // 프록시 경유 호출이라야 REQUIRES_NEW 가 매 시도마다 새 트랜잭션을 연다.
+        selfProvider.getObject().increaseOnce(productId, quantity);
+    }
+
+    /**
+     * 단일 증가 트랜잭션 (재시도 1회 단위). 커밋 시 version 이 맞지 않으면 충돌 예외가 발생한다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void increaseOnce(UUID productId, int quantity) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        product.increaseStock(quantity);
+        productRepository.save(product);
+    }
+
+    /**
+     * 증가 경로 재시도 한도 소진 시 복구 메서드. 반환형(void)으로 차감 경로와 구분된다.
+     */
+    @Recover
+    public void recoverIncrease(ObjectOptimisticLockingFailureException e, UUID productId, int quantity) {
+        log.error("[STOCK_RESTORE_GIVEUP] 재고 증가(복원) 재시도 실패 - productId={}, quantity={}", productId, quantity);
         throw new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT);
     }
 }

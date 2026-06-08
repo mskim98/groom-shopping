@@ -2,6 +2,7 @@ package groom.backend.infrastructure.config;
 
 import groom.backend.infrastructure.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -46,6 +47,16 @@ public class SecurityConfig {
                         UsernamePasswordAuthenticationFilter.class); // JWT 필터를 스프링 시큐리티의 UsernamePasswordAuthenticationFilter 이전에 삽입하여 토큰 기반 인증 처리.
 
         return http.build();
+    }
+
+    // JwtAuthenticationFilter 는 @Component 라 서블릿 컨테이너에 자동 등록되어 시큐리티 체인과 '이중 등록'된다.
+    // (OncePerRequestFilter 라 요청당 1회만 실행되지만) 서블릿 자동 등록을 꺼서 시큐리티 체인에서만 동작하도록 한다.
+    @Bean
+    public FilterRegistrationBean<JwtAuthenticationFilter> jwtAuthenticationFilterRegistration(
+            JwtAuthenticationFilter filter) {
+        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean
