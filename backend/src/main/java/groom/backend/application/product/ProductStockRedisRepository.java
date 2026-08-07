@@ -64,4 +64,16 @@ public class ProductStockRedisRepository {
     public void release(UUID productId, int quantity) {
         redisTemplate.opsForValue().increment(STOCK_KEY_PREFIX + productId, quantity);
     }
+
+    // 여러 상품의 재고를 한 번에 읽는다 (대조 배치용). 키가 없으면 해당 위치가 null
+    public List<Integer> getStocks(List<UUID> productIds) {
+        List<String> keys = productIds.stream().map(id -> STOCK_KEY_PREFIX + id).toList();
+        List<String> values = redisTemplate.opsForValue().multiGet(keys);
+        if (values == null) {
+            return productIds.stream().map(id -> (Integer) null).toList();
+        }
+        return values.stream()
+                .map(v -> v == null ? null : Integer.valueOf(v))
+                .toList();
+    }
 }

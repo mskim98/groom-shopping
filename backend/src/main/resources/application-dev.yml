@@ -131,6 +131,10 @@ payment:
 # 재고 차감 전략 - optimistic(기본) | conditional | pessimistic. 3자 실측 비교용 스위치
 stock:
   decrease-strategy: optimistic
+  reconcile:
+    # 스캔 간격. 인플라이트 선점의 최대 수명(Toss 5s x 재시도 3 + 보상)보다 충분히 길게
+    interval-ms: 60000
+    batch-size: 1000
 
 # 쿠폰 워밍업·재고 보정 배치
 coupon:
