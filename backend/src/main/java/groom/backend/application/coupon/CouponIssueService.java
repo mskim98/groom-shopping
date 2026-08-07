@@ -125,8 +125,9 @@ public class CouponIssueService {
             acquired = lock.tryLock(LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
             if (!acquired) {
                 // 대기 한도를 넘으면 무한 대기 대신 빠른 실패로 떨어뜨린다.
+                // 재고는 남아 있는데 못 받은 "거짓 품절"이므로 품절과 다른 코드로 내보낸다
                 log.warn("[COUPON_LOCK_TIMEOUT] couponId={}, userId={}", couponId, user.getId());
-                throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+                throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
             }
 
             // 락 안쪽 로직은 비동기 경로와 공유하는 코어에 위임한다
@@ -134,8 +135,9 @@ public class CouponIssueService {
             return selfProvider.getObject().issueCouponWithoutLock(couponId, user);
 
         } catch (InterruptedException e) {
+            // 락 대기 중 인터럽트도 재고와 무관한 실패다. 락 타임아웃과 같은 계열로 묶는다
             Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+            throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
         } finally {
             if (acquired && lock.isHeldByCurrentThread()) {
                 lock.unlock();
@@ -220,7 +222,7 @@ public class CouponIssueService {
             // Redis 는 통과시켰는데 DB 수량이 이미 0 이면 두 저장소가 어긋난 상태다
             // 예외로 끊으면 호출부의 rollbackIssue 가 Redis 재고를 되돌려 낮은 쪽으로 정합을 맞춘다
             log.warn("[COUPON_DB_STOCK_EXHAUSTED] couponId={}, userId={}", couponId, user.getId());
-            throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+            throw new BusinessException(ErrorCode.COUPON_STORE_MISMATCH);
         }
         writeItemCache(responseDto);
         return responseDto;

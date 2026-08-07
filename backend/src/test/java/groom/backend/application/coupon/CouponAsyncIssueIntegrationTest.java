@@ -191,6 +191,48 @@ class CouponAsyncIssueIntegrationTest {
         assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY - 1);
     }
 
+    // 증명: Lua 가 중복 검사를 재고 검사보다 먼저 한다
+    // 재고를 1 로 두고 같은 사용자가 두 번 요청하면 두 번째 시점의 재고는 0 이다
+    // 재고 검사가 앞서면 이 요청이 품절로 응답돼, 실패 집계에서 중복이 품절로 오분류된다
+    // 재고 0 + 이미 발급 상태에서 ALREADY_ISSUED 가 나오는 것이 검사 순서의 유일한 근거다
+    @Test
+    @DisplayName("재고가 0 이어도 이미 발급받은 사용자는 품절이 아니라 중복으로 거부된다")
+    void process_재고가0이어도_이미_발급받았으면_중복으로_거부한다() {
+        // given - 마지막 한 장을 이 사용자가 가져가 재고가 0 이 된 상태를 만든다
+        couponStockRedisRepository.initStock(couponId, 1L);
+        String firstRequestId = newRequestId();
+        couponAsyncIssueService.process(new CouponIssueRequestEvent(firstRequestId, couponId, userId));
+        assertThat(couponAsyncIssueService.getStatus(firstRequestId)).isEqualTo("SUCCESS");
+        assertThat(couponStockRedisRepository.getStock(couponId)).isZero();
+
+        // when - 같은 사용자가 품절 이후에 다시 요청한다
+        String secondRequestId = newRequestId();
+        couponAsyncIssueService.process(new CouponIssueRequestEvent(secondRequestId, couponId, userId));
+
+        // then - 품절이 아니라 중복으로 분류된다
+        assertThat(couponAsyncIssueService.getStatus(secondRequestId)).isEqualTo("FAILED:COUPON_ALREADY_ISSUED");
+        // 재고는 0 에서 더 내려가지 않는다 (DECR 이전에 막혔다는 근거)
+        assertThat(couponStockRedisRepository.getStock(couponId)).isZero();
+        assertThat(couponIssueRepository.findCouponIssueByUserId(userId)).hasSize(1);
+    }
+
+    // 증명: 발급 이력이 없는 사용자에게는 품절 판정이 그대로 유지된다
+    // 중복을 앞으로 당긴 변경이 품절 응답까지 삼키지 않았음을 고정한다
+    @Test
+    @DisplayName("발급 이력이 없는 사용자는 재고가 0 이면 그대로 품절로 거부된다")
+    void process_발급이력이_없으면_재고0은_그대로_품절이다() {
+        // given - 발급자 SET 은 비어 있고 재고만 0
+        couponStockRedisRepository.initStock(couponId, 0L);
+        String requestId = newRequestId();
+
+        // when
+        couponAsyncIssueService.process(new CouponIssueRequestEvent(requestId, couponId, userId));
+
+        // then
+        assertThat(couponAsyncIssueService.getStatus(requestId)).isEqualTo("FAILED:COUPON_OUT_OF_STOCK");
+        assertThat(couponIssueRepository.findByCouponIdAndUserId(couponId, userId)).isEmpty();
+    }
+
     // enqueue 를 거치면 실제 Kafka 컨슈머가 같은 이벤트를 한 번 더 처리해 발급이 중복될 수 있다
     // Lua 경로 케이스는 requestId 를 직접 만들어 process 만 호출한다
     private String newRequestId() {

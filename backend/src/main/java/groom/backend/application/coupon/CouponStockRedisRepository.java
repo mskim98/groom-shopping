@@ -29,19 +29,23 @@ public class CouponStockRedisRepository {
     public static final String ISSUED_USERS_KEY_PREFIX = "coupon:issued_users:";
 
     /**
-     * Lua 반환 코드: 1=성공, 0=품절, -1=중복 발급. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키 ARGV[1]=userId
+     * Lua 반환 코드: 1=성공, 0=품절, -1=중복 발급, -2=미초기화. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키 ARGV[1]=userId
+     *
+     * <p>중복 검사를 재고 검사보다 앞에 둔다. 뒤에 두면 재고가 0 이 된 뒤로는
+     * 이미 받은 사용자의 재요청까지 "품절"로 응답돼, 실패 집계에서 중복과 품절이 섞인다
+     * 재고 소진은 이벤트 초반에 오므로 그 뒤의 요청이 다수다 - 오분류가 예외가 아니라 기본값이 된다
      */
     private static final RedisScript<Long> ISSUE_SCRIPT = new DefaultRedisScript<>(
             """
+                    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
+                        return -1
+                    end
                     local stock = tonumber(redis.call('GET', KEYS[1]))
                     if stock == nil then
                         return -2
                     end
                     if stock <= 0 then
                         return 0
-                    end
-                    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
-                        return -1
                     end
                     redis.call('DECR', KEYS[1])
                     redis.call('SADD', KEYS[2], ARGV[1])

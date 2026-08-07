@@ -27,8 +27,10 @@ const PASSWORD = __ENV.LT_PASSWORD || 'loadtest123!';
 
 const issueLatency = new Trend('issue_latency', true); // 발급 응답시간(ms)
 const issueSuccess = new Counter('issue_success');     // 201 발급 성공
-const issueSoldout = new Counter('issue_soldout');     // 수량 소진(품절)
-const issueDup = new Counter('issue_dup');             // 이미 발급(중복)
+const issueSoldout = new Counter('issue_soldout');     // 진짜 품절(COUPON_OUT_OF_STOCK)
+const issueDup = new Counter('issue_dup');             // 이미 발급(COUPON_ALREADY_ISSUED)
+const issueContention = new Counter('issue_contention'); // 락 경합·인터럽트(COUPON_ISSUE_CONTENTION) = 거짓 품절
+const issueMismatch = new Counter('issue_mismatch');   // Redis/DB 재고 불일치(COUPON_STORE_MISMATCH)
 const issueOther = new Counter('issue_other');         // 기타
 
 export const options = {
@@ -84,13 +86,53 @@ export default function (data) {
 
   const res = http.post(`${BASE_URL}/coupon/issue/${data.couponId}`, null, { headers });
   issueLatency.add(res.timings.duration);
-  const body = res.body || '';
   if (res.status === 201) {
     issueSuccess.add(1);
+    return;
+  }
+  classifyFailure(res);
+}
+
+// ErrorResponse 는 code 필드에 ErrorCode enum 이름을 그대로 실어 보낸다(ErrorResponse.from).
+// 메시지 본문 부분일치로 나누면 문구를 고칠 때마다 집계가 조용히 틀어지므로 code 를 우선 본다.
+//
+// 실패를 네 갈래로 나누는 것이 이 스크립트의 목적이다.
+// - OUT_OF_STOCK  : 재고가 실제로 0 (정상 동작)
+// - ISSUE_CONTENTION : 재고는 남았는데 락 경합으로 실패 = "거짓 품절". 이 값이 개선 지표다
+// - ALREADY_ISSUED : 중복 요청. Lua 가 중복을 재고보다 먼저 보므로 품절 이후에도 여기로 잡힌다
+// - STORE_MISMATCH : Redis 는 통과했는데 DB 수량이 0. 두 저장소가 어긋난 상태로 조사 대상이다
+function classifyFailure(res) {
+  const body = res.body || '';
+  let code = null;
+  try {
+    code = res.json('code');
+  } catch (e) {
+    code = null; // JSON 이 아닌 응답(게이트웨이 오류 등)
+  }
+
+  switch (code) {
+    case 'COUPON_OUT_OF_STOCK':
+      issueSoldout.add(1);
+      return;
+    case 'COUPON_ALREADY_ISSUED':
+      issueDup.add(1);
+      return;
+    case 'COUPON_ISSUE_CONTENTION':
+      issueContention.add(1);
+      return;
+    case 'COUPON_STORE_MISMATCH':
+      issueMismatch.add(1);
+      return;
+    default:
+      break;
+  }
+
+  // code 가 없는 응답을 위한 폴백. 중복을 품절보다 먼저 본다 -
+  // 품절 조건의 '수량' 이 중복 메시지와 겹칠 여지가 있어 순서를 뒤집으면 중복이 품절로 흡수된다
+  if (body.includes('ALREADY') || body.includes('이미') || body.includes('중복') || body.includes('DUPLICATE')) {
+    issueDup.add(1);
   } else if (body.includes('SOLD_OUT') || body.includes('소진') || body.includes('수량')) {
     issueSoldout.add(1);
-  } else if (body.includes('ALREADY') || body.includes('이미') || body.includes('중복') || body.includes('DUPLICATE')) {
-    issueDup.add(1);
   } else {
     issueOther.add(1);
   }
@@ -98,4 +140,6 @@ export default function (data) {
 
 export function teardown() {
   console.log('✅ 쿠폰 발급 측정 완료. 초과발급은 런북 SQL 로 (coupon_issue 행 수 <= quantity) 검증.');
+  console.log('   실패 내역은 issue_soldout(진짜 품절) / issue_contention(거짓 품절) /');
+  console.log('   issue_dup(중복) / issue_mismatch(저장소 불일치) 로 나눠 읽는다.');
 }
