@@ -72,6 +72,8 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
+    // Kafka Streams 토폴로지를 브로커 없이 검증 (TopologyTestDriver)
+    testImplementation 'org.apache.kafka:kafka-streams-test-utils'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.2.0'
     testImplementation 'org.mockito:mockito-core:5.2.0'

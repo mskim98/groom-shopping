@@ -26,9 +26,9 @@ import org.springframework.kafka.support.serializer.JsonSerializer;
  * <h4>핵심 동작 원리:</h4>
  * <ol>
  * <li><b>[INPUT_TOPIC]</b>에서 지연 이벤트(CouponDelayEvent)를 수신합니다.</li>
- * <li><b>[CouponDelayTransformer]</b>를 사용하여 이벤트를 즉시 처리하지 않고,
+ * <li><b>[CouponDelayProcessor]</b>를 사용하여 이벤트를 즉시 처리하지 않고,
  * <b>[StateStore]</b>라는 Kafka Streams 내부의 소형 데이터베이스에 저장합니다.</li>
- * <li>(Transformer 내부의 'Punctuator'(타이머)가 주기적으로 StateStore를 스캔합니다.)</li>
+ * <li>(Processor 내부의 'Punctuator'(타이머)가 주기적으로 StateStore를 스캔합니다.)</li>
  * <li>(지연 시간이 만료된 이벤트를 StateStore에서 발견하면...)</li>
  * <li><b>[OUTPUT_TOPIC]</b>으로 해당 이벤트를 발행(Forward)합니다.</li>
  * </ol>
@@ -96,7 +96,7 @@ public class CouponDelayStreamProcessor {
     );
 
     // 4. 정의한 StateStore '설계도'를 'StreamsBuilder'에 등록합니다.
-    //    이제 이 토폴로지 내의 Transformer들이 'DELAY_STATE_STORE'라는 이름으로
+    //    이제 이 토폴로지 내의 Processor들이 'DELAY_STATE_STORE'라는 이름으로
     //    이 저장소에 접근할 수 있게 됩니다.
     builder.addStateStore(storeBuilder);
 
@@ -108,24 +108,22 @@ public class CouponDelayStreamProcessor {
             Consumed.with(Serdes.String(), couponDelayEventSerde) // 토픽의 Key/Value Serde 지정
     );
 
-    // 6. [핵심] 'transform' 오퍼레이터 연결
-    //    'transform'은 .map()이나 .filter() 같은 고수준 DSL과 달리,
-    //    'StateStore' 접근, '시간 기반'(Punctuator) 스케줄링 등
-    //    저수준의 복잡한 커스텀 로직을 수행할 수 있게 해줍니다.
+    // 6. [핵심] 'process' 오퍼레이터 연결
+    //    신 Processor API. .map()이나 .filter() 같은 고수준 DSL과 달리
+    //    'StateStore' 접근, '시간 기반'(Punctuator) 스케줄링 등 저수준 로직을 담는다.
+    //    구 'transform'/Transformer 는 Kafka Streams 3.3 에서 deprecated, 4.0 에서 제거됐다.
     stream
-            .transform(
+            .process(
                     // 이 팩토리 람다는 스트림 '태스크'가 생성될 때마다
-                    // 'CouponDelayTransformer'의 새 인스턴스를 생성합니다.
-                    // 'DELAY_STATE_STORE' 이름을 생성자로 넘겨주어,
-                    // Transformer가 어떤 StateStore를 사용할지 알려줍니다.
-                    () -> new CouponDelayTransformer(DELAY_STATE_STORE),
+                    // 'CouponDelayProcessor'의 새 인스턴스를 생성합니다.
+                    () -> new CouponDelayProcessor(DELAY_STATE_STORE),
 
-                    // [중요] 이 Transformer가 'DELAY_STATE_STORE'라는 이름의
+                    // [중요] 이 Processor가 'DELAY_STATE_STORE'라는 이름의
                     // StateStore에 '접근해야 함'을 명시적으로 선언합니다.
                     // (위의 builder.addStateStore(storeBuilder)와 연결됩니다.)
                     DELAY_STATE_STORE
             )
-            // 7. [출력] Transformer가 지연 처리 후 'forward'한 메시지를
+            // 7. [출력] Processor가 지연 처리 후 'forward'한 메시지를
             //    OUTPUT_TOPIC으로 보냅니다.
             .to(
                     OUTPUT_TOPIC,
