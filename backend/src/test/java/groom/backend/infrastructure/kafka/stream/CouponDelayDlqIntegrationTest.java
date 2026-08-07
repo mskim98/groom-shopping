@@ -78,6 +78,11 @@ class CouponDelayDlqIntegrationTest {
         ConcurrentMessageListenerContainer<String, CouponDelayEvent> container =
                 listenerContainerFactory.createContainer(SOURCE_TOPIC);
         container.getContainerProperties().setGroupId("coupon-delay-test-" + UUID.randomUUID());
+        // 소스 토픽은 실행마다 메시지가 쌓인다. 새 그룹이 earliest 로 시작하면 옛 메시지부터 실패시키는데,
+        // 실패 1건마다 백오프 7초가 붙어 20초 안에 이번 메시지에 도달하지 못한다
+        // (증상: DLQ 에는 옛 couponId 가 적재되고 이 테스트는 자기 couponId 를 못 찾아 실패한다)
+        container.getContainerProperties().getKafkaConsumerProperties()
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         container.getContainerProperties().setMessageListener(
                 (MessageListener<String, CouponDelayEvent>) record -> {
                     throw new RuntimeException("강제 실패(테스트)");

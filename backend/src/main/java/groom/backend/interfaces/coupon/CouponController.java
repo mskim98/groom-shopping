@@ -4,8 +4,6 @@ import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.coupon.service.CouponCommonService;
-import groom.backend.common.exception.BusinessException;
-import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponSearchCondition;
@@ -24,15 +22,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
