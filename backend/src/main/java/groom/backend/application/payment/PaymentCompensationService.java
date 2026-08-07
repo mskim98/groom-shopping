@@ -11,8 +11,10 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -33,6 +35,8 @@ public class PaymentCompensationService {
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
     private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
+    // 자기호출 우회: recordCompensationIntent/executeCompensation 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
+    private final ObjectProvider<PaymentCompensationService> selfProvider;
 
     /**
      * 즉시 보상(환불)을 시도한다. 실패 시 재시도 대상으로 기록
@@ -42,21 +46,29 @@ public class PaymentCompensationService {
      * @param amount        승인 금액 (기록용)
      * @param failureReason 내부 DB 실패 원인
      */
-    // @Transactional : 보상 기록 저장(save)을 트랜잭션으로 보장한다.
-    @Transactional
+    // 이 메서드 자체는 트랜잭션을 갖지 않는다.
+    // 의도 기록(INSERT)과 실행(Toss 취소)을 별도 트랜잭션으로 쪼갠다. 같은 트랜잭션에 두면
+    // 실행이 무너질 때 채무 기록 자체가 롤백돼 배치가 주울 대상이 사라진다
     public void compensate(UUID paymentId, String paymentKey, Integer amount, String failureReason) {
-        PaymentCompensation compensation = PaymentCompensation.builder()
+        PaymentCompensation compensation = selfProvider.getObject()
+                .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
+
+        log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
+
+        selfProvider.getObject().executeCompensation(compensation);
+    }
+
+    /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PaymentCompensation recordCompensationIntent(UUID paymentId, String paymentKey,
+                                                        Integer amount, String failureReason) {
+        return compensationRepository.save(PaymentCompensation.builder()
                 .paymentId(paymentId)
                 .paymentKey(paymentKey)
                 .amount(amount)
                 .reason(failureReason)
                 .maxRetryCount(5)
-                .build();
-        compensation = compensationRepository.save(compensation);
-
-        log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
-
-        executeCompensation(compensation);
+                .build());
     }
 
     /**
@@ -77,7 +89,8 @@ public class PaymentCompensationService {
 
         for (PaymentCompensation compensation : retryables) {
             try {
-                executeCompensation(compensation);
+                // 프록시 경유라야 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
+                selfProvider.getObject().executeCompensation(compensation);
             } catch (Exception e) {
 
                 log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] CompensationId: {}, Error: {}",
@@ -89,8 +102,9 @@ public class PaymentCompensationService {
     /**
      * Toss 취소 API 호출, 멱등성 키(paymentKey + 보상 레코드 ID)로 이중 환불을 방지
      */
-    // @Transactional : 환불 결과(성공/실패)에 따른 상태 변경 저장을 트랜잭션으로 보장한다.
-    @Transactional
+    // @Transactional(REQUIRES_NEW) : 환불 결과 기록을 항상 독립 커밋한다.
+    // 호출부(compensate·배치)의 트랜잭션에 합류하면 결과 기록이 함께 롤백될 수 있다.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void executeCompensation(PaymentCompensation compensation) {
         // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
         // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를

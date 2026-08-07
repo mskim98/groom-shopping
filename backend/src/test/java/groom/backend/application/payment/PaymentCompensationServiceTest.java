@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,12 +17,17 @@ import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentCompensationServiceTest {
@@ -30,6 +38,8 @@ class PaymentCompensationServiceTest {
     private TossPaymentClient tossPaymentClient;
     @Mock
     private PaymentCompensationDlqProducer dlqProducer;
+    @Mock
+    private ObjectProvider<PaymentCompensationService> selfProvider;
     @InjectMocks
     private PaymentCompensationService service;
 
@@ -69,5 +79,35 @@ class PaymentCompensationServiceTest {
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
         verify(dlqProducer, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("보상 의도 기록은 실행과 분리된 별도 진입점으로 먼저 커밋된다")
+    void intentIsRecordedBeforeExecution() {
+        PaymentCompensationService proxy = mock(PaymentCompensationService.class);
+        given(selfProvider.getObject()).willReturn(proxy);
+        PaymentCompensation recorded = newCompensation(5);
+        given(proxy.recordCompensationIntent(any(), anyString(), any(), anyString())).willReturn(recorded);
+
+        service.compensate(UUID.randomUUID(), "pk-1", 1000, "DB 후처리 실패");
+
+        InOrder inOrder = inOrder(proxy);
+        inOrder.verify(proxy).recordCompensationIntent(any(), anyString(), any(), anyString());
+        inOrder.verify(proxy).executeCompensation(recorded);
+    }
+
+    @Test
+    @DisplayName("배치 재시도도 프록시를 거쳐 실행해 트랜잭션이 적용된다")
+    void batchRetryGoesThroughProxy() {
+        PaymentCompensationService proxy = mock(PaymentCompensationService.class);
+        given(selfProvider.getObject()).willReturn(proxy);
+        PaymentCompensation pending = newCompensation(5);
+        given(compensationRepository.findRetryable(any(LocalDateTime.class), anyInt()))
+                .willReturn(List.of(pending));
+
+        service.retryPendingCompensations();
+
+        verify(proxy).executeCompensation(pending);
+        verify(tossPaymentClient, never()).cancelPayment(anyString(), anyString(), anyString());
     }
 }

@@ -143,12 +143,18 @@ public class PaymentApplicationService {
             releaseStock(reservedItems);
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
                     orderId, paymentKey, dbError.getMessage(), dbError);
-            paymentCompensationService.compensate(
-                    payment.getId(),
-                    response.getPaymentKey(),
-                    amount,
-                    "DB 후처리 실패: " + dbError.getMessage()
-            );
+            // 보상 기록·실행이 실패해도 아래 markPaymentFailed 와 재던지기가 스킵되면 안 된다
+            try {
+                paymentCompensationService.compensate(
+                        payment.getId(),
+                        response.getPaymentKey(),
+                        amount,
+                        "DB 후처리 실패: " + dbError.getMessage()
+                );
+            } catch (Exception compensationError) {
+                log.error("[PAYMENT_COMPENSATION_ENTRY_FAILED] 보상 진입 실패(수동 처리 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
+                        payment.getId(), response.getPaymentKey(), compensationError.getMessage(), compensationError);
+            }
             selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
             // 도메인 예외는 재포장하지 않는다 - 409(PRODUCT_STOCK_CONFLICT) 가 500 으로 나가면 죽은 카운터가 된다
             if (dbError instanceof BusinessException businessException) {
