@@ -36,11 +36,13 @@ public class ProductStockService {
     /**
      * 낙관적 락 기반 재고 차감 (충돌 시 자동 재시도). 차감 후 재고량을 반환.
      */
-    // @Retryable : 충돌(ObjectOptimisticLockingFailureException) 시 최대 3회, 100ms·200ms·400ms 백오프로 재시도.
+    // @Retryable : 충돌(ObjectOptimisticLockingFailureException) 시 최대 3회 재시도.
+    // random = true : 충돌한 스레드가 같은 시점에 재진입해 재충돌하는 thundering herd 를 흩는다
+    // maxDelay = 1000 : 결제 API 응답이므로 한 번의 대기가 1초를 넘지 않게 상한을 둔다
     @Retryable(
             retryFor = ObjectOptimisticLockingFailureException.class,
             maxAttempts = 3,
-            backoff = @Backoff(delay = 100, multiplier = 2),
+            backoff = @Backoff(delay = 100, multiplier = 2, random = true, maxDelay = 1000),
             listeners = "stockRetryListener" // 재시도 횟수 Micrometer 노출(정량 실측)
     )
     public int decreaseWithOptimisticLock(UUID productId, int quantity) {
@@ -77,10 +79,11 @@ public class ProductStockService {
      * 기존 취소 경로의 직접 {@code findById→increaseStock→save} 는 @Version 충돌 시 재시도 없이 실패했는데,
      * 차감과 동일하게 '재시도 바깥 / REQUIRES_NEW 안쪽' 구조로 통일해 동시성 안정성을 맞춘다.
      */
+    // 복원 경로도 차감과 같은 백오프를 쓴다 - 같은 행을 두고 경합하므로 정책이 달라야 할 이유가 없다
     @Retryable(
             retryFor = ObjectOptimisticLockingFailureException.class,
             maxAttempts = 3,
-            backoff = @Backoff(delay = 100, multiplier = 2),
+            backoff = @Backoff(delay = 100, multiplier = 2, random = true, maxDelay = 1000),
             listeners = "stockRetryListener" // 재시도 횟수 Micrometer 노출(정량 실측)
     )
     public void increaseWithOptimisticLock(UUID productId, int quantity) {
