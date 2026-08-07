@@ -2,6 +2,7 @@ package groom.backend.infrastructure.coupon;
 
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.domain.coupon.model.entity.Coupon;
+import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ import org.springframework.stereotype.Component;
 public class CouponStockWarmUpRunner implements ApplicationRunner {
 
     private final CouponRepository couponRepository;
+    private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
 
     // 한 번에 읽어올 페이지 크기(메모리/쿼리 횟수 트레이드오프)
@@ -45,6 +47,7 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         int planted = 0;
         int skipped = 0;
+        long restored = 0;
         long lastId = 0L;
         List<Coupon> page;
         do {
@@ -58,11 +61,16 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
                         skipped++; // 이미 살아 있는 카운터가 있다 - 덮지 않는다
                     }
                 }
+                // 발급자 SET 복원. 재고와 달리 항상 수행한다 -
+                // 재고 키가 살아 있어도(skipped) 발급자 SET 만 유실됐을 수 있고,
+                // 그 상태에서는 이미 받은 사용자가 게이트를 다시 통과한다
+                restored += couponStockRedisRepository.addIssuedUsers(
+                        coupon.getId(), couponIssueRepository.findUserIdsByCouponId(coupon.getId()));
                 lastId = coupon.getId(); // 수량이 없거나 0 이어도 커서는 전진
             }
         } while (page.size() == batchSize); // 마지막(부족) 페이지면 종료
 
-        log.info("[COUPON_STOCK_WARMUP] 쿠폰 재고 워밍업 완료 - 신규 {}건, 기존 유지 {}건 (batchSize={})",
-                planted, skipped, batchSize);
+        log.info("[COUPON_STOCK_WARMUP] 쿠폰 재고 워밍업 완료 - 신규 {}건, 기존 유지 {}건, 발급자 복원 {}건 (batchSize={})",
+                planted, skipped, restored, batchSize);
     }
 }

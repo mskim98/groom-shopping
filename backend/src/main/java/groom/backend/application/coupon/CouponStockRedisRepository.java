@@ -1,5 +1,6 @@
 package groom.backend.application.coupon;
 
+import java.util.Collection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -130,6 +131,23 @@ public class CouponStockRedisRepository {
      */
     public void rollbackStockOnly(Long couponId) {
         redisTemplate.opsForValue().increment(stockKey(couponId));
+    }
+
+    /**
+     * 발급자 SET 에 사용자들을 더한다. 지우고 다시 만들지 않는다
+     *
+     * <p>합집합인 이유 : 재기동 시점에 Lua 게이트는 통과했으나 DB 커밋 전인 예약이 SET 에 있을 수 있다
+     * DEL 후 DB 로 재구축하면 그 예약이 사라져 같은 사용자가 다시 통과한다 (재고 SETNX 와 같은 이유)
+     *
+     * @return 실제로 추가된 멤버 수 (이미 있던 것은 세지 않는다)
+     */
+    public long addIssuedUsers(Long couponId, Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return 0L;
+        }
+        String[] members = userIds.stream().map(String::valueOf).toArray(String[]::new);
+        Long added = redisTemplate.opsForSet().add(issuedUsersKey(couponId), members);
+        return added == null ? 0L : added;
     }
 
     public enum IssueResult {
