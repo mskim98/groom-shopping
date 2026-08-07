@@ -1,0 +1,22 @@
+{
+  "mappings": [
+    {
+      "request": { "method": "POST", "urlPath": "/v1/payments/confirm" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "body": "{\"paymentKey\":\"{{jsonPath request.body '$.paymentKey'}}\",\"orderId\":\"{{jsonPath request.body '$.orderId'}}\",\"status\":\"DONE\",\"totalAmount\":{{jsonPath request.body '$.amount'}},\"balanceAmount\":{{jsonPath request.body '$.amount'}},\"suppliedAmount\":{{jsonPath request.body '$.amount'}},\"vat\":0,\"currency\":\"KRW\",\"method\":\"간편결제\",\"type\":\"NORMAL\",\"approvedAt\":\"2026-06-06T00:00:00+09:00\"}"
+      }
+    },
+    {
+      "request": { "method": "POST", "urlPathPattern": "/v1/payments/.*/cancel" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "transformers": ["response-template"],
+        "body": "{\"status\":\"CANCELED\",\"currency\":\"KRW\",\"approvedAt\":\"2026-06-06T00:00:00+09:00\"}"
+      }
+    }
+  ]
+}

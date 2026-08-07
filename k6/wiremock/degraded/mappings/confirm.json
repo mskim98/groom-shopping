@@ -1,0 +1,22 @@
+{
+  "mappings": [
+    {
+      "request": { "method": "POST", "urlPath": "/v1/payments/confirm" },
+      "response": {
+        "status": 500,
+        "fixedDelayMilliseconds": 5000,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"code\":\"PROVIDER_ERROR\",\"message\":\"PG 일시 장애(부하테스트 주입)\"}"
+      }
+    },
+    {
+      "request": { "method": "POST", "urlPathPattern": "/v1/payments/.*/cancel" },
+      "response": {
+        "status": 500,
+        "fixedDelayMilliseconds": 5000,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"code\":\"PROVIDER_ERROR\",\"message\":\"PG 일시 장애(부하테스트 주입)\"}"
+      }
+    }
+  ]
+}

@@ -101,7 +101,7 @@ export default function (setupData) {
     if (loginRes.status === 200) {
       authToken = loginRes.json('accessToken');
     }
-  }
+  });
 
   if (!authToken) {
     console.error('❌ 로그인 실패');
@@ -182,13 +182,13 @@ export default function (setupData) {
 
     check(orderRes, {
       'status is 201': (r) => r.status === 201,
-      'has orderId': (r) => r.json('id') !== null,
+      'has orderId': (r) => r.json('orderId') !== null,
       'has totalAmount': (r) => r.json('totalAmount') > 0,
       'response time < 2000ms': (r) => r.timings.duration < 2000,
     });
 
     if (orderRes.status === 201) {
-      orderId = orderRes.json('id');
+      orderId = orderRes.json('orderId');
     }
   });
 
@@ -236,7 +236,7 @@ export default function (setupData) {
           })),
         });
 
-        const removeRes = http.delete(`${BASE_URL}/cart/remove`, removePayload, {
+        const removeRes = http.del(`${BASE_URL}/cart/remove`, removePayload, {
           headers,
         });
 
