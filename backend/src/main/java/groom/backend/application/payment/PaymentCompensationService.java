@@ -87,13 +87,15 @@ public class PaymentCompensationService {
     }
 
     /**
-     * Toss 취소 API 호출, 멱등성 키(paymentKey + 재시도 횟수)로 이중 환불을 방지
+     * Toss 취소 API 호출, 멱등성 키(paymentKey + 보상 레코드 ID)로 이중 환불을 방지
      */
     // @Transactional : 환불 결과(성공/실패)에 따른 상태 변경 저장을 트랜잭션으로 보장한다.
     @Transactional
     public void executeCompensation(PaymentCompensation compensation) {
-        // 멱등성 키 : 같은 키로는 Toss가 중복 취소를 막아준다. 재시도 횟수를 섞어 매 시도를 구분.
-        String idempotencyKey = compensation.getPaymentKey() + ":compensate:" + compensation.getRetryCount();
+        // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
+        // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를
+        // 새 요청으로 오인해 이중 환불이 난다 -> 멱등키가 목적을 잃는다
+        String idempotencyKey = compensation.getPaymentKey() + ":compensate:" + compensation.getId();
         try {
             tossPaymentClient.cancelPayment(
                     compensation.getPaymentKey(),
