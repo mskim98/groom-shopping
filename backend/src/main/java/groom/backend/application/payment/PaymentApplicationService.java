@@ -125,6 +125,10 @@ public class PaymentApplicationService {
             releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
             selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
+            // 도메인 예외는 재포장하지 않는다 - 감싸는 순간 errorCode 가 소실돼 전역 핸들러의 catch-all(500)로 떨어진다
+            if (e instanceof BusinessException businessException) {
+                throw businessException;
+            }
             throw new RuntimeException("결제 승인에 실패했습니다: " + e.getMessage(), e);
         }
 
@@ -144,6 +148,10 @@ public class PaymentApplicationService {
                     "DB 후처리 실패: " + dbError.getMessage()
             );
             selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            // 도메인 예외는 재포장하지 않는다 - 409(PRODUCT_STOCK_CONFLICT) 가 500 으로 나가면 죽은 카운터가 된다
+            if (dbError instanceof BusinessException businessException) {
+                throw businessException;
+            }
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
         }
     }
