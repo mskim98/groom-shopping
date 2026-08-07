@@ -75,8 +75,12 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.2.0'
     testImplementation 'org.mockito:mockito-core:5.2.0'
+    // WireMock - 외부 PG(Toss) HTTP 응답을 흉내 내 타임아웃·5xx 등 실패를 주입(②③ 검증)
+    testImplementation 'org.wiremock:wiremock-standalone:3.9.2'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    // 통합 테스트가 전체 Spring 컨텍스트(Kafka Streams·Redisson 등)를 띄우므로 기본 힙(512m)으로는 부족
+    maxHeapSize = '1536m'
 }
