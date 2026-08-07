@@ -1,5 +1,7 @@
 package groom.backend.domain.payment.model;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -8,6 +10,9 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.Builder;
 import lombok.Getter;
@@ -79,26 +84,47 @@ public class PaymentCompensation {
         this.nextRetryAt = LocalDateTime.now();
     }
 
+    // 허용 전이표. SUCCEEDED·GIVEN_UP 은 종단이라 어떤 전이도 나가지 않는다
+    // 조회 쿼리(findRetryable)의 상태 조건에만 의존하면 새 호출부가 생기는 순간 뚫린다
+    private static final Map<CompensationStatus, Set<CompensationStatus>> ALLOWED_TRANSITIONS = Map.of(
+            CompensationStatus.PENDING, EnumSet.of(
+                    CompensationStatus.SUCCEEDED, CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+            CompensationStatus.FAILED, EnumSet.of(
+                    CompensationStatus.SUCCEEDED, CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+            CompensationStatus.SUCCEEDED, EnumSet.noneOf(CompensationStatus.class),
+            CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class));
+
+    private void transitionTo(CompensationStatus next) {
+        Set<CompensationStatus> allowed = ALLOWED_TRANSITIONS
+                .getOrDefault(this.status, EnumSet.noneOf(CompensationStatus.class));
+        if (!allowed.contains(next)) {
+            throw new BusinessException(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+        }
+        this.status = next;
+    }
+
     public void markSucceeded() {
-        this.status = CompensationStatus.SUCCEEDED;
+        transitionTo(CompensationStatus.SUCCEEDED);
         this.lastError = null;
         this.nextRetryAt = null;
     }
 
     /**
-     * 보상 시도 실패 시 지수 백오프(1분, 2분, 4분, 8분, 16분…)로 다음 재시도 시각을 설정 재시도 한도를 넘기면 GIVEN_UP으로 상태를 바꾸고 수동 처리 대상으로 분류
+     * 보상 시도 실패 시 지수 백오프(2분, 4분, 8분, 16분…)로 다음 재시도 시각을 설정 재시도 한도를 넘기면 GIVEN_UP으로 상태를 바꾸고 수동 처리 대상으로 분류
      */
     public void markFailed(String errorMessage) {
-        this.retryCount = this.retryCount + 1;
-        this.lastError = errorMessage;
-
-        if (this.retryCount >= this.maxRetryCount) {
-            this.status = CompensationStatus.GIVEN_UP;
+        // 상태를 먼저 바꾼다. 전이가 거부되면 retryCount 도 오르지 않아야 한다
+        int nextRetryCount = this.retryCount + 1;
+        if (nextRetryCount >= this.maxRetryCount) {
+            transitionTo(CompensationStatus.GIVEN_UP);
+            this.retryCount = nextRetryCount;
+            this.lastError = errorMessage;
             this.nextRetryAt = null;
             return;
         }
-
-        this.status = CompensationStatus.FAILED;
+        transitionTo(CompensationStatus.FAILED);
+        this.retryCount = nextRetryCount;
+        this.lastError = errorMessage;
         long backoffMinutes = (long) Math.pow(2, Math.min(this.retryCount, 6));
         this.nextRetryAt = LocalDateTime.now().plusMinutes(backoffMinutes);
     }
