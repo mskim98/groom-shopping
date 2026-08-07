@@ -21,6 +21,9 @@ import org.springframework.stereotype.Service;
  * <p>기존 동기 발급(Redisson 락)을 유지한 채 추가되는 비동기 경로다. 요청을 큐(Kafka)로 받아
  * couponId 키로 같은 파티션에 보내면 단일 컨슈머가 직렬 처리하므로 분산 락 없이 동시성이 해소된다.
  * 클라이언트는 즉시 requestId 를 받고, 처리 결과는 Redis 상태값을 polling 해서 확인한다.
+ *
+ * <p>Redis 게이트는 컨슈머가 아니라 <b>접수({@link #enqueue})</b> 에 있다. 마감·중복이 확정된 요청까지
+ * 브로커를 통과시키면 큐와 컨슈머가 어차피 버릴 메시지를 나르게 된다.
  */
 @Slf4j
 @Service
@@ -41,33 +44,60 @@ public class CouponAsyncIssueService {
     private final RedisTemplate<String, String> redisTemplate; // 요청별 처리 상태 저장(polling 용)
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate; // 7.1 String 템플릿 재사용
     private final ObjectMapper objectMapper;
+    private final CouponStockRedisRepository couponStockRedisRepository;
 
     /**
-     * 발급 요청을 큐에 적재하고 즉시 requestId 를 반환한다. (컨트롤러는 202 Accepted)
+     * 접수 게이트를 통과한 요청만 큐에 적재하고 requestId 를 반환한다. (컨트롤러는 202 Accepted)
+     *
+     * <p>게이트를 브로커 앞에 둔 이유 : 마감·중복이 확정된 요청은 브로커와 컨슈머 자원을 쓸 필요가 없다
+     * 컨슈머 안에 두면 어차피 버려질 메시지가 전부 파티션을 통과한다
+     *
+     * <p>게이트 통과 순서를 발급 순서로 쓰지 않는다 - 게이트 통과와 {@code send} 사이에 컨텍스트 스위칭이
+     * 나면 오프셋 순서가 뒤바뀐다. 순서의 진실은 오프셋 하나뿐이고, 게이트는 마감·중복만 자른다
      */
     public String enqueue(Long couponId, Long userId) {
+        CouponStockRedisRepository.IssueResult gate =
+                couponStockRedisRepository.tryIssue(couponId, userId);
+        boolean gateReserved;
+        switch (gate) {
+            case OUT_OF_STOCK -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+            case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
+            case NOT_INITIALIZED -> {
+                // 재고 키가 없으면 게이트가 판정할 근거가 없다. 통과시키고 컨슈머의 DB 폴백에 맡긴다
+                log.warn("[COUPON_GATE_NOT_INITIALIZED] couponId={}, userId={}", couponId, userId);
+                gateReserved = false;
+            }
+            default -> gateReserved = true;
+        }
+
         String requestId = UUID.randomUUID().toString();
         // 초기 상태 WAITING 기록 (polling 시 "대기 중" 표시용)
         redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
 
-        CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId);
+        CouponIssueRequestEvent event =
+                new CouponIssueRequestEvent(requestId, couponId, userId, gateReserved);
         // key = couponId → 같은 쿠폰 요청은 같은 파티션(직렬 처리)
         send(REQUEST_TOPIC, couponId.toString(), event);
-        log.info("[COUPON_ASYNC_ENQUEUE] requestId={}, couponId={}, userId={}", requestId, couponId, userId);
+        log.info("[COUPON_ASYNC_ENQUEUE] requestId={}, couponId={}, userId={}, gateReserved={}",
+                requestId, couponId, userId, gateReserved);
         return requestId;
     }
 
     /**
-     * 컨슈머가 호출하는 실제 발급 처리. 직렬 처리되므로 락 없이 동기 경로와 같은 발급 코어를 재사용한다.
+     * 컨슈머가 호출하는 실제 발급 처리. 파티션 단위 직렬 소비라 락 없이 확정한다.
      */
     public void process(CouponIssueRequestEvent event) {
         String statusKey = STATUS_KEY_PREFIX + event.requestId();
         try {
             User user = userRepository.findById(event.userId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-            // 동기 경로와 같은 Lua 원자 연산(재고·중복 검증 + 차감)을 락 없이 호출한다
-            // 파티션 단위 직렬 소비라 배타 제어가 이미 성립하고, 재고의 단일 진실은 Redis 로 유지된다
-            couponIssueService.issueCouponWithoutLock(event.couponId(), user);
+            if (event.gateReserved()) {
+                // 게이트가 이미 재고를 깎았다. 여기서 또 깎으면 실제보다 빨리 마감된다
+                couponIssueService.confirmIssue(event.couponId(), user);
+            } else {
+                // 게이트가 판정하지 못한 요청(재고 미초기화). DB 비관적 락 폴백이 판정한다
+                couponIssueService.issueCouponInDbOnly(event.couponId(), user);
+            }
 
             redisTemplate.opsForValue().set(statusKey, STATUS_SUCCESS, STATUS_TTL);
             send(RESULT_TOPIC, event.couponId().toString(),

@@ -179,6 +179,18 @@ public class CouponIssueService {
             }
         }
 
+        return selfProvider.getObject().confirmIssue(couponId, user);
+    }
+
+    /**
+     * 게이트를 다시 돌리지 않고 DB 확정만 한다. 접수 단계에서 Lua 게이트를 이미 통과한 요청 전용
+     *
+     * <p>컨슈머에서 {@code tryIssue} 를 또 호출하면 같은 요청이 재고를 두 번 깎아
+     * 실제 발급 가능 수량보다 빨리 마감된다
+     */
+    // propagation = NOT_SUPPORTED : Lua 롤백 구간이 DB 커넥션을 물지 않게 한다
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public CouponIssueResponse confirmIssue(Long couponId, User user) {
         try {
             return selfProvider.getObject().persistIssuedCoupon(couponId, user);
         } catch (BusinessException be) {

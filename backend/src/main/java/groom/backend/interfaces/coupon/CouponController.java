@@ -157,13 +157,15 @@ public class CouponController {
   @Operation(
           summary = "쿠폰 비동기 발급 (대규모 트래픽용)",
           description = """
-          발급 요청을 큐에 적재하고 즉시 requestId 를 반환합니다(202 Accepted).
+          접수 단계의 Redis 게이트를 통과한 요청만 큐에 적재하고 requestId 를 반환합니다(202 Accepted).
+          품절·중복이 확정된 요청은 브로커에 싣지 않고 즉시 409 로 거절합니다.
           동일 쿠폰 요청은 단일 컨슈머가 직렬 처리하므로 분산 락 없이 동시성이 해소됩니다.
           처리 결과는 상태 조회 API 로 polling 합니다.
           """
   )
   @ApiResponses({
           @ApiResponse(responseCode = "202", description = "요청 접수(처리 대기)"),
+          @ApiResponse(responseCode = "409", description = "접수 게이트 거절 - 품절(COUPON_OUT_OF_STOCK) 또는 중복(COUPON_ALREADY_ISSUED)"),
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
   })
   @PostMapping("/issue-async/{coupon_id}")
