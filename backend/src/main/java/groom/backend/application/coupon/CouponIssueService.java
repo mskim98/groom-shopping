@@ -36,6 +36,7 @@ import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -180,6 +181,14 @@ public class CouponIssueService {
 
         try {
             return selfProvider.getObject().persistIssuedCoupon(couponId, user);
+        } catch (BusinessException be) {
+            if (be.getErrorCode() == ErrorCode.COUPON_ALREADY_ISSUED) {
+                // 이 사용자는 실제로 쿠폰을 갖고 있다 - 발급자 SET 은 남기고 재고만 되돌린다
+                couponStockRedisRepository.rollbackStockOnly(couponId);
+            } else {
+                couponStockRedisRepository.rollbackIssue(couponId, user.getId());
+            }
+            throw be;
         } catch (RuntimeException dbError) {
             // DB 저장 실패 → Redis 재고/발급자 SET 롤백으로 상태 일치 유지
             couponStockRedisRepository.rollbackIssue(couponId, user.getId());
@@ -204,12 +213,20 @@ public class CouponIssueService {
             throw new BusinessException(ErrorCode.COUPON_NOT_FOUND);
         }
 
-        CouponIssue couponIssue = couponIssueRepository.save(CouponIssue.builder()
-                .coupon(coupon)
-                .userId(user.getId())
-                .createdAt(LocalDateTime.now())
-                .deletedAt(LocalDateTime.of(coupon.getExpireDate(), LocalTime.MIN))
-                .build());
+        CouponIssue couponIssue;
+        try {
+            // saveAndFlush : 제약 위반을 커밋 시점이 아니라 여기서 터뜨려 도메인 예외로 바꾼다
+            couponIssue = couponIssueRepository.saveAndFlush(CouponIssue.builder()
+                    .coupon(coupon)
+                    .userId(user.getId())
+                    .createdAt(LocalDateTime.now())
+                    .deletedAt(LocalDateTime.of(coupon.getExpireDate(), LocalTime.MIN))
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            // uq_coupon_issue_user 위반 - Redis 발급자 SET 이 유실됐어도 여기서 막힌다
+            log.warn("[COUPON_DUPLICATE_BLOCKED_BY_DB] couponId={}, userId={}", couponId, user.getId());
+            throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
+        }
 
         // DTO 는 감산 UPDATE 전에 만든다
         // clearAutomatically 로 영속성 컨텍스트가 비워진 뒤 엔티티를 읽으면 지연 로딩이 깨진다

@@ -96,7 +96,7 @@ class CouponIssueServiceTest {
                 .type(CouponType.DISCOUNT).isActive(true)
                 .expireDate(LocalDate.now().plusDays(30)).build();
         given(couponRepository.findById(1L)).willReturn(Optional.of(coupon));
-        given(couponIssueRepository.save(any(CouponIssue.class)))
+        given(couponIssueRepository.saveAndFlush(any(CouponIssue.class)))
                 .willAnswer(inv -> inv.getArgument(0));
         given(couponRepository.decreaseQuantityAtomically(1L)).willReturn(0);
 

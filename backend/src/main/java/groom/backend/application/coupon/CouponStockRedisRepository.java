@@ -113,6 +113,16 @@ public class CouponStockRedisRepository {
         redisTemplate.opsForSet().remove(ISSUED_USERS_KEY_PREFIX + couponId, userId.toString());
     }
 
+    /**
+     * 재고만 되돌린다. 발급자 SET 은 건드리지 않는다
+     *
+     * <p>DB 유니크 제약에 막힌 경우에 쓴다. 이미 쿠폰을 가진 사용자를 SET 에서 빼면
+     * 게이트가 그를 다시 통과시켜 같은 실패를 무한 반복한다
+     */
+    public void rollbackStockOnly(Long couponId) {
+        redisTemplate.opsForValue().increment(STOCK_KEY_PREFIX + couponId);
+    }
+
     public enum IssueResult {
         SUCCESS,
         OUT_OF_STOCK,
