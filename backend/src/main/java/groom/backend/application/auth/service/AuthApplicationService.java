@@ -88,6 +88,8 @@ public class AuthApplicationService {
             String ipAddress = getClientIp(request);
             refreshTokenService.saveRefreshToken(user.getEmail(), refreshToken, userAgent, ipAddress);
 
+            // 토큰 expire 설정
+
             // Refresh Token을 HttpOnly Cookie로 설정
             Cookie refreshTokenCookie = createRefreshTokenCookie(refreshToken);
             response.addCookie(refreshTokenCookie);
