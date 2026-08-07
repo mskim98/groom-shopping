@@ -62,6 +62,8 @@ public class CouponIssueService {
     public static final String COUPON_LIST_CACHE_NAME = "user-coupons-list-cache";
     // 현재 다른 도메인과 같은 레디스를 공유하므로, 키 접두사(coupon-item-cache::)를 붙여 도메인 구분
     public static final String CACHE_PREFIX = COUPON_ITEM_CACHE_NAME + "::";
+    // RedisConfig 의 coupon-item-cache TTL(1시간)과 맞춘다
+    private static final Duration ITEM_CACHE_TTL = Duration.ofHours(1);
 
     // 분산 락 설정
     // - 쿠폰별 락 키로 분리해, 서로 다른 쿠폰 간 경합을 제거
@@ -220,10 +222,7 @@ public class CouponIssueService {
             log.warn("[COUPON_DB_STOCK_EXHAUSTED] couponId={}, userId={}", couponId, user.getId());
             throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
         }
-        Cache couponItemCache = couponCacheManager.getCache(COUPON_ITEM_CACHE_NAME);
-        if (couponItemCache != null) {
-            couponItemCache.put(responseDto.getCouponIssueId(), responseDto);
-        }
+        writeItemCache(responseDto);
         return responseDto;
     }
 
@@ -271,11 +270,20 @@ public class CouponIssueService {
         runAfterCommit(() -> couponStockRedisRepository.initStock(couponId, remainingQuantity));
 
         CouponIssueResponse responseDto = CouponIssueResponse.from(couponIssue);
-        Cache couponItemCache = couponCacheManager.getCache(COUPON_ITEM_CACHE_NAME);
-        if (couponItemCache != null) {
-            couponItemCache.put(responseDto.getCouponIssueId(), responseDto);
-        }
+        writeItemCache(responseDto);
         return responseDto;
+    }
+
+    /**
+     * 단건 캐시 쓰기. 읽기 경로({@link #calculateDiscount})가 {@code couponCacheTemplate} 하나뿐이므로 쓰기도 같은 직렬화를 쓴다
+     *
+     * <p>{@code couponCacheManager} 로 넣으면 {@code GenericJackson2JsonRedisSerializer} 의 기본 타이핑 때문에
+     * {@code ["FQCN", {...}]} 래퍼 배열로 저장되는데, 읽는 쪽은 {@code Jackson2JsonRedisSerializer<CouponIssueResponse>}
+     * 라 배열 토큰에서 역직렬화가 깨진다. 같은 키를 두 직렬화가 나눠 쓰던 것이 원인이다
+     */
+    private void writeItemCache(CouponIssueResponse responseDto) {
+        couponCacheTemplate.opsForValue()
+                .set(CACHE_PREFIX + responseDto.getCouponIssueId(), responseDto, ITEM_CACHE_TTL);
     }
 
     /**
