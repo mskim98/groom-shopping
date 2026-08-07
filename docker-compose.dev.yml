@@ -204,7 +204,8 @@ services:
     ports:
       - "9187:9187"
     networks:
-      - monitoring
+      - monitoring     # prometheus 가 스크랩
+      - dev-network    # db 컨테이너에 접속하려면 같은 네트워크여야 함
     depends_on:
       - db
     command:
@@ -219,7 +220,8 @@ services:
     ports:
       - "9121:9121"
     networks:
-      - monitoring
+      - monitoring     # prometheus 가 스크랩
+      - dev-network    # redis 컨테이너에 접속하려면 같은 네트워크여야 함
     depends_on:
       - redis
     command:
@@ -232,7 +234,8 @@ services:
     ports:
       - "9113:9113"
     networks:
-      - monitoring
+      - monitoring     # prometheus 가 스크랩
+      - dev-network    # nginx stub_status 에 접속하려면 같은 네트워크여야 함
     depends_on:
       - nginx
     command:

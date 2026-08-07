@@ -1,6 +1,6 @@
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 5s
+  evaluation_interval: 5s
   external_labels:
     cluster: 'dev'
     environment: 'development'
@@ -14,7 +14,7 @@ scrape_configs:
   # Spring Boot Application Metrics
   - job_name: 'spring-boot'
     metrics_path: '/api/actuator/prometheus'
-    scrape_interval: 10s
+    scrape_interval: 5s
     static_configs:
       - targets: [ 'host.docker.internal:8080' ]
     relabel_configs:
