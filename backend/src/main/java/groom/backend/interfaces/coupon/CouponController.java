@@ -173,29 +173,11 @@ public class CouponController {
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId) {
     String requestId = couponAsyncIssueService.enqueue(couponId, user.getId());
-    CouponAsyncIssueService.QueuePosition pos = couponAsyncIssueService.getPosition(couponId, user.getId());
-    // 202 Accepted: "요청은 받았고 처리는 비동기로 진행 중" + 추정 대기 순번
+    // 202 Accepted: "요청은 받았고 처리는 비동기로 진행 중". 대기 순번은 응답하지 않는다 -
+    // 발급 판정은 컨슈머 도달 순서로 정해지므로, 큐에 적재된 순번을 돌려주면 지킬 수 없는 순서를 약속하게 된다.
     return ResponseEntity.accepted().body(Map.of(
             "requestId", requestId,
-            "status", "WAITING",
-            "position", String.valueOf(pos.position()),
-            "waiting", String.valueOf(pos.waiting())));
-  }
-
-  @Operation(
-          summary = "쿠폰 비동기 발급 대기 순번 조회",
-          description = "현재 사용자의 추정 대기 순번(position = 내 앞 대기 인원)과 전체 대기 인원(waiting)을 조회합니다."
-  )
-  @GetMapping("/issue-async/{coupon_id}/position")
-  public ResponseEntity<Map<String, String>> getQueuePosition(
-          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
-          @AuthenticationPrincipal(expression = "user") User user,
-          @Parameter(description = "쿠폰 ID", example = "1")
-          @PathVariable("coupon_id") Long couponId) {
-    CouponAsyncIssueService.QueuePosition pos = couponAsyncIssueService.getPosition(couponId, user.getId());
-    return ResponseEntity.ok(Map.of(
-            "position", String.valueOf(pos.position()),
-            "waiting", String.valueOf(pos.waiting())));
+            "status", "WAITING"));
   }
 
   @Operation(

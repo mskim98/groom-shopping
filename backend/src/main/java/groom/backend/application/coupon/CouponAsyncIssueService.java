@@ -40,11 +40,7 @@ public class CouponAsyncIssueService {
     private final UserRepository userRepository;
     private final RedisTemplate<String, String> redisTemplate; // 요청별 처리 상태 저장(polling 용)
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate; // 7.1 String 템플릿 재사용
-    private final CouponQueueRedisRepository couponQueueRedisRepository; // 대기 순번(ZSet)
     private final ObjectMapper objectMapper;
-
-    // 대기 순번 응답용 (position = 내 앞 대기 인원, waiting = 전체 대기 인원)
-    public record QueuePosition(long position, long waiting) {}
 
     /**
      * 발급 요청을 큐에 적재하고 즉시 requestId 를 반환한다. (컨트롤러는 202 Accepted)
@@ -54,9 +50,6 @@ public class CouponAsyncIssueService {
         // 초기 상태 WAITING 기록 (polling 시 "대기 중" 표시용)
         redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
 
-        // 대기열(ZSet)에 등록 → 본인의 추정 대기 순번을 보여줄 수 있다.
-        couponQueueRedisRepository.enqueue(couponId, userId);
-
         CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId);
         // key = couponId → 같은 쿠폰 요청은 같은 파티션(직렬 처리)
         send(REQUEST_TOPIC, couponId.toString(), event);
@@ -65,15 +58,16 @@ public class CouponAsyncIssueService {
     }
 
     /**
-     * 컨슈머가 호출하는 실제 발급 처리. 직렬 처리되므로 락 없이 기존 DB 발급 로직을 재사용한다.
+     * 컨슈머가 호출하는 실제 발급 처리. 직렬 처리되므로 락 없이 동기 경로와 같은 발급 코어를 재사용한다.
      */
     public void process(CouponIssueRequestEvent event) {
         String statusKey = STATUS_KEY_PREFIX + event.requestId();
         try {
             User user = userRepository.findById(event.userId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-            // 직렬 처리 가정하에 기존 DB 발급 로직(재고·중복 검증 포함)을 그대로 재사용
-            couponIssueService.issueCouponInDbOnly(event.couponId(), user);
+            // 동기 경로와 같은 Lua 원자 연산(재고·중복 검증 + 차감)을 락 없이 호출한다
+            // 파티션 단위 직렬 소비라 배타 제어가 이미 성립하고, 재고의 단일 진실은 Redis 로 유지된다
+            couponIssueService.issueCouponWithoutLock(event.couponId(), user);
 
             redisTemplate.opsForValue().set(statusKey, STATUS_SUCCESS, STATUS_TTL);
             send(RESULT_TOPIC, event.couponId().toString(),
@@ -81,25 +75,24 @@ public class CouponAsyncIssueService {
             log.info("[COUPON_ASYNC_SUCCESS] requestId={}, couponId={}", event.requestId(), event.couponId());
         } catch (BusinessException e) {
             String reason = e.getErrorCode().name();
-            redisTemplate.opsForValue().set(statusKey, STATUS_FAILED_PREFIX + reason, STATUS_TTL);
-            send(RESULT_TOPIC, event.couponId().toString(),
-                    new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(), "FAILED", reason));
             log.warn("[COUPON_ASYNC_FAILED] requestId={}, couponId={}, reason={}",
                     event.requestId(), event.couponId(), reason);
-        } finally {
-            // 성공/실패 무관하게 대기열에서 제거 → 뒤 사용자의 앞 대기 인원이 줄어든다.
-            couponQueueRedisRepository.remove(event.couponId(), event.userId());
+            recordFailure(event, statusKey, reason);
+        } catch (RuntimeException e) {
+            // BusinessException 이 아닌 실패도 상태를 남긴다
+            // 대표적으로 persistIssuedCoupon 의 트랜잭션 timeout 초과가 TransactionTimedOutException 으로 나온다
+            // 남기지 않으면 상태 키가 WAITING 인 채 TTL 까지 방치돼 클라이언트 polling 이 영영 대기한다
+            log.error("[COUPON_ASYNC_ERROR] requestId={}, couponId={}, error={}",
+                    event.requestId(), event.couponId(), e.toString());
+            recordFailure(event, statusKey, ErrorCode.SERVER_ERROR.name());
         }
     }
 
-    /**
-     * 사용자의 현재 대기 순번을 조회한다. position = 내 앞 대기 인원(추정), waiting = 전체 대기 인원.
-     * 큐에 없으면(이미 처리됨/미등록) position 0 으로 응답한다.
-     */
-    public QueuePosition getPosition(Long couponId, Long userId) {
-        Long rank = couponQueueRedisRepository.rank(couponId, userId);
-        long waiting = couponQueueRedisRepository.size(couponId);
-        return new QueuePosition(rank != null ? rank : 0L, waiting);
+    // 실패 상태를 Redis 에 기록하고 결과 토픽으로 알린다
+    private void recordFailure(CouponIssueRequestEvent event, String statusKey, String reason) {
+        redisTemplate.opsForValue().set(statusKey, STATUS_FAILED_PREFIX + reason, STATUS_TTL);
+        send(RESULT_TOPIC, event.couponId().toString(),
+                new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(), "FAILED", reason));
     }
 
     /**

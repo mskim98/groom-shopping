@@ -60,6 +60,19 @@ public class CouponStockRedisRepository {
         redisTemplate.opsForValue().set(STOCK_KEY_PREFIX + couponId, String.valueOf(quantity));
     }
 
+    /**
+     * 키가 아직 없을 때만 재고를 심는다(SETNX). 이미 값이 있으면 건드리지 않고 {@code false} 를 반환
+     *
+     * <p>워밍업 전용이다. 이벤트 진행 중에는 Redis 재고가 살아 있는 카운터이고 DB 수량은
+     * 커밋이 끝난 발급까지만 반영하므로, 재기동 시 {@link #initStock}(SET)으로 덮으면
+     * Lua 차감은 끝났으나 DB 커밋 전인 요청 수만큼 재고가 되살아난다.
+     */
+    public boolean initStockIfAbsent(Long couponId, Long quantity) {
+        return Boolean.TRUE.equals(
+                redisTemplate.opsForValue()
+                        .setIfAbsent(STOCK_KEY_PREFIX + couponId, String.valueOf(quantity)));
+    }
+
     public Long getStock(Long couponId) {
         String value = redisTemplate.opsForValue().get(STOCK_KEY_PREFIX + couponId);
         return value == null ? null : Long.parseLong(value);
