@@ -96,63 +96,10 @@ public class CouponController {
     return ResponseEntity.ok(response);
   }
 
-  @Operation(
-          summary = "쿠폰 발급",
-          description = """
-          지정된 쿠폰 ID의 쿠폰을 현재 로그인한 사용자에게 발급합니다.
-          요청 헤더의 Date 값과 서버 시간의 차이가 1분 이상이면 거부됩니다.
-          """
-  )
-  @ApiResponses({
-          @ApiResponse(responseCode = "201", description = "쿠폰 발급 성공",
-                  content = @Content(schema = @Schema(implementation = CouponIssueResponse.class))),
-          @ApiResponse(responseCode = "403", description = "시간 오차 초과 (요청 거부)",
-                  content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-          @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰",
-                  content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
-  })
-  // 쿠폰 발급 요청 처리 흐름:
-  // 1) 요청 → 2) 사용자/요청시간 검증 → 3) 발급 서비스 호출 → 4) 응답(201 Created)
-  // @PostMapping : HTTP POST 요청을 이 메서드에 매핑한다(자원 '생성' 의미).
-  @PostMapping("/issue/{coupon_id}")
-  public ResponseEntity<CouponIssueResponse> issueCoupon(
-          // @AuthenticationPrincipal : JWT 인증 필터가 검증을 마친 뒤 SecurityContext에 담아둔
-          // 사용자 정보를 파라미터로 자동 주입한다. 토큰 검증은 Security 계층이 이미 끝냈다.
-          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
-          @AuthenticationPrincipal(expression = "user") User user,
-          // @RequestHeader : HTTP 요청 헤더의 값을 파라미터로 받는다(여기선 클라이언트 시각).
-          @Parameter(description = "클라이언트 기준 UTC 시간", required = true, example = "Wed, 06 Nov 2025 15:00:00 GMT")
-          @RequestHeader("Request-Date") Instant clientInstant,
-          // @PathVariable : URL 경로의 {coupon_id} 부분을 파라미터로 추출한다.
-          @Parameter(description = "쿠폰 ID", example = "1")
-          @PathVariable("coupon_id") Long couponId) {
+  // 발급 경로는 /issue-async 하나다
+  // 동기 경로(POST /issue/{coupon_id}, Redisson 락)는 제거했다 - 락은 대기 초과 시 재고가 남아 있어도
+  // 품절로 응답하는 거짓 품절을 만들었고, 임계 구역 안의 DB I/O 가 커넥션 풀을 동시 처리 상한으로 만들었다
 
-    // 사용자 정보 추출
-    // 토큰 유효성 검사는 security 측에서 한다.
-    log.info("user identified : {}", user.getName());
-
-    // 서버와 클라이언트 간의 시간 오차 검증 (절대값 기준)
-    Duration diff = Duration.between(clientInstant, Instant.now()).abs();
-
-    // TODO : 요청 트래픽으로 인해 느려질 경우를 고려해야 할 수 있다.
-    // 2차에서 다뤄야 할 사항으로 보임.
-    // 예상 사용자 책정과 성능 요구사항 설정으로 최대 몇 초 이내에 응답해야 하는지에 따라, 오차 또한 달라질 수 있음.
-    // 분 단위 이내만 허용
-    if (diff.toMinutes() >= 1) {
-      log.warn("Time difference exceeded: {} seconds", diff.toSeconds());
-      throw new BusinessException(ErrorCode.INVALID_PARAMETER, "잘못된 요청입니다.");
-    }
-
-    // 쿠폰 발급
-    CouponIssueResponse response = couponIssueService.issueCoupon(couponId, user);
-
-    // 쿠폰이 존재하지 않을 시
-    if (response == null) {
-      return ResponseEntity.notFound().build();
-    }
-
-    return ResponseEntity.status(HttpStatus.CREATED).body(response);
-  }
 
   @Operation(
           summary = "쿠폰 비동기 발급 (대규모 트래픽용)",

@@ -8,6 +8,7 @@ import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.entity.CouponIssue;
 import groom.backend.domain.coupon.model.enums.CouponType;
+import groom.backend.application.coupon.event.CouponIssueRequestEvent;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.domain.coupon.service.CouponCommonService;
@@ -43,6 +44,9 @@ class CouponIssueServiceIntegrationTest {
 
     @Autowired
     private CouponIssueService couponIssueService;
+
+    @Autowired
+    private CouponAsyncIssueService couponAsyncIssueService;
 
     @Autowired
     private CouponCommonService couponCommonService;
@@ -148,14 +152,32 @@ class CouponIssueServiceIntegrationTest {
         couponStockRedisRepository.initStock(coupon.getId(), coupon.getQuantity());
     }
 
+    // 접수 게이트 + 컨슈머 확정을 한 호출로 묶는다
+    // 실제 컨슈머는 Kafka 를 거치지만, 이 테스트가 검증하는 것은 발급 판정이지 전달 경로가 아니다
+    //
+    // setUp 이 모든 쿠폰을 워밍업하므로 게이트는 SUCCESS 이고 gateReserved=true 다
+    // 워밍업하지 않은 쿠폰을 다루는 케이스는 이 헬퍼를 쓰지 않는다
+    private CouponIssueResponse issue(Long couponId, User user) {
+        String requestId = couponAsyncIssueService.enqueue(couponId, user.getId());
+        couponAsyncIssueService.process(
+                new CouponIssueRequestEvent(requestId, couponId, user.getId(), true));
+        String status = couponAsyncIssueService.getStatus(requestId);
+        if (!"SUCCESS".equals(status)) {
+            throw new IllegalStateException("발급 실패: " + status);
+        }
+        return couponIssueService.searchMyCoupon(user.getId()).stream()
+                .filter(r -> r.getCouponId().equals(couponId))
+                .findFirst().orElseThrow();
+    }
+
     // 활성 쿠폰을 정상적으로 발급하는 시나리오 테스트
-    // CouponIssueService.issueCoupon()이 CouponIssue를 생성하고 수량 감소 및 응답 반환을 검증함
+    // 접수 게이트 + 컨슈머 확정이 CouponIssue 를 생성하고 수량 감소 및 응답 반환을 검증함
     // 데이터베이스 반영 후 CouponIssue와 Coupon 수량이 올바르게 변경되었는지 확인
     @Test
     @DisplayName("쿠폰 발급 성공")
     void issueCoupon_success() {
         // when
-        CouponIssueResponse response = couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        CouponIssueResponse response = issue(activeCoupon.getId(), testUser);
 
         // then
         assertThat(response).isNotNull();
@@ -175,35 +197,39 @@ class CouponIssueServiceIntegrationTest {
         assertThat(updatedCoupon.getQuantity()).isEqualTo(99L);
     }
 
-    // 존재하지 않는 쿠폰 ID로 발급 요청 시 예외가 발생하는지 테스트
-    // BusinessException이 ErrorCode.COUPON_NOT_FOUND와 함께 발생해야 함
+    // 존재하지 않는 쿠폰 ID로 발급 요청 시 실패하는지 테스트
+    // 재고 키가 없으므로 게이트는 NOT_INITIALIZED 로 통과시키고, DB 폴백이 COUPON_NOT_FOUND 로 판정한다
     @Test
     @DisplayName("쿠폰 발급 실패 - 존재하지 않는 쿠폰")
     void issueCoupon_notFound() {
         // given
         Long nonExistentId = 999L;
+        String requestId = couponAsyncIssueService.enqueue(nonExistentId, testUser.getId());
 
-        // when & then
-        assertThatThrownBy(() -> couponIssueService.issueCoupon(nonExistentId, testUser))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(exception -> {
-                    BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
-                });
+        // when - 게이트가 판정하지 못했으므로 gateReserved=false
+        couponAsyncIssueService.process(
+                new CouponIssueRequestEvent(requestId, nonExistentId, testUser.getId(), false));
+
+        // then
+        assertThat(couponAsyncIssueService.getStatus(requestId))
+                .isEqualTo("FAILED:" + ErrorCode.COUPON_NOT_FOUND.name());
     }
 
     // 비활성화된 쿠폰에 대한 발급 요청 시 실패하는 시나리오
-    // 활성화 상태 검증 로직이 작동하여 COUPON_NOT_FOUND 예외 발생을 확인
+    // 게이트는 통과한다(재고 50 워밍업됨). isActive=false 는 확정 단계에서 걸린다
     @Test
     @DisplayName("쿠폰 발급 실패 - 비활성화된 쿠폰")
     void issueCoupon_inactiveCoupon() {
-        // when & then
-        assertThatThrownBy(() -> couponIssueService.issueCoupon(inactiveCoupon.getId(), testUser))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(exception -> {
-                    BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
-                });
+        // given
+        String requestId = couponAsyncIssueService.enqueue(inactiveCoupon.getId(), testUser.getId());
+
+        // when
+        couponAsyncIssueService.process(new CouponIssueRequestEvent(
+                requestId, inactiveCoupon.getId(), testUser.getId(), true));
+
+        // then
+        assertThat(couponAsyncIssueService.getStatus(requestId))
+                .isEqualTo("FAILED:" + ErrorCode.COUPON_NOT_FOUND.name());
     }
 
     // 쿠폰 수량이 1개뿐인 경우, 첫 번째 발급 후 두 번째 발급 시 실패하는 테스트
@@ -224,7 +250,7 @@ class CouponIssueServiceIntegrationTest {
         warmUp(limitedCoupon);
 
         // 첫 번째 발급 성공
-        couponIssueService.issueCoupon(limitedCoupon.getId(), testUser);
+        issue(limitedCoupon.getId(), testUser);
 
         // 두 번째 사용자 생성
         UserJpaEntity userEntity2 = UserJpaEntity.builder()
@@ -246,8 +272,8 @@ class CouponIssueServiceIntegrationTest {
                 userEntity2.getUpdatedAt()
         );
 
-        // when & then - 두 번째 발급 시도 시 실패
-        assertThatThrownBy(() -> couponIssueService.issueCoupon(limitedCoupon.getId(), testUser2))
+        // when & then - 두 번째는 접수 게이트에서 끊긴다
+        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(limitedCoupon.getId(), testUser2.getId()))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
@@ -262,10 +288,10 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("쿠폰 발급 실패 - 중복 발급")
     void issueCoupon_duplicateIssue() {
         // given
-        couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        issue(activeCoupon.getId(), testUser);
 
-        // when & then
-        assertThatThrownBy(() -> couponIssueService.issueCoupon(activeCoupon.getId(), testUser))
+        // when & then - 같은 사용자의 두 번째 요청은 발급자 SET 에 걸려 접수에서 끊긴다
+        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(activeCoupon.getId(), testUser.getId()))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
@@ -280,7 +306,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("내 쿠폰 조회 성공")
     void searchMyCoupon_success() {
         // given
-        couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        issue(activeCoupon.getId(), testUser);
 
         // 다른 쿠폰 생성 및 발급
         CouponCreateRequest request2 = CouponCreateRequest.builder()
@@ -293,7 +319,7 @@ class CouponIssueServiceIntegrationTest {
                 .build();
         Coupon coupon2 = couponRepository.save(request2.toEntity());
         warmUp(coupon2);
-        couponIssueService.issueCoupon(coupon2.getId(), testUser);
+        issue(coupon2.getId(), testUser);
 
         // 다른 사용자 생성 및 쿠폰 발급
         UserJpaEntity userEntity2 = UserJpaEntity.builder()
@@ -314,7 +340,7 @@ class CouponIssueServiceIntegrationTest {
                 userEntity2.getCreatedAt(),
                 userEntity2.getUpdatedAt()
         );
-        couponIssueService.issueCoupon(activeCoupon.getId(), otherUser);
+        issue(activeCoupon.getId(), otherUser);
 
         // when
         List<CouponIssueResponse> response = couponIssueService.searchMyCoupon(testUser.getId());
@@ -355,7 +381,7 @@ class CouponIssueServiceIntegrationTest {
         couponIssueRepository.save(expiredIssue);
 
         // 유효한 쿠폰 발급
-        couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        issue(activeCoupon.getId(), testUser);
 
         // when
         List<CouponIssueResponse> response = couponIssueService.searchMyCoupon(testUser.getId());
@@ -372,7 +398,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("내 쿠폰 조회 - 사용된 쿠폰은 제외")
     void searchMyCoupon_excludeUsed() {
         // given
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), testUser);
         
         // 쿠폰 사용
         couponIssueService.useCoupon(issued.getCouponIssueId(), testUser.getId());
@@ -391,7 +417,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("할인 금액 계산 - DISCOUNT 타입")
     void calculateDiscount_discountType() {
         // given
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), testUser);
         Integer cost = 10000;
 
         // when
@@ -417,7 +443,7 @@ class CouponIssueServiceIntegrationTest {
                 .build();
         Coupon percentCoupon = couponRepository.save(percentRequest.toEntity());
         warmUp(percentCoupon);
-        CouponIssueResponse issued = couponIssueService.issueCoupon(percentCoupon.getId(), testUser);
+        CouponIssueResponse issued = issue(percentCoupon.getId(), testUser);
         Integer cost = 12500; // 10% 할인이면 1250원, 백원 단위 절삭이면 1200원
 
         // when
@@ -470,7 +496,7 @@ class CouponIssueServiceIntegrationTest {
                 userEntity2.getUpdatedAt()
         );
 
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), otherUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), otherUser);
 
         // when & then
         assertThatThrownBy(() -> couponIssueService.calculateDiscount(issued.getCouponIssueId(), testUser.getId(), 10000))
@@ -525,7 +551,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("쿠폰 사용 성공")
     void useCoupon_success() {
         // given
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), testUser);
 
         // when
         Boolean result = couponIssueService.useCoupon(issued.getCouponIssueId(), testUser.getId());
@@ -581,7 +607,7 @@ class CouponIssueServiceIntegrationTest {
                 userEntity2.getUpdatedAt()
         );
 
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), otherUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), otherUser);
 
         // when & then
         assertThatThrownBy(() -> couponIssueService.useCoupon(issued.getCouponIssueId(), testUser.getId()))
@@ -599,7 +625,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("쿠폰 사용 실패 - 이미 사용된 쿠폰")
     void useCoupon_alreadyUsed() {
         // given
-        CouponIssueResponse issued = couponIssueService.issueCoupon(activeCoupon.getId(), testUser);
+        CouponIssueResponse issued = issue(activeCoupon.getId(), testUser);
         couponIssueService.useCoupon(issued.getCouponIssueId(), testUser.getId());
 
         // when & then

@@ -300,6 +300,21 @@ export const cartApi = {
 };
 
 // Coupon API
+
+// 발급 확정 폴링 설정. 컨슈머가 파티션 단위로 직렬 처리하므로 대기열이 길면 확정이 늦어진다
+const COUPON_ISSUE_POLL_ATTEMPTS = 10;
+const COUPON_ISSUE_POLL_INTERVAL_MS = 300;
+
+// 서버가 내려주는 ErrorCode 이름을 사용자 문구로 옮긴다
+// 이름을 그대로 노출하면 실패 사유를 나눈 의미가 사용자에게 전달되지 않는다
+const COUPON_ISSUE_FAIL_MESSAGES: Record<string, string> = {
+  COUPON_OUT_OF_STOCK: '쿠폰이 모두 소진되었습니다.',
+  COUPON_ALREADY_ISSUED: '이미 발급받은 쿠폰입니다.',
+  COUPON_ISSUE_CONTENTION: '요청이 몰리고 있습니다. 잠시 후 다시 시도해주세요.',
+  COUPON_STORE_MISMATCH: '쿠폰 재고 정보가 일치하지 않습니다. 잠시 후 다시 시도해주세요.',
+  COUPON_NOT_FOUND: '발급할 수 없는 쿠폰입니다.',
+};
+
 export const couponApi = {
   getCoupons: (page = 0, size = 20) =>
     apiRequest<{
@@ -342,15 +357,40 @@ export const couponApi = {
       requireAuth: true,
     }),
   
-  issueCoupon: (couponId: string, userId: string) =>
-    apiRequest(`/coupon/issue/${couponId}`, {
-      method: 'POST',
-      body: JSON.stringify({ userId }),
-      requireAuth: true,
-      headers: {
-        'Request-Date': new Date().toISOString(),
-      },
-    }),
+  // 발급은 비동기 경로 하나다. 접수(202)에서 requestId 를 받고 확정 결과를 폴링한다.
+  //
+  // 품절·중복은 접수 게이트가 409 로 즉시 끊으므로 apiRequest 가 그 자리에서 예외를 던진다.
+  // 그 밖의 실패(비활성 쿠폰 등)는 확정 단계에서 나므로 상태 폴링으로만 알 수 있다.
+  //
+  // userId 인자는 쓰지 않는다. 서버는 인증 주체에게 발급하며, 제거된 동기 경로도 마찬가지였다.
+  issueCoupon: async (couponId: string, _userId?: string) => {
+    const accepted = await apiRequest<{ requestId: string; status: string }>(
+      `/coupon/issue-async/${couponId}`,
+      { method: 'POST', requireAuth: true }
+    );
+    const requestId = accepted?.requestId;
+    if (!requestId) {
+      throw new Error('발급 접수에 실패했습니다.');
+    }
+
+    // 확정은 컨슈머가 하므로 잠깐 기다렸다 결과를 확인한다
+    for (let attempt = 0; attempt < COUPON_ISSUE_POLL_ATTEMPTS; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, COUPON_ISSUE_POLL_INTERVAL_MS));
+      const polled = await apiRequest<{ requestId: string; status: string }>(
+        `/coupon/issue-async/${requestId}/status`,
+        { requireAuth: true }
+      );
+      const status = polled?.status ?? 'UNKNOWN';
+      if (status === 'SUCCESS') {
+        return { requestId, status };
+      }
+      if (status.startsWith('FAILED:')) {
+        throw new Error(COUPON_ISSUE_FAIL_MESSAGES[status.substring(7)] ?? '쿠폰 발급에 실패했습니다.');
+      }
+    }
+    // 폴링 한도를 넘겨도 실패로 단정하지 않는다. 확정이 늦어졌을 뿐일 수 있다
+    throw new Error('발급 처리가 지연되고 있습니다. 잠시 후 내 쿠폰함을 확인해주세요.');
+  },
 
   getMyCoupons: () =>
     apiRequest<any[]>('/coupon/me', {

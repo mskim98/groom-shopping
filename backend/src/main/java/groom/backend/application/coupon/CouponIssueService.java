@@ -24,12 +24,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -66,18 +63,11 @@ public class CouponIssueService {
     // RedisConfig 의 coupon-item-cache TTL(1시간)과 맞춘다
     private static final Duration ITEM_CACHE_TTL = Duration.ofHours(1);
 
-    // 분산 락 설정
-    // - 쿠폰별 락 키로 분리해, 서로 다른 쿠폰 간 경합을 제거
-    // - waitTime=3초: 락 대기 한도. 초과 시 빠른 실패(무한 대기 방지)
-    // - leaseTime 은 지정하지 않는다 → Redisson 워치독이 보유 중 TTL 을 계속 갱신한다.
-    //   고정 leaseTime(과거 5초)은 워치독을 끄기 때문에, 부하가 올라 임계 구역이 그 값을 넘기면
-    //   작업 도중 락이 조용히 풀린다. 예외도 로그도 남지 않고 상호배제만 사라진다.
-    //   waitTime(가용성)과 leaseTime(정합성)은 다른 문제이므로 함께 묶어 다루지 않는다.
-    private static final String COUPON_LOCK_KEY_PREFIX = "coupon:lock:";
-    private static final long LOCK_WAIT_SECONDS = 3L;
-
-    // 임계 구역 안의 DB 작업 상한(초). 워치독은 긴 임계 구역을 '버티게' 할 뿐 '짧게' 만들지 못하므로,
-    // 상한이 없으면 느려진 DB 작업이 락 보유를 무한정 늘린다(워치독이 JVM 이 살아 있는 한 갱신을 계속한다).
+    // 임계 구역 안의 DB 작업 상한(초).
+    //
+    // 락이 사라진 지금 이 상한이 지키는 것은 락 보유 시간이 아니라 파티션 선두 차단이다.
+    // 컨슈머는 파티션당 1명이라 한 요청의 DB 작업이 느려지면 그 뒤 전 요청이 함께 밀린다.
+    // 상한이 없으면 느려진 DB 작업 하나가 그 쿠폰의 발급을 무한정 멈춘다.
     //
     // 다만 이 값이 끊어주는 것은 쿼리 실행 구간뿐이다. 커넥션 획득 대기는 Hikari 의
     // connection-timeout(설정하지 않아 기본 30초) 소관이라, 풀이 고갈되면 이 상한보다 오래 잡힐 수 있다.
@@ -90,97 +80,12 @@ public class CouponIssueService {
     private final DiscountPolicyFactory discountPolicyFactory;
     private final CacheManager couponCacheManager; // 스프링 Cache 추상화 진입점
     private final RedisTemplate<String, CouponIssueResponse> couponCacheTemplate; // 쿠폰 DTO 캐시 직접 조작용
-    private final RedissonClient redissonClient; // 분산 락(다중 서버에서 동시성 제어)용
     private final CouponStockRedisRepository couponStockRedisRepository; // Redis 재고 Lua 연산 담당
-    // 자기호출 우회: issueCouponWithoutLock / persistIssuedCoupon / issueCouponInDbOnly 의 @Transactional 이
+    // 자기호출 우회: confirmIssue / persistIssuedCoupon / issueCouponInDbOnly 의 @Transactional 이
     // 내부 직접 호출로 무효화되지 않도록 프록시를 거쳐 호출한다.
     private final ObjectProvider<CouponIssueService> selfProvider;
 
 
-    /**
-     * 선착순 쿠폰 발급.
-     * <p>
-     * 동시성 제어 방식: Redisson 분산 락(쿠폰별 키, {@code coupon:lock:{couponId}})을 {@code tryLock}으로 획득 대기 한도
-     * {@value #LOCK_WAIT_SECONDS}초, 보유 중에는 워치독이 TTL 을 갱신 다중 인스턴스 환경에서도 그대로 동시성이 보장 락 구간 안에서
-     * {@link CouponStockRedisRepository#tryIssue} Lua 스크립트가 "수량 확인 → 중복 체크 → 수량 차감" 을 단일 원자 연산으로 수행 DB에 영속화:
-     * {@link CouponIssue} 저장 + {@link Coupon#decreaseQuantity()} 로 수량 동기화 DB 저장이 실패하면 Redis 재고를 롤백
-     * <p>
-     * <p>
-     * 기존 {@code findByIdForUpdate} (JPA 비관적 락) 방식 대비 DB 커넥션 점유 시간이 사라져 트래픽 급증 시 커넥션 풀 고갈을 방지
-     */
-    // @CacheEvict : 발급에 성공하면 그 사용자의 '쿠폰 목록 캐시'를 지워(무효화)
-    // 다음 조회 때 새로 발급된 쿠폰이 반드시 보이도록 한다(캐시-DB 불일치 방지).
-    // propagation = NOT_SUPPORTED : 클래스 기본값 @Transactional(readOnly=true) 를 덮어써
-    // 이 메서드를 '비트랜잭션'으로 실행한다. Redisson 락 + Lua 실행 구간 동안 DB 커넥션을
-    // 점유하지 않고(커넥션 풀 고갈 방지), 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에
-    // 합류(REQUIRED)해 쿠폰 차감 쓰기가 유실되는 일을 막는다.
-    @CacheEvict(cacheNames = COUPON_LIST_CACHE_NAME, key = "#user.id")
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public CouponIssueResponse issueCoupon(Long couponId, User user) {
-        // 쿠폰별 락 객체 획득. 키가 쿠폰마다 다르므로 다른 쿠폰끼리는 서로 막지 않는다.
-        RLock lock = redissonClient.getLock(COUPON_LOCK_KEY_PREFIX + couponId);
-        boolean acquired = false;
-        try {
-            // tryLock : 최대 waitTime 동안만 락을 기다린다. leaseTime 을 생략해 워치독이 켜지므로
-            // 보유 중에는 TTL 이 갱신되고, 프로세스가 죽으면 갱신 스레드도 함께 죽어 TTL 만료로 회수된다.
-            acquired = lock.tryLock(LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
-            if (!acquired) {
-                // 대기 한도를 넘으면 무한 대기 대신 빠른 실패로 떨어뜨린다.
-                // 재고는 남아 있는데 못 받은 "거짓 품절"이므로 품절과 다른 코드로 내보낸다
-                log.warn("[COUPON_LOCK_TIMEOUT] couponId={}, userId={}", couponId, user.getId());
-                throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
-            }
-
-            // 락 안쪽 로직은 비동기 경로와 공유하는 코어에 위임한다
-            // selfProvider : 코어의 @Transactional(NOT_SUPPORTED) 이 자기호출로 무효화되지 않도록 프록시 경유
-            return selfProvider.getObject().issueCouponWithoutLock(couponId, user);
-
-        } catch (InterruptedException e) {
-            // 락 대기 중 인터럽트도 재고와 무관한 실패다. 락 타임아웃과 같은 계열로 묶는다
-            Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
-        } finally {
-            if (acquired && lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
-    }
-
-    /**
-     * 배타 제어 없이 도는 발급 코어. 동기 경로와 비동기 경로가 함께 쓴다
-     * <p>
-     * "수량 확인 → 중복 체크 → 차감" 은 {@link CouponStockRedisRepository#tryIssue} Lua 안에서 원자적으로 끝나므로
-     * 이 메서드 자체는 락을 잡지 않는다 정확성의 책임이 Redis 한 곳에 모여 있고, 재고의 단일 진실도 Redis 다
-     * <p>
-     * 동기 경로({@link #issueCoupon})는 차감과 DB 영속화 사이의 창을 분산 락으로 감추고, 비동기 경로
-     * ({@code CouponAsyncIssueService.process})는 couponId 파티션 단위 직렬 소비로 창 자체를 만들지 않는다
-     * 두 경로 모두 DB 수량을 근거로 Redis 재고를 되쓰지 않으므로 임계 구역이 Redis 밖으로 나가지 않는다
-     */
-    // propagation = NOT_SUPPORTED : 비트랜잭션 실행 보장
-    // 비동기 컨슈머처럼 호출부가 바뀌어도 Lua 구간이 DB 커넥션을 물지 않고,
-    // 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에 합류하는 사고도 막는다
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public CouponIssueResponse issueCouponWithoutLock(Long couponId, User user) {
-        // Lua 원자 연산: 재고 확인 + 중복 확인 + 차감
-        CouponStockRedisRepository.IssueResult issueResult =
-                couponStockRedisRepository.tryIssue(couponId, user.getId());
-
-        switch (issueResult) {
-            case OUT_OF_STOCK -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
-            case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
-            case NOT_INITIALIZED -> {
-                // Redis에 재고가 없으면 DB에서 초기화 후 재시도 대신, DB 기반 폴백으로 발급
-                log.warn("[COUPON_STOCK_FALLBACK] Redis stock not initialized, falling back to DB. couponId={}",
-                        couponId);
-                return selfProvider.getObject().issueCouponInDbOnly(couponId, user);
-            }
-            default -> {
-                // SUCCESS - DB 영속화 진행
-            }
-        }
-
-        return selfProvider.getObject().confirmIssue(couponId, user);
-    }
 
     /**
      * 게이트를 다시 돌리지 않고 DB 확정만 한다. 접수 단계에서 Lua 게이트를 이미 통과한 요청 전용
@@ -188,7 +93,10 @@ public class CouponIssueService {
      * <p>컨슈머에서 {@code tryIssue} 를 또 호출하면 같은 요청이 재고를 두 번 깎아
      * 실제 발급 가능 수량보다 빨리 마감된다
      */
+    // @CacheEvict : 발급에 성공하면 그 사용자의 쿠폰 목록 캐시를 비운다
+    // 없으면 발급 직후 /coupon/me 가 옛 목록을 돌려준다
     // propagation = NOT_SUPPORTED : Lua 롤백 구간이 DB 커넥션을 물지 않게 한다
+    @CacheEvict(cacheNames = COUPON_LIST_CACHE_NAME, key = "#user.id")
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public CouponIssueResponse confirmIssue(Long couponId, User user) {
         try {
@@ -212,10 +120,10 @@ public class CouponIssueService {
      * Redis 성공 이후 DB 영속화. 트랜잭션 경계시작
      */
     // propagation = REQUIRES_NEW : 항상 독립된 read-write 새 트랜잭션으로 DB 영속화를 묶는다.
-    // ✅ 자기호출 함정 해결: issueCoupon() 이 selfProvider.getObject() 로 프록시를 거쳐 호출.
+    // ✅ 자기호출 함정 해결: confirmIssue() 가 selfProvider.getObject() 로 프록시를 거쳐 호출.
     // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 쓰기 트랜잭션이 보장된다.
-    // timeout : 이 구간은 분산 락 안에서 돈다. 워치독이 락을 계속 갱신해주므로 상한이 없으면
-    // DB 가 느려질 때 락 보유가 무한정 늘어난다. 상한을 넘으면 예외로 끊어 락을 반납한다.
+    // timeout : 이 구간은 파티션당 1명인 컨슈머 위에서 돈다. 상한이 없으면 DB 가 느려질 때
+    // 그 쿠폰의 뒤 요청 전부가 함께 멈춘다. 상한을 넘으면 예외로 끊어 다음 요청으로 넘어간다.
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = DB_WORK_TIMEOUT_SECONDS)
     public CouponIssueResponse persistIssuedCoupon(Long couponId, User user) {
         Coupon coupon = couponRepository.findById(couponId).orElseThrow(
@@ -260,15 +168,17 @@ public class CouponIssueService {
     /**
      * Redis 재고가 없을 때({@code NOT_INITIALIZED})의 폴백. DB 비관적 락으로 기존 로직을 유지
      *
-     * <p>{@link #issueCouponWithoutLock} 안에서만 불리므로 동기·비동기 두 경로가 같은 폴백을 공유한다
+     * <p>재고 키가 없어 게이트가 판정하지 못한 요청({@code gateReserved=false})이 여기로 온다
      * DB 수량을 근거로 Redis 재고를 되쓰는 유일한 지점이라, 재고 키가 없는 상황 외에는 진입하지 않아야 한다
      */
+    // @CacheEvict : 이 경로로 발급돼도 목록 캐시가 비워져야 한다
     // propagation = REQUIRES_NEW : DB 비관적 락 + 발급 저장을 항상 독립된 쓰기 트랜잭션으로 묶는다.
-    // ✅ 자기호출 함정 해결: issueCoupon() 이 selfProvider.getObject() 로 프록시를 거쳐 호출.
+    // ✅ 자기호출 함정 해결: 호출부가 selfProvider.getObject() 로 프록시를 거쳐 호출.
     // ✅ readOnly 합류 방지: REQUIRES_NEW 라 비관적 락(FOR UPDATE)이 정상 동작하는 쓰기 트랜잭션 보장.
-    // timeout : 분산 락 + DB 비관적 락이 겹치는 가장 긴 구간이다. 워밍업(CouponStockWarmUpRunner,
+    // timeout : DB 비관적 락을 잡는 가장 긴 구간이다. 워밍업(CouponStockWarmUpRunner,
     // CouponCommonService.createCoupon)으로 정상 운영에서는 진입하지 않지만, 진입했을 때
-    // 락 보유가 무한정 늘어나지 않도록 상한을 건다.
+    // 파티션 선두가 무한정 막히지 않도록 상한을 건다.
+    @CacheEvict(cacheNames = COUPON_LIST_CACHE_NAME, key = "#user.id")
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = DB_WORK_TIMEOUT_SECONDS)
     public CouponIssueResponse issueCouponInDbOnly(Long couponId, User user) {
         Coupon coupon = couponRepository.findByIdForUpdate(couponId).orElseThrow(

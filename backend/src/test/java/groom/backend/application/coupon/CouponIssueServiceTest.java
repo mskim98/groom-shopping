@@ -3,8 +3,6 @@ package groom.backend.application.coupon;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
 import groom.backend.common.exception.BusinessException;
@@ -22,15 +20,12 @@ import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -38,7 +33,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 /**
  * 발급 실패 사유가 서로 다른 ErrorCode 로 갈라지는지 고정한다
  *
- * <p>락 대기 초과·인터럽트·진짜 품절·DB 수량 소진이 한 코드로 뭉쳐 있으면
+ * <p>진짜 품절·DB 수량 소진·경합 실패가 한 코드로 뭉쳐 있으면
  * 실패 집계에서 "재고가 남았는데 실패한 건"과 "정말 소진된 건"을 나눌 수 없다
  */
 @ExtendWith(MockitoExtension.class)
@@ -56,13 +51,9 @@ class CouponIssueServiceTest {
     @Mock
     private RedisTemplate<String, CouponIssueResponse> couponCacheTemplate;
     @Mock
-    private RedissonClient redissonClient;
-    @Mock
     private CouponStockRedisRepository couponStockRedisRepository;
     @Mock
     private ObjectProvider<CouponIssueService> selfProvider;
-    @Mock
-    private RLock lock;
 
     private CouponIssueService service;
     private User user;
@@ -71,21 +62,9 @@ class CouponIssueServiceTest {
     void setUp() {
         service = new CouponIssueService(couponRepository, couponIssueRepository,
                 discountPolicyFactory, couponCacheManager, couponCacheTemplate,
-                redissonClient, couponStockRedisRepository, selfProvider);
+                couponStockRedisRepository, selfProvider);
         user = new User(7L, "u@test.com", "pw", "테스터",
                 Role.ROLE_USER, Grade.BRONZE, LocalDateTime.now(), LocalDateTime.now());
-    }
-
-    @Test
-    @DisplayName("락 대기 초과는 품절이 아니라 경합 실패로 구분된다")
-    void issueCoupon_락대기초과면_COUPON_ISSUE_CONTENTION() throws InterruptedException {
-        given(redissonClient.getLock(anyString())).willReturn(lock);
-        given(lock.tryLock(anyLong(), any(TimeUnit.class))).willReturn(false);
-
-        assertThatThrownBy(() -> service.issueCoupon(1L, user))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.COUPON_ISSUE_CONTENTION);
     }
 
     @Test

@@ -35,8 +35,8 @@ import org.springframework.data.redis.core.RedisTemplate;
  * <p>enqueue → 대기열 등록·WAITING, process → 발급·SUCCESS 흐름을 검증한다.
  * 컨슈머의 비동기 타이밍에 의존하지 않도록 process() 를 직접 호출해 처리 로직을 검증한다.
  *
- * <p>process() 는 {@code issueCouponWithoutLock} 을 타므로 Redis 재고가 심겨 있으면 Lua 경로,
- * 없으면 {@code issueCouponInDbOnly} 폴백 경로로 갈린다. 두 경로 모두 DB 수량을 1 줄이므로
+ * <p>게이트는 {@code enqueue} 에 있다. process() 는 {@code gateReserved} 에 따라 {@code confirmIssue}
+ * (게이트 예약분 확정) 또는 {@code issueCouponInDbOnly}(폴백)로 갈린다. 두 경로 모두 DB 수량을 1 줄이므로
  * DB 수량만으로는 구분되지 않는다. 어느 경로를 탔는지는 <b>Redis 재고값</b>으로만 판별한다.
  */
 @SpringBootTest
