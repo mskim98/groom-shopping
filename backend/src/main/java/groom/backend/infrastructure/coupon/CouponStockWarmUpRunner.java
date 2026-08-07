@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +25,11 @@ import org.springframework.stereotype.Component;
 // 재기동 시 SET 으로 덮으면 Lua 차감은 끝났으나 DB 커밋 전이던 요청 수만큼 재고가 되살아난다.
 // 워밍업의 목적은 동기화가 아니라 "첫 요청이 폴백을 타지 않게 하는 것"이다.
 // 상품 워밍업(StockWarmUpRunner)과는 다루는 Redis 키가 달라 실행 순서에 의존하지 않는다.
+//
+// @Order(1) : 구 키 이관(CouponRedisKeyMigrationRunner, @Order(0)) 다음에 돈다.
+// 먼저 돌면 새 키를 SETNX 로 심어 버려 구 키에 남아 있던 카운터가 버려진다.
 @Slf4j
+@Order(1)
 @Component
 @RequiredArgsConstructor
 public class CouponStockWarmUpRunner implements ApplicationRunner {

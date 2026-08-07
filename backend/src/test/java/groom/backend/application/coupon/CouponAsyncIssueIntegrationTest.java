@@ -144,7 +144,7 @@ class CouponAsyncIssueIntegrationTest {
         // then - Lua 경로만 만들 수 있는 흔적: 재고 DECR + 발급자 SADD
         assertThat(couponStockRedisRepository.getStock(couponId)).isEqualTo(REDIS_STOCK - 1);
         assertThat(redisTemplate.opsForSet()
-                .isMember(CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + couponId, userId.toString()))
+                .isMember(CouponStockRedisRepository.issuedUsersKey(couponId), userId.toString()))
                 .isTrue();
     }
 
@@ -243,7 +243,7 @@ class CouponAsyncIssueIntegrationTest {
 
     private void deleteCouponKeys() {
         redisTemplate.delete(List.of(
-                CouponStockRedisRepository.STOCK_KEY_PREFIX + couponId,
-                CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + couponId));
+                CouponStockRedisRepository.stockKey(couponId),
+                CouponStockRedisRepository.issuedUsersKey(couponId)));
     }
 }

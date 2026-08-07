@@ -108,7 +108,7 @@ class CouponIssueDuplicateGuardIntegrationTest {
         couponIssueService.persistIssuedCoupon(couponId, user);
 
         // 이벤트 중 Redis 재시작으로 발급자 SET 이 사라진 상황을 만든다
-        redisTemplate.delete(CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + couponId);
+        redisTemplate.delete(CouponStockRedisRepository.issuedUsersKey(couponId));
 
         assertThatThrownBy(() -> couponIssueService.persistIssuedCoupon(couponId, user))
                 .isInstanceOf(BusinessException.class)
@@ -120,7 +120,7 @@ class CouponIssueDuplicateGuardIntegrationTest {
 
     private void deleteKeys() {
         redisTemplate.delete(List.of(
-                CouponStockRedisRepository.STOCK_KEY_PREFIX + couponId,
-                CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + couponId));
+                CouponStockRedisRepository.stockKey(couponId),
+                CouponStockRedisRepository.issuedUsersKey(couponId)));
     }
 }

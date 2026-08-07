@@ -14,7 +14,7 @@ import org.springframework.stereotype.Repository;
  * <p>락 획득 이후에도 "수량 확인 → 중복 체크 → 수량 차감" 은 단일 원자 연산
  * Spring {@code RedisTemplate.execute(...)} 한 번에 여러 명령을 보내도 원자성은 보장되지 않으므로 Redis Lua 스크립트로 묶어 서버 사이드에서 한 번에 수행
  * <p>
- * 키: {@code coupon:stock:{couponId}} - 남은 재고 (INT), {@code coupon:issued_users:{couponId}} - 이미 발급받은 userId SET
+ * 키: {@code coupon:{couponId}:stock} - 남은 재고 (INT), {@code coupon:{couponId}:issued_users} - 이미 발급받은 userId SET
  */
 // @Slf4j : Lombok이 log 객체 생성.
 @Slf4j
@@ -24,9 +24,18 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class CouponStockRedisRepository {
 
-    // Redis 키 규칙. 키에 couponId 를 붙여 쿠폰마다 재고/발급자 집합을 분리한다.
-    public static final String STOCK_KEY_PREFIX = "coupon:stock:";
-    public static final String ISSUED_USERS_KEY_PREFIX = "coupon:issued_users:";
+    // 한 쿠폰의 재고 키와 발급자 SET 키를 같은 해시 슬롯에 묶는다
+    // Lua 가 두 키를 함께 다루므로, Cluster 에서 슬롯이 갈리면 CROSSSLOT 으로 항상 실패한다
+    // 중괄호 안(couponId)만 슬롯 계산에 쓰이므로 두 키가 반드시 같은 노드에 놓인다
+    private static final String KEY_PREFIX = "coupon:{";
+
+    public static String stockKey(Long couponId) {
+        return KEY_PREFIX + couponId + "}:stock";
+    }
+
+    public static String issuedUsersKey(Long couponId) {
+        return KEY_PREFIX + couponId + "}:issued_users";
+    }
 
     /**
      * Lua 반환 코드: 1=성공, 0=품절, -1=중복 발급, -2=미초기화. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키 ARGV[1]=userId
@@ -61,7 +70,7 @@ public class CouponStockRedisRepository {
      * 쿠폰 재고를 초기화 (관리자가 쿠폰을 발행할 때 1회 호출)
      */
     public void initStock(Long couponId, Long quantity) {
-        redisTemplate.opsForValue().set(STOCK_KEY_PREFIX + couponId, String.valueOf(quantity));
+        redisTemplate.opsForValue().set(stockKey(couponId), String.valueOf(quantity));
     }
 
     /**
@@ -74,11 +83,11 @@ public class CouponStockRedisRepository {
     public boolean initStockIfAbsent(Long couponId, Long quantity) {
         return Boolean.TRUE.equals(
                 redisTemplate.opsForValue()
-                        .setIfAbsent(STOCK_KEY_PREFIX + couponId, String.valueOf(quantity)));
+                        .setIfAbsent(stockKey(couponId), String.valueOf(quantity)));
     }
 
     public Long getStock(Long couponId) {
-        String value = redisTemplate.opsForValue().get(STOCK_KEY_PREFIX + couponId);
+        String value = redisTemplate.opsForValue().get(stockKey(couponId));
         return value == null ? null : Long.parseLong(value);
     }
 
@@ -90,8 +99,8 @@ public class CouponStockRedisRepository {
      */
     public IssueResult tryIssue(Long couponId, Long userId) {
         List<String> keys = List.of(
-                STOCK_KEY_PREFIX + couponId,
-                ISSUED_USERS_KEY_PREFIX + couponId
+                stockKey(couponId),
+                issuedUsersKey(couponId)
         );
         Long result = redisTemplate.execute(ISSUE_SCRIPT, keys, userId.toString());
         if (result == null) {
@@ -109,8 +118,8 @@ public class CouponStockRedisRepository {
      * Lua 결과를 DB 커밋 실패 등으로 롤백해야 할 때 사용
      */
     public void rollbackIssue(Long couponId, Long userId) {
-        redisTemplate.opsForValue().increment(STOCK_KEY_PREFIX + couponId);
-        redisTemplate.opsForSet().remove(ISSUED_USERS_KEY_PREFIX + couponId, userId.toString());
+        redisTemplate.opsForValue().increment(stockKey(couponId));
+        redisTemplate.opsForSet().remove(issuedUsersKey(couponId), userId.toString());
     }
 
     /**
@@ -120,7 +129,7 @@ public class CouponStockRedisRepository {
      * 게이트가 그를 다시 통과시켜 같은 실패를 무한 반복한다
      */
     public void rollbackStockOnly(Long couponId) {
-        redisTemplate.opsForValue().increment(STOCK_KEY_PREFIX + couponId);
+        redisTemplate.opsForValue().increment(stockKey(couponId));
     }
 
     public enum IssueResult {

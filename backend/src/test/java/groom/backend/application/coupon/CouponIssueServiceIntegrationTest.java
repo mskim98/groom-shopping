@@ -136,8 +136,8 @@ class CouponIssueServiceIntegrationTest {
         // 발급자 SET 을 남기면 다음 케이스가 COUPON_ALREADY_ISSUED 로 깨진다
         for (Long id : touchedCouponIds) {
             redisTemplate.delete(List.of(
-                    CouponStockRedisRepository.STOCK_KEY_PREFIX + id,
-                    CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + id));
+                    CouponStockRedisRepository.stockKey(id),
+                    CouponStockRedisRepository.issuedUsersKey(id)));
         }
     }
 
