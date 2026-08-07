@@ -25,6 +25,7 @@ import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.MessageListener;
 import org.springframework.kafka.test.utils.ContainerTestUtils;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
 
 /**
@@ -36,6 +37,10 @@ import org.springframework.test.context.TestPropertySource;
  * <p>실행 중인 앱이 동일 그룹({@code coupon-delay-group})으로 운영 토픽을 함께 구독하면 메시지를 가로채
  * 비결정적이 되므로, 같은 팩토리 빈으로 <b>고유 그룹 + 전용 소스 토픽 + 강제 실패 리스너</b>를 직접 구성해 격리한다.
  */
+// 앞 테스트의 캐시된 컨텍스트가 Kafka Streams 상태 디렉터리와 coupon-delay 리스너를 붙들고 있으면
+// 이 테스트의 전용 그룹이 메시지를 나눠 받아 비결정적이 된다
+// BEFORE_CLASS 로 직전 컨텍스트를 닫고 새로 띄운다
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 // 실행 중인 앱과 Kafka Streams 상태 디렉토리 락 충돌 방지(이 테스트는 Streams 불필요)

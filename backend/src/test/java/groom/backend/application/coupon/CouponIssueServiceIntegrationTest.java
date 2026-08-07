@@ -16,23 +16,26 @@ import groom.backend.interfaces.auth.persistence.UserJpaEntity;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
 import groom.backend.interfaces.coupon.dto.request.CouponUpdateRequest;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Transactional
+// 클래스 레벨 @Transactional 을 두지 않는다
+// 발급 코어가 REQUIRES_NEW 로 도는데 테스트 트랜잭션이 커밋되지 않으면 새 트랜잭션에서 쿠폰이 보이지 않는다
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @DisplayName("CouponIssueService 통합 테스트")
@@ -53,12 +56,23 @@ class CouponIssueServiceIntegrationTest {
     @Autowired
     private SpringDataUserRepository userRepository;
 
+    @Autowired
+    private CouponStockRedisRepository couponStockRedisRepository;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
+
+    // 케이스마다 만든 쿠폰의 Redis 키를 tearDown 에서 지우기 위해 모은다
+    private final List<Long> touchedCouponIds = new ArrayList<>();
+
     private User testUser;
     private Coupon activeCoupon;
     private Coupon inactiveCoupon;
 
     @BeforeEach
     void setUp() {
+        touchedCouponIds.clear();
+
         // 테스트 데이터 초기화
         couponIssueRepository.deleteAll();
         couponRepository.deleteAll();
@@ -112,6 +126,26 @@ class CouponIssueServiceIntegrationTest {
                 .build();
         savedInactiveCoupon.update(updateRequest);
         inactiveCoupon = couponRepository.save(savedInactiveCoupon);
+
+        warmUp(activeCoupon);
+        warmUp(inactiveCoupon);
+    }
+
+    @AfterEach
+    void tearDown() {
+        // 발급자 SET 을 남기면 다음 케이스가 COUPON_ALREADY_ISSUED 로 깨진다
+        for (Long id : touchedCouponIds) {
+            redisTemplate.delete(List.of(
+                    CouponStockRedisRepository.STOCK_KEY_PREFIX + id,
+                    CouponStockRedisRepository.ISSUED_USERS_KEY_PREFIX + id));
+        }
+    }
+
+    // 운영에서는 부팅 워밍업·생성 시 워밍업이 재고를 심는다
+    // 심지 않으면 모든 케이스가 DB 비관적 락 폴백을 타서 Lua 중복 검사를 검증하지 못한다
+    private void warmUp(Coupon coupon) {
+        touchedCouponIds.add(coupon.getId());
+        couponStockRedisRepository.initStock(coupon.getId(), coupon.getQuantity());
     }
 
     // 활성 쿠폰을 정상적으로 발급하는 시나리오 테스트
@@ -142,7 +176,7 @@ class CouponIssueServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 ID로 발급 요청 시 예외가 발생하는지 테스트
-    // BusinessException이 ErrorCode.NOT_FOUND와 함께 발생해야 함
+    // BusinessException이 ErrorCode.COUPON_NOT_FOUND와 함께 발생해야 함
     @Test
     @DisplayName("쿠폰 발급 실패 - 존재하지 않는 쿠폰")
     void issueCoupon_notFound() {
@@ -154,12 +188,12 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
     // 비활성화된 쿠폰에 대한 발급 요청 시 실패하는 시나리오
-    // 활성화 상태 검증 로직이 작동하여 NOT_FOUND 예외 발생을 확인
+    // 활성화 상태 검증 로직이 작동하여 COUPON_NOT_FOUND 예외 발생을 확인
     @Test
     @DisplayName("쿠폰 발급 실패 - 비활성화된 쿠폰")
     void issueCoupon_inactiveCoupon() {
@@ -168,12 +202,12 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
     // 쿠폰 수량이 1개뿐인 경우, 첫 번째 발급 후 두 번째 발급 시 실패하는 테스트
-    // 수량 소진 시 ErrorCode.CONFLICT 예외 발생과 메시지 검증
+    // 수량 소진 시 ErrorCode.COUPON_OUT_OF_STOCK 예외 발생과 메시지 검증
     @Test
     @DisplayName("쿠폰 발급 실패 - 수량 부족")
     void issueCoupon_quantityExhausted() {
@@ -187,6 +221,7 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
         Coupon limitedCoupon = couponRepository.save(request.toEntity());
+        warmUp(limitedCoupon);
 
         // 첫 번째 발급 성공
         couponIssueService.issueCoupon(limitedCoupon.getId(), testUser);
@@ -216,13 +251,13 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.CONFLICT);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
                     assertThat(businessException.getMessage()).contains("수량이 소진되었습니다");
                 });
     }
 
     // 동일 사용자가 같은 쿠폰을 중복 발급하려 할 때 실패해야 하는 테스트
-    // 첫 발급 후 두 번째 발급 시 BusinessException(CONFLICT) 발생 확인
+    // 첫 발급 후 두 번째 발급 시 BusinessException(COUPON_ALREADY_ISSUED) 발생 확인
     @Test
     @DisplayName("쿠폰 발급 실패 - 중복 발급")
     void issueCoupon_duplicateIssue() {
@@ -234,7 +269,7 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.CONFLICT);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_ALREADY_ISSUED);
                     assertThat(businessException.getMessage()).contains("이미 발급받은 쿠폰입니다");
                 });
     }
@@ -257,6 +292,7 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
         Coupon coupon2 = couponRepository.save(request2.toEntity());
+        warmUp(coupon2);
         couponIssueService.issueCoupon(coupon2.getId(), testUser);
 
         // 다른 사용자 생성 및 쿠폰 발급
@@ -305,6 +341,8 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().minusDays(1)) // 어제 만료
                 .build();
         Coupon expiredCoupon = couponRepository.save(expiredRequest.toEntity());
+        // 발급 서비스를 타지 않으므로 워밍업하지 않고 키 정리 대상에만 넣는다
+        touchedCouponIds.add(expiredCoupon.getId());
 
         // 만료된 쿠폰 발급
         CouponIssue expiredIssue = CouponIssue.builder()
@@ -378,6 +416,7 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().plusDays(30))
                 .build();
         Coupon percentCoupon = couponRepository.save(percentRequest.toEntity());
+        warmUp(percentCoupon);
         CouponIssueResponse issued = couponIssueService.issueCoupon(percentCoupon.getId(), testUser);
         Integer cost = 12500; // 10% 할인이면 1250원, 백원 단위 절삭이면 1200원
 
@@ -390,7 +429,7 @@ class CouponIssueServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 이슈 ID로 할인 금액 계산 시 실패해야 함
-    // ErrorCode.NOT_FOUND 예외 발생 검증
+    // ErrorCode.COUPON_NOT_FOUND 예외 발생 검증
     @Test
     @DisplayName("할인 금액 계산 실패 - 존재하지 않는 쿠폰")
     void calculateDiscount_notFound() {
@@ -402,12 +441,12 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
     // 다른 사용자가 소유한 쿠폰으로 할인 요청 시 실패 테스트
-    // 권한 검증 로직 작동 확인 (ErrorCode.FORBIDDEN)
+    // 권한 검증 로직 작동 확인 (ErrorCode.COUPON_USER_MATCH_FAILED)
     @Test
     @DisplayName("할인 금액 계산 실패 - 다른 사용자의 쿠폰")
     void calculateDiscount_otherUserCoupon() {
@@ -438,13 +477,13 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_USER_MATCH_FAILED);
                     assertThat(businessException.getMessage()).contains("쿠폰 소유자와 사용자가 일치하지 않습니다");
                 });
     }
 
     // 만료된 쿠폰으로 할인 금액 계산 요청 시 실패 테스트
-    // ErrorCode.FORBIDDEN 및 메시지 “쿠폰 사용일이 만료되었습니다” 확인
+    // ErrorCode.COUPON_EXPIRED 및 메시지 “쿠폰 사용일이 만료되었습니다” 확인
     @Test
     @DisplayName("할인 금액 계산 실패 - 만료된 쿠폰")
     void calculateDiscount_expiredCoupon() {
@@ -458,6 +497,8 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().minusDays(1))
                 .build();
         Coupon expiredCoupon = couponRepository.save(expiredRequest.toEntity());
+        // 발급 서비스를 타지 않으므로 워밍업하지 않고 키 정리 대상에만 넣는다
+        touchedCouponIds.add(expiredCoupon.getId());
 
         CouponIssue expiredIssue = CouponIssue.builder()
                 .coupon(expiredCoupon)
@@ -473,7 +514,7 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_EXPIRED);
                     assertThat(businessException.getMessage()).contains("쿠폰 사용일이 만료되었습니다");
                 });
     }
@@ -499,7 +540,7 @@ class CouponIssueServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 발급 ID로 쿠폰 사용 시 예외 발생 테스트
-    // ErrorCode.NOT_FOUND 예외 발생 검증
+    // ErrorCode.COUPON_NOT_FOUND 예외 발생 검증
     @Test
     @DisplayName("쿠폰 사용 실패 - 존재하지 않는 쿠폰")
     void useCoupon_notFound() {
@@ -511,12 +552,12 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
     // 다른 사용자의 쿠폰을 사용하려 할 때 실패하는 시나리오
-    // ErrorCode.FORBIDDEN 예외 및 메시지 검증
+    // ErrorCode.COUPON_USER_MATCH_FAILED 예외 및 메시지 검증
     @Test
     @DisplayName("쿠폰 사용 실패 - 다른 사용자의 쿠폰")
     void useCoupon_otherUserCoupon() {
@@ -547,13 +588,13 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_USER_MATCH_FAILED);
                     assertThat(businessException.getMessage()).contains("쿠폰 소유자와 사용자가 일치하지 않습니다");
                 });
     }
 
     // 이미 사용 처리된 쿠폰을 다시 사용하려 하면 실패해야 하는 테스트
-    // ErrorCode.FORBIDDEN 예외 발생 확인
+    // ErrorCode.COUPON_NOT_USABLE 예외 발생 확인
     @Test
     @DisplayName("쿠폰 사용 실패 - 이미 사용된 쿠폰")
     void useCoupon_alreadyUsed() {
@@ -566,12 +607,12 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_USABLE);
                 });
     }
 
     // 만료된 쿠폰을 사용하려 할 때 실패 테스트
-    // ErrorCode.FORBIDDEN 및 메시지 “쿠폰 사용일이 만료되었습니다” 확인
+    // ErrorCode.COUPON_EXPIRED 및 메시지 “쿠폰 사용일이 만료되었습니다” 확인
     @Test
     @DisplayName("쿠폰 사용 실패 - 만료된 쿠폰")
     void useCoupon_expiredCoupon() {
@@ -585,6 +626,8 @@ class CouponIssueServiceIntegrationTest {
                 .expireDate(LocalDate.now().minusDays(1))
                 .build();
         Coupon expiredCoupon = couponRepository.save(expiredRequest.toEntity());
+        // 발급 서비스를 타지 않으므로 워밍업하지 않고 키 정리 대상에만 넣는다
+        touchedCouponIds.add(expiredCoupon.getId());
 
         CouponIssue expiredIssue = CouponIssue.builder()
                 .coupon(expiredCoupon)
@@ -600,7 +643,7 @@ class CouponIssueServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_EXPIRED);
                     assertThat(businessException.getMessage()).contains("쿠폰 사용일이 만료되었습니다");
                 });
     }

@@ -100,7 +100,7 @@ class CouponCommonServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 ID로 조회 시 예외가 발생하는지 테스트
-    // BusinessException이 ErrorCode.NOT_FOUND와 함께 발생해야 함
+    // BusinessException이 ErrorCode.COUPON_NOT_FOUND와 함께 발생해야 함
     @Test
     @DisplayName("쿠폰 단일 조회 실패 - 존재하지 않는 쿠폰")
     void findCoupon_notFound() {
@@ -112,7 +112,7 @@ class CouponCommonServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
@@ -274,7 +274,7 @@ class CouponCommonServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 ID로 수정 요청 시 예외가 발생하는지 테스트
-    // BusinessException과 ErrorCode.NOT_FOUND 검증
+    // BusinessException과 ErrorCode.COUPON_NOT_FOUND 검증
     @Test
     @DisplayName("쿠폰 수정 실패 - 존재하지 않는 쿠폰")
     void updateCoupon_notFound() {
@@ -289,7 +289,7 @@ class CouponCommonServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> {
                     BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.NOT_FOUND);
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_NOT_FOUND);
                 });
     }
 
