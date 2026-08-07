@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
+import groom.backend.application.product.StockDecrementer;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
 import groom.backend.application.raffle.RaffleTicketApplicationService;
 import groom.backend.application.raffle.RaffleValidationService;
@@ -65,6 +66,9 @@ class PaymentConfirmExceptionPropagationTest {
     private PaymentOutboxRepository paymentOutboxRepository;
     @Mock
     private ProductStockService productStockService;
+    // 생성자 인자로 추가된 차감 전략. 빠뜨리면 Mockito 가 null 을 넣어 조용히 통과했다가 나중에 NPE 로 터진다
+    @Mock
+    private StockDecrementer stockDecrementer;
     @Mock
     private ProductStockRedisRepository productStockRedisRepository;
     @Mock

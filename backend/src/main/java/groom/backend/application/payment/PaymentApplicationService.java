@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentCompletedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
+import groom.backend.application.product.StockDecrementer;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
@@ -61,7 +62,8 @@ public class PaymentApplicationService {
     private final PaymentNotificationService paymentNotificationService;
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 완료 이벤트 Outbox 적재
-    private final ProductStockService productStockService; // 낙관적 락 기반 재고 차감(충돌 자동 재시도)
+    private final ProductStockService productStockService; // 복원(increase) 경로 전용 - 세 전략 공통으로 낙관적 락을 쓴다
+    private final StockDecrementer stockDecrementer;       // 차감 전략(stock.decrease-strategy 로 교체)
     private final ProductStockRedisRepository productStockRedisRepository; // Redis 재고 선점(결제 진입 전 게이트)
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
@@ -479,8 +481,8 @@ public class PaymentApplicationService {
         List<OrderItem> decremented = new java.util.ArrayList<>();
         try {
             for (OrderItem orderItem : order.getOrderItems()) {
-                // 낙관적 락 + 자동 재시도로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
-                int stockAfter = productStockService.decreaseWithOptimisticLock(
+                // 선택된 전략으로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
+                int stockAfter = stockDecrementer.decrease(
                         orderItem.getProductId(), orderItem.getQuantity());
                 decremented.add(orderItem);
 

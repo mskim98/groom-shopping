@@ -128,6 +128,10 @@ payment:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
 
+# 재고 차감 전략 - optimistic(기본) | conditional | pessimistic. 3자 실측 비교용 스위치
+stock:
+  decrease-strategy: optimistic
+
 # 쿠폰 워밍업·재고 보정 배치
 coupon:
   warmup:
