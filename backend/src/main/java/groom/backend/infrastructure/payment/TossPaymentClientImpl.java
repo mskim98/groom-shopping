@@ -85,6 +85,10 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         throw new BusinessException(ErrorCode.PAYMENT_PG_FAILURE);
     }
 
+    // @CircuitBreaker : 취소는 승인과 별도 회로("toss-cancel")로 보호한다
+    // 같은 회로를 쓰면 취소 실패가 승인 회로를 열어 정상 결제까지 막고, 반대로 승인 장애가
+    // 보상 취소를 fast-fail 시켜 채무만 쌓인다. 두 방향 모두 나쁘므로 분리한다
+    @CircuitBreaker(name = "toss-cancel", fallbackMethod = "cancelPaymentFallback")
     @Override
     public TossPaymentResponse cancelPayment(String paymentKey, String cancelReason, String idempotencyKey) {
         String url = apiUrl + "/v1/payments/" + paymentKey + "/cancel";
@@ -114,6 +118,18 @@ public class TossPaymentClientImpl implements TossPaymentClient {
             log.error("[TOSS_API_ERROR] Payment cancellation failed - Error: {}", e.getMessage());
             throw new RuntimeException("Toss Payments API 호출 실패: " + e.getMessage(), e);
         }
+    }
+
+    // 취소 회로 fallback. 보상 서비스의 catch 가 이 예외를 받아 실패로 기록하고 백오프 재시도한다
+    private TossPaymentResponse cancelPaymentFallback(
+            String paymentKey, String cancelReason, String idempotencyKey, Throwable t) {
+        if (t instanceof CallNotPermittedException) {
+            log.warn("[CB_CANCEL_FALLBACK_OPEN] 취소 회로 OPEN, fast-fail - PaymentKey: {}", paymentKey);
+        } else {
+            log.error("[CB_CANCEL_FALLBACK_FAILURE] Toss cancel failed - PaymentKey: {}, Error: {}",
+                    paymentKey, t.getMessage());
+        }
+        throw new BusinessException(ErrorCode.PAYMENT_PG_FAILURE);
     }
 
     private HttpHeaders createHeaders(String idempotencyKey) {

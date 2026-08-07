@@ -166,6 +166,18 @@ resilience4j:
         wait-duration-in-open-state: 30s           # OPEN 유지 시간 (이후 HALF_OPEN)
         permitted-number-of-calls-in-half-open-state: 5   # HALF_OPEN 에서 탐색 허용 호출 수
         automatic-transition-from-open-to-half-open-enabled: true
+      # 취소 전용 회로. 승인(toss)과 분리한다 -
+      # 같은 회로면 취소 실패가 승인을 막고, 승인 장애가 보상 취소를 fast-fail 시켜 채무가 쌓인다
+      toss-cancel:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s   # 보상 첫 백오프 2분보다 짧게 유지 -> 2회차가 실질 첫 시도
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
   retry:
     instances:
       toss:
