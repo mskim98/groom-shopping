@@ -83,4 +83,13 @@ tasks.named('test') {
     useJUnitPlatform()
     // 통합 테스트가 전체 Spring 컨텍스트(Kafka Streams·Redisson 등)를 띄우므로 기본 힙(512m)으로는 부족
     maxHeapSize = '1536m'
+
+    // 재고 보정 배치를 테스트 전체에서 끈다.
+    // 이 배치는 Redis 재고를 DB 기준 기대값으로 되돌리는데, 통합 테스트는 재고와 DB 를
+    // 일부러 어긋나게 두고 게이트를 검증하므로 배치가 겹치면 그 전제가 지워진다.
+    //
+    // @SpringBootTest(properties=...) 로 클래스마다 끄지 않는 이유 : 프로퍼티가 다르면
+    // 컨텍스트 캐시 키가 갈려 Spring 이 컨텍스트를 두 벌 띄운다. 그러면 Kafka 컨슈머도
+    // 두 벌이 돼 한쪽 테스트가 발행한 이벤트를 다른 쪽 컨슈머가 실제로 처리한다.
+    systemProperty 'coupon.reconcile.enabled', 'false'
 }

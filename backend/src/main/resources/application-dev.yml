@@ -128,6 +128,16 @@ payment:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
 
+# 쿠폰 워밍업·재고 보정 배치
+coupon:
+  warmup:
+    batch-size: 1000
+  reconcile:
+    enabled: true
+    # 보정 주기. 짧게 잡을 이유가 없다 - 게이트 좁아짐은 누적형이라 분 단위로 충분하다
+    delay-ms: 60000
+    batch-size: 500
+
 # 외부 PG(Toss) HTTP 클라이언트 타임아웃·커넥션 풀 설정 (RestTemplateConfig 에서 주입)
 http:
   client:

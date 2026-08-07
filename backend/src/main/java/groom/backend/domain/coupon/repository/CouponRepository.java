@@ -43,6 +43,10 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
   @Query("SELECT c FROM Coupon c WHERE c.id > :lastId AND c.isActive = true ORDER BY c.id ASC")
   List<Coupon> findActiveByIdGreaterThan(@Param("lastId") Long lastId, Pageable pageable);
 
+  // 보정 배치용 전수 스캔. 워밍업과 달리 종료(isActive=false)·만료 쿠폰도 봐야 고아 예약을 회수할 수 있다
+  @Query("SELECT c FROM Coupon c WHERE c.id > :lastId ORDER BY c.id ASC")
+  List<Coupon> findAllByIdGreaterThanOrderById(@Param("lastId") Long lastId, Pageable pageable);
+
   @Query("""
   SELECT c
   FROM Coupon c

@@ -2,6 +2,7 @@ package groom.backend.application.coupon;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -148,6 +149,28 @@ public class CouponStockRedisRepository {
         String[] members = userIds.stream().map(String::valueOf).toArray(String[]::new);
         Long added = redisTemplate.opsForSet().add(issuedUsersKey(couponId), members);
         return added == null ? 0L : added;
+    }
+
+    /** 발급자 SET 크기(SCARD). 보정 배치의 대조식에 쓴다 */
+    public long countIssuedUsers(Long couponId) {
+        Long size = redisTemplate.opsForSet().size(issuedUsersKey(couponId));
+        return size == null ? 0L : size;
+    }
+
+    /** 발급자 SET 전량(SMEMBERS). 종료된 쿠폰의 고아 예약 회수에만 쓴다 */
+    public Set<String> getIssuedUsers(Long couponId) {
+        Set<String> members = redisTemplate.opsForSet().members(issuedUsersKey(couponId));
+        return members == null ? Set.of() : members;
+    }
+
+    /** 발급자 SET 에서 제거(SREM). 제거된 멤버 수를 반환한다 */
+    public long removeIssuedUsers(Long couponId, Collection<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return 0L;
+        }
+        Object[] members = userIds.stream().map(String::valueOf).toArray();
+        Long removed = redisTemplate.opsForSet().remove(issuedUsersKey(couponId), members);
+        return removed == null ? 0L : removed;
     }
 
     public enum IssueResult {

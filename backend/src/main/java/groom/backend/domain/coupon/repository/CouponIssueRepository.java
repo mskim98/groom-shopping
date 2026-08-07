@@ -25,4 +25,7 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
   // 이 저장소는 "한 사용자가 같은 쿠폰을 다시 받을 수 없다"를 전제하고, uq_coupon_issue_user 도 같은 범위다
   @Query("SELECT ci.userId FROM CouponIssue ci WHERE ci.coupon.id = :couponId")
   List<Long> findUserIdsByCouponId(@Param("couponId") Long couponId);
+
+  // 보정 배치의 대조식에 쓰는 확정 발급 수
+  long countByCoupon_Id(Long couponId);
 }
