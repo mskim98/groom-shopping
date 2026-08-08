@@ -56,52 +56,31 @@ public class JpaProductRepository implements ProductRepository {
     }
 
     private Product toDomainPrivate(ProductJpaEntity e) {
+        Product product = Product.create(
+                e.getId(),
+                new Name(e.getName() != null ? e.getName() : ""),
+                new Description(e.getDescription()),
+                new Price(e.getPrice() != null ? e.getPrice() : 0),
+                new Stock(e.getStock() != null ? e.getStock() : 0),
+                parseCategory(e.getCategory()),
+                e.getThresholdValue() != null ? e.getThresholdValue() : 10,
+                e.getIsActive(),
+                e.getImageUrl()
+        );
+        // 낙관적 락 version 을 도메인에 옮겨 담는다 (저장 시 되돌려 보내 충돌 감지)
+        product.assignVersion(e.getVersion());
+        return product;
+    }
+
+    // 알 수 없는 카테고리 문자열은 GENERAL 로 떨어뜨린다
+    private ProductCategory parseCategory(String raw) {
+        if (raw == null) {
+            return ProductCategory.GENERAL;
+        }
         try {
-            ProductCategory category = e.getCategory() != null 
-                    ? ProductCategory.valueOf(e.getCategory().toUpperCase()) 
-                    : ProductCategory.GENERAL; // 기본값
-            
-            // thresholdValue가 null이면 기본값 10 설정
-            Integer thresholdValue = e.getThresholdValue() != null 
-                    ? e.getThresholdValue() 
-                    : 10;
-            
-            Product product = Product.create(
-                    e.getId(),
-                    new Name(e.getName() != null ? e.getName() : ""),
-                    new Description(e.getDescription()),
-                    new Price(e.getPrice() != null ? e.getPrice() : 0),
-                    new Stock(e.getStock() != null ? e.getStock() : 0),
-                    category,
-                    thresholdValue,
-                    e.getIsActive(),
-                    e.getImageUrl()
-            );
-            // 낙관적 락 version 을 도메인에 옮겨 담는다 (저장 시 되돌려 보내 충돌 감지).
-            product.assignVersion(e.getVersion());
-            return product;
+            return ProductCategory.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException ex) {
-            // 카테고리 변환 실패 시 기본값 사용
-            ProductCategory category = ProductCategory.GENERAL;
-            
-            // thresholdValue가 null이면 기본값 10 설정
-            Integer thresholdValue = e.getThresholdValue() != null 
-                    ? e.getThresholdValue() 
-                    : 10;
-            
-            Product product = Product.create(
-                    e.getId(),
-                    new Name(e.getName() != null ? e.getName() : ""),
-                    new Description(e.getDescription()),
-                    new Price(e.getPrice() != null ? e.getPrice() : 0),
-                    new Stock(e.getStock() != null ? e.getStock() : 0),
-                    category,
-                    thresholdValue,
-                    e.getIsActive(),
-                    e.getImageUrl() != null ? e.getImageUrl() : null
-            );
-            product.assignVersion(e.getVersion());
-            return product;
+            return ProductCategory.GENERAL;
         }
     }
 

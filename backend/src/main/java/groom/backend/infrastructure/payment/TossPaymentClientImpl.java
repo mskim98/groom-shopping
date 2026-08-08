@@ -141,40 +141,13 @@ public class TossPaymentClientImpl implements TossPaymentClient {
             headers.set("Idempotency-Key", idempotencyKey);
         }
 
-        // Basic Auth: Secret Key를 Base64로 인코딩
-        // 원본 시크릿 키 상태 확인
-        log.info("[TOSS_AUTH_DEBUG] Original secretKey: length={}, hex={}, starts with BOM={}",
-                secretKey.length(),
-                byteArrayToHex(secretKey.getBytes(StandardCharsets.UTF_8), 20),
-                secretKey.startsWith("\uFEFF"));
-
-        // BOM(Byte Order Mark) 제거 (UTF-8 BOM: \ufeff)
+        // Basic Auth. 설정 주입 과정에서 BOM 이 섞이는 사례가 있어 제거 후 인코딩한다
+        // 시크릿 키는 어떤 형태로도 로그에 남기지 않는다 - Base64 는 원문을 그대로 복원할 수 있다
         String cleanSecretKey = secretKey.replaceFirst("^\\uFEFF", "").trim();
-
-        log.info("[TOSS_AUTH_DEBUG] Cleaned secretKey: length={}, hex={}",
-                cleanSecretKey.length(),
-                byteArrayToHex(cleanSecretKey.getBytes(StandardCharsets.UTF_8), 20));
-
-        String auth = cleanSecretKey + ":";
-        String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
-
-        log.info("[TOSS_AUTH_DEBUG] Encoded auth: {}", encodedAuth);
-        log.info("[TOSS_AUTH_DEBUG] Authorization header: Basic {}", encodedAuth);
-
-        // 정상 인코딩인지 확인
-        String expectedEncoded = "dGVzdF9za19Ma0tFeXBOQXJXUWp3SkVFbHlLTjNsbWVheFlHOg==";
-        log.info("[TOSS_AUTH_DEBUG] Expected: {}, Match: {}", expectedEncoded, encodedAuth.equals(expectedEncoded));
-
+        String encodedAuth = Base64.getEncoder()
+                .encodeToString((cleanSecretKey + ":").getBytes(StandardCharsets.UTF_8));
         headers.set("Authorization", "Basic " + encodedAuth);
 
         return headers;
-    }
-
-    private String byteArrayToHex(byte[] bytes, int limit) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.min(bytes.length, limit); i++) {
-            sb.append(String.format("%02x ", bytes[i]));
-        }
-        return sb.toString();
     }
 }

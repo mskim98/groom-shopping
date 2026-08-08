@@ -43,7 +43,7 @@ export const options = {
         },
     },
     thresholds: {
-        // 이력서 목표(참고): p95 720→180ms, p99 240ms. 실측 후 갱신.
+        // 임계값은 P2 재측정(backend/docs/measurements/p2/) 결과를 기준으로 갱신한다
         confirm_latency: ['p(95)<300', 'p(99)<500'],
     },
 };
