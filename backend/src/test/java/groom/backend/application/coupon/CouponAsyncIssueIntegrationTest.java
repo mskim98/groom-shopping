@@ -68,11 +68,23 @@ class CouponAsyncIssueIntegrationTest {
     // 케이스마다 requestId 가 여러 개 생기므로 전부 모아 뒀다가 정리한다
     private final List<String> requestIds = new ArrayList<>();
 
+    // 이 클래스가 만드는 사용자만 지운다. userRepository.deleteAll() 을 쓰지 않는다
+    private static final List<String> FIXTURE_EMAILS = List.of("async@test.com");
+
+    // deleteAll() 은 V2 시드 사용자(admin@test.com · user_N@test.com)까지 지운다.
+    // payment 는 users 로 ON DELETE CASCADE 인데 payment_compensation 에는 CASCADE 가 없어,
+    // 부하 실행이 남긴 보상 레코드가 있으면 fk_payment_compensation_payment 위반으로 삭제가 막힌다.
+    // 테스트가 자기 것만 정리하면 남의 데이터 상태에 결과가 흔들리지 않는다
+    private void deleteFixtureUsers() {
+        FIXTURE_EMAILS.forEach(email ->
+                userRepository.findByEmail(email).ifPresent(userRepository::delete));
+    }
+
     @BeforeEach
     void setUp() {
         couponIssueRepository.deleteAll();
         couponRepository.deleteAll();
-        userRepository.deleteAll();
+        deleteFixtureUsers();
         requestIds.clear();
 
         UserJpaEntity user = userRepository.save(UserJpaEntity.builder()
