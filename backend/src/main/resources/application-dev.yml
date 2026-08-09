@@ -13,6 +13,12 @@ spring:
     username: dev
     password: dev123
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # 결제 1건이 중첩 REQUIRES_NEW 로 커넥션 2개를 점유한다.
+      # 기본값 10 이면 VU 5 부터 이미 부족해 락 경합 신호가 커넥션 대기에 묻힌다
+      # (프리플라이트에서 1,000 회 중 423 회만 완주 · p95 30,550ms).
+      # 측정 조건을 소스에 고정해야 docs/measurements/p2 의 수치가 재현된다.
+      maximum-pool-size: 50
 
   data:
     redis:
