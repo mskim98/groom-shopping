@@ -26,4 +26,4 @@ backend/gradlew.bat
 !backend/docs/
 backend/docs/*
 !backend/docs/measurements/
-backend/docs/measurements/**
+!backend/docs/measurements/**
