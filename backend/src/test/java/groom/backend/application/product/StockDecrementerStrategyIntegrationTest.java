@@ -32,7 +32,10 @@ import org.springframework.context.annotation.Bean;
  * 컨테이너가 만든 빈이므로 {@code @Transactional} 프록시는 그대로 적용된다.
  * ({@code @Import} 로는 안 된다 — 조건이 그대로 평가돼 빈이 등록되지 않는다)
  */
-@SpringBootTest
+// properties : 아래 @TestConfiguration 이 나머지 둘만 등록하므로
+// 조건부 빈(@ConditionalOnProperty)이 optimistic 이어야 세 전략이 갖춰진다
+// 고정하지 않으면 기본 전략을 바꾸는 순간 그 전략이 둘이 되고 optimistic 이 사라진다
+@SpringBootTest(properties = "stock.decrease-strategy=optimistic")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @DisplayName("재고 차감 전략 3종")
 class StockDecrementerStrategyIntegrationTest {

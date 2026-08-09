@@ -134,9 +134,10 @@ payment:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
 
-# 재고 차감 전략 - optimistic(기본) | conditional | pessimistic. 3자 실측 비교용 스위치
+# 재고 차감 전략 - pessimistic(기본) | conditional | optimistic. 3자 실측 비교용 스위치
+# 2026-08-09 실측으로 기본값을 optimistic 에서 넘겼다 - 근거는 PessimisticLockStockDecrementer 주석
 stock:
-  decrease-strategy: optimistic
+  decrease-strategy: pessimistic
   reconcile:
     # 스캔 간격. 인플라이트 선점의 최대 수명(Toss 5s x 재시도 3 + 보상)보다 충분히 길게
     interval-ms: 60000
