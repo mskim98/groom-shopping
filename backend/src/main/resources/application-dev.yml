@@ -153,6 +153,13 @@ coupon:
     delay-ms: 60000
     batch-size: 500
 
+# 추첨 지연 큐 폴링
+raffle:
+  drawing:
+    # 이 주기가 곧 추첨 실행 지연의 상한. 예약 자체는 Redis 가 들고 있고 여기서는 꺼내기만 하므로
+    # 짧게 잡아도 비용은 ZSet 조회 한 번이다 - 분 단위면 추첨 체감상 충분하다
+    poll-delay-ms: 60000
+
 # 외부 PG(Toss) HTTP 클라이언트 타임아웃·커넥션 풀 설정 (RestTemplateConfig 에서 주입)
 http:
   client:

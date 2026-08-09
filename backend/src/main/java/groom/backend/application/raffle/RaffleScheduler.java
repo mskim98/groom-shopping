@@ -97,9 +97,13 @@ public class RaffleScheduler {
     }
 
     /**
-     * 1분 마다 Redis를 체크해서 실행 시간이 된 추첨을 Kafka로 발행
+     * Redis를 주기적으로 체크해서 실행 시간이 된 추첨을 Kafka로 발행
+     *
+     * 이 주기가 곧 추첨 실행 지연의 상한이다 - 예정 시각 직후에 큐에 든 건은 최대 한 주기만큼 늦게 나간다
+     * 리터럴이면 주석과 값이 갈라져도 아무도 못 잡는다(6,000,000ms = 100분을 "1분"이라 적어 둔 상태였다)
+     * 저장소의 다른 배치(stock.reconcile · coupon.reconcile · payment.compensation)와 같은 형태로 설정에 뺀다
      */
-    @Scheduled(fixedDelay = 6000000, initialDelay = 10000)
+    @Scheduled(fixedDelayString = "${raffle.drawing.poll-delay-ms:60000}", initialDelay = 10000)
     public void processScheduledDrawings() {
         log.debug("지연된 추첨 처리 시작");
 
