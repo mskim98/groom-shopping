@@ -1,5 +1,11 @@
 .idea
 .DS_Store
+
+# 환경 변수 - DB 계정·비밀번호가 들어가므로 절대 커밋 금지
+.env
+.env.*
+
+CLAUDE.md
 backend/CLAUDE.md
 
 # kafka streams tmp files
@@ -19,11 +25,8 @@ backend/docs/
 
 backend/gradlew.bat
 
-# ── 측정 산출물 추적 예외 ─────────────────────────────────────────
-# 위 backend/docs/ 무시는 유지하고 measurements 만 연다.
-# 근거: 포트폴리오 수치를 산출물 파일로 역추적할 수 있어야 한다.
-# 이게 없으면 이 디렉터리에 새로 넣는 파일이 조용히 누락된다(실제로 그랬다).
-!backend/docs/
-backend/docs/*
-!backend/docs/measurements/
-!backend/docs/measurements/**
+# ── 개인 작업 산출물은 로컬 전용 ───────────────────────────────
+# 측정 로그·포트폴리오용 산출물은 저장소에 넣지 않는다 (위 backend/docs/ 가 덮음)
+# 소스 트리에 섞여 있던 수동 테스트 가이드도 함께 제외
+backend/src/main/java/groom/backend/domain/notification/NOTIFICATION_API_POSTMAN_GUIDE.md
+backend/src/main/java/groom/backend/domain/notification/POSTMAN_SSE_TEST_GUIDE.md
