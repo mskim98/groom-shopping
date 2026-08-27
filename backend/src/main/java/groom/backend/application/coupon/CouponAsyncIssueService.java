@@ -99,8 +99,7 @@ public class CouponAsyncIssueService {
                 // 게이트가 이미 재고를 깎았다. 여기서 또 깎으면 실제보다 빨리 마감된다
                 couponIssueService.confirmIssue(event.couponId(), user);
             } else {
-                // 게이트가 판정하지 못한 요청(재고 미초기화). DB 비관적 락 폴백이 판정한다
-                couponIssueService.issueCouponInDbOnly(event.couponId(), user);
+                issueWithoutGateReservation(event, user);
             }
 
             redisTemplate.opsForValue().set(statusKey, STATUS_SUCCESS, STATUS_TTL);
@@ -119,6 +118,39 @@ public class CouponAsyncIssueService {
             log.error("[COUPON_ASYNC_ERROR] requestId={}, couponId={}, error={}",
                     event.requestId(), event.couponId(), e.toString());
             recordFailure(event, statusKey, ErrorCode.SERVER_ERROR.name());
+        }
+    }
+
+    /**
+     * 접수 때 게이트가 판정하지 못한 요청({@code gateReserved=false})을 처리한다
+     *
+     * <p>접수와 소비 사이에 재고 키가 심어졌을 수 있으므로 게이트를 한 번 더 돌린다
+     * 접수 경로에서 재고가 심어지기를 기다리게 하는 대신 큐를 거치는 시간을 복구 시간으로 쓴다 -
+     * 접수는 Lua 왕복 1회와 이벤트 발행만 하는 성질을 지키고, 요청 스레드도 붙잡지 않는다
+     *
+     * <p>여기서 재시도해도 경합하지 않는다 - 같은 쿠폰의 이벤트는 한 파티션에 모이고
+     * 그 파티션의 컨슈머는 1명이라, 이 메서드는 쿠폰당 한 번에 하나만 돈다
+     *
+     * <p>{@code gateReserved=false} 는 접수 때 재고를 깎지 않았다는 뜻이라 여기서 처음 깎는 것이 맞다
+     * {@code true} 인 요청을 이 경로로 태우면 같은 요청이 재고를 두 번 깎아 실제보다 빨리 마감된다
+     */
+    private void issueWithoutGateReservation(CouponIssueRequestEvent event, User user) {
+        CouponStockRedisRepository.IssueResult retry =
+                couponStockRedisRepository.tryIssue(event.couponId(), event.userId());
+        if (retry != CouponStockRedisRepository.IssueResult.NOT_INITIALIZED) {
+            // 재고 키가 접수 이후에 심어졌다는 뜻이다. 이 로그가 안 찍히면 재시도가 이득을 못 낸 것이라
+            // 복구 경로(워밍업·쿠폰 생성 시 적재)를 먼저 봐야 한다
+            log.info("[COUPON_GATE_RETRY] requestId={}, couponId={}, result={}",
+                    event.requestId(), event.couponId(), retry);
+        }
+        switch (retry) {
+            // 재시도가 재고를 깎았다. DB 확정이 실패하면 되돌려야 하므로 롤백을 가진 confirmIssue 로 보낸다
+            case SUCCESS -> couponIssueService.confirmIssue(event.couponId(), user);
+            // 깎지 않았으므로 되돌릴 것이 없다. 예외로 끊어 실패 사유만 남긴다
+            case OUT_OF_STOCK -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+            case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
+            // 재시도해도 재고 키가 없다. DB 비관적 락 폴백이 판정하고 커밋 후 재고를 심는다
+            case NOT_INITIALIZED -> couponIssueService.issueCouponInDbOnly(event.couponId(), user);
         }
     }
 

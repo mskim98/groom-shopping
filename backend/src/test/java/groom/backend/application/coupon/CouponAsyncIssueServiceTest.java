@@ -121,15 +121,34 @@ class CouponAsyncIssueServiceTest {
     }
 
     @Test
-    @DisplayName("게이트 예약이 없는 요청은 DB 폴백으로 확정한다")
-    void process_예약없는_요청은_DB폴백으로_확정한다() {
+    @DisplayName("게이트 예약이 없는 요청은 재시도해도 미초기화면 DB 폴백으로 확정한다")
+    void process_예약없는_요청은_재시도후_미초기화면_DB폴백으로_확정한다() {
         given(redisTemplate.opsForValue()).willReturn(valueOps);
         given(userRepository.findById(100L)).willReturn(Optional.of(mock(User.class)));
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.NOT_INITIALIZED);
 
         service.process(new CouponIssueRequestEvent("req-2", 1L, 100L, false));
 
         verify(couponIssueService, times(1)).issueCouponInDbOnly(eq(1L), any(User.class));
         verify(couponIssueService, never()).confirmIssue(anyLong(), any(User.class));
+    }
+
+    @Test
+    @DisplayName("접수 이후 재고가 심어졌으면 컨슈머의 재시도가 예약하고 DB 폴백을 타지 않는다")
+    void process_예약없는_요청도_재시도가_성공하면_confirmIssue로_확정한다() {
+        given(redisTemplate.opsForValue()).willReturn(valueOps);
+        given(userRepository.findById(100L)).willReturn(Optional.of(mock(User.class)));
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
+
+        service.process(new CouponIssueRequestEvent("req-3", 1L, 100L, false));
+
+        // 재시도가 재고를 깎았으므로 롤백을 가진 confirmIssue 로 가야 한다
+        verify(couponIssueService, times(1)).confirmIssue(eq(1L), any(User.class));
+        // DB 비관적 락 폴백까지 타면 같은 요청이 재고를 두 번 깎는다
+        verify(couponIssueService, never()).issueCouponInDbOnly(anyLong(), any(User.class));
+        verify(valueOps, times(1)).set(eq("coupon:issue:status:req-3"), eq("SUCCESS"), any(Duration.class));
     }
 
     @Test
