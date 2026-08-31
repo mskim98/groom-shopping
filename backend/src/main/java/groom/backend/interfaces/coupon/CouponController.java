@@ -2,7 +2,11 @@ package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.application.coupon.strategy.CouponIssueResult;
+import groom.backend.application.coupon.strategy.CouponIssueStrategySelector;
 import groom.backend.common.annotation.CheckPermission;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.service.CouponCommonService;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
@@ -51,6 +55,7 @@ public class CouponController {
   private final CouponCommonService couponCommonService;
   private final CouponIssueService couponIssueService;
   private final CouponAsyncIssueService couponAsyncIssueService;
+  private final CouponIssueStrategySelector issueStrategySelector;
 
   @GetMapping("/{coupon_id}")
   @Operation(summary = "단일 쿠폰 조회", description = "지정된 id의 쿠폰을 조회합니다.")
@@ -91,9 +96,47 @@ public class CouponController {
     return ResponseEntity.ok(response);
   }
 
-  // 발급 경로는 /issue-async 하나다
-  // 동기 경로(POST /issue/{coupon_id}, Redisson 락)는 제거했다 - 락은 대기 초과 시 재고가 남아 있어도
-  // 품절로 응답하는 거짓 품절을 만들었고, 임계 구역 안의 DB I/O 가 커넥션 풀을 동시 처리 상한으로 만들었다
+  // 측정 대상 발급 경로는 이것 하나다
+  // 어느 방식으로 처리할지는 설정(coupon.issue.strategy)이 정하고 이 메서드는 결과만 응답으로 옮긴다
+  // 라운드마다 다른 URL 을 때리면 경로 길이 · 인증 · 직렬화 비용이 함께 달라져 비교가 성립하지 않는다
+  @Operation(
+          summary = "쿠폰 발급",
+          description = """
+          설정된 발급 전략으로 처리합니다.
+          동기 전략은 확정까지 끝내고 200 을, 비동기 전략은 접수만 하고 202 + requestId 를 반환합니다.
+          202 를 받은 요청은 상태 조회 API 로 확정 결과를 확인합니다.
+          """
+  )
+  @ApiResponses({
+          @ApiResponse(responseCode = "200", description = "발급 확정"),
+          @ApiResponse(responseCode = "202", description = "요청 접수(확정 대기)"),
+          @ApiResponse(responseCode = "409", description = "품절(COUPON_OUT_OF_STOCK) · 중복(COUPON_ALREADY_ISSUED) · 경합(COUPON_ISSUE_CONTENTION)"),
+          @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
+  })
+  @PostMapping("/issue/{coupon_id}")
+  public ResponseEntity<Map<String, String>> issueCoupon(
+          @Parameter(description = "JWT 인증 후 주입된 사용자 정보")
+          @AuthenticationPrincipal(expression = "user") User user,
+          @Parameter(description = "쿠폰 ID", example = "1")
+          @PathVariable("coupon_id") Long couponId) {
+    CouponIssueResult result = issueStrategySelector.current().issue(couponId, user);
+    return switch (result.status()) {
+      case SUCCESS -> ResponseEntity.ok(Map.of(
+              "couponIssueId", String.valueOf(result.couponIssueId()),
+              "status", "SUCCESS"));
+      // 202 는 "받았고 처리 중"이다. 대기 순번은 응답하지 않는다 -
+      // 발급 판정은 컨슈머 도달 순서로 정해지므로 적재 순번을 돌려주면 지킬 수 없는 순서를 약속하게 된다
+      case ACCEPTED -> ResponseEntity.accepted().body(Map.of(
+              "requestId", result.requestId(),
+              "status", "WAITING"));
+      // 실패는 예외로 던져 ErrorResponse 의 code 필드에 사유 이름이 실리게 한다
+      // 부하 스크립트가 그 이름으로 품절 · 중복 · 경합을 나누고, 그 분리가 라운드 비교의 근거다
+      case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+      case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
+      case CONTENTION -> throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
+    };
+  }
+
 
 
   @Operation(

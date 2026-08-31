@@ -28,4 +28,14 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
 
   // 보정 배치의 대조식에 쓰는 확정 발급 수
   long countByCoupon_Id(Long couponId);
+
+  // 발급 전략이 중복 요청을 가려내는 데 쓴다
+  // 행 잠금을 잡은 뒤에 불러야 한다 - 잠금 밖에서 부르면 둘이 함께 "없음"을 보고 둘 다 넣는다
+  boolean existsByCoupon_IdAndUserId(Long couponId, Long userId);
+
+  // 계약 테스트가 1인 1매를 확인하는 데 쓴다
+  long countByCoupon_IdAndUserId(Long couponId, Long userId);
+
+  // 테스트 정리용. 자기가 만든 쿠폰의 발급 이력만 지우려는 것이다
+  List<CouponIssue> findByCoupon_Id(Long couponId);
 }
