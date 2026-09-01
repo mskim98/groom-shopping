@@ -2,6 +2,16 @@ import http from 'k6/http';
 import { sleep } from 'k6';
 import exec from 'k6/execution';
 import { Trend, Counter, Rate } from 'k6/metrics';
+import { SharedArray } from 'k6/data';
+
+// 부하 유저의 실제 id 목록. measure-round.sh 가 회차 시작 전에 DB 에서 뽑아 둔다
+// 순번에 기준값을 더하는 방식은 못 쓴다 - 다른 테스트가 만든 계정이 사이에 끼어 id 가 연속이 아니다
+// SharedArray 라 VU 수와 무관하게 메모리에 한 벌만 올라간다
+const LT_USER_IDS = new SharedArray('lt_user_ids', function () {
+  return open('./lt_user_ids.txt').split('\n').filter(function (line) {
+    return line.trim().length > 0;
+  });
+});
 
 /**
  * #1 한정 수량 쿠폰 발급 - 라운드별 재측정용 드라이버
@@ -51,16 +61,17 @@ const ROUND = __ENV.ROUND || '0';
 
 const issueLatency = new Trend('issue_latency', true);   // 발급 요청의 서버 응답시간(ms)
 const confirmLatency = new Trend('confirm_latency', true); // 접수부터 확정 관측까지(ms). 비동기 라운드 전용
-const loginLatency = new Trend('login_latency', true);   // 로그인이 측정을 지배하는지 보려는 것
+// 인증은 부하에서 뺀다. 요청마다 로그인하면 사용자 조회가 요청당 2회(로그인 + 인증 필터) 붙어
+// 커넥션 풀 포화가 발급 경로 때문인지 인증 때문인지 가릴 수 없다 (실측: 10만 요청에 20만 회)
 const issueSuccess = new Counter('issue_success');       // 확정 성공(SUCCESS)
-const issueSoldout = new Counter('issue_soldout');       // 진짜 품절(COUPON_OUT_OF_STOCK)
+const issueSoldout = new Counter('issue_soldout');       // 재고가 실제로 0 (COUPON_OUT_OF_STOCK)
 const issueDup = new Counter('issue_dup');               // 이미 발급(COUPON_ALREADY_ISSUED)
-const issueContention = new Counter('issue_contention'); // 경합 실패(COUPON_ISSUE_CONTENTION) = 거짓 품절
+const issueContention = new Counter('issue_contention'); // 재고가 남았는데 경합으로 처리하지 못한 건
 const issueMismatch = new Counter('issue_mismatch');     // Redis/DB 재고 불일치(COUPON_STORE_MISMATCH)
 const issueOther = new Counter('issue_other');           // 기타
 const issuePending = new Counter('issue_pending');       // 확정 미도달(WAITING/UNKNOWN). 실패로 세지 않는다
 const issueTimeout = new Counter('issue_timeout');       // 응답 자체가 오지 않음(status 0)
-const loginFail = new Counter('login_fail');             // 부하 유저 로그인 실패. 측정 준비 결함이다
+const authFail = new Counter('auth_fail');               // 인증 우회가 안 먹은 경우. 측정 준비 결함이다
 
 // 장애 전파 여부는 쿠폰 지표로 알 수 없다
 // 쿠폰과 무관한 조회를 부하 내내 저부하로 때려 그 성공률이 무너지는지를 본다
@@ -99,30 +110,16 @@ export function setup() {
   if (!COUPON_ID) throw new Error('COUPON_ID 환경변수가 필요합니다. (예: -e COUPON_ID=1)');
   // 부하 유저는 runbook_seed_users.sql 이 미리 심는다
   // 회원가입 API 로 10만 명을 만들면 요청마다 BCrypt 비용이 붙어 회차 준비가 시간 단위가 된다
-  const probe = http.post(`${BASE_URL}/auth/login`,
-    JSON.stringify({ email: 'lt_1@test.com', password: PASSWORD }),
-    { headers: { 'Content-Type': 'application/json' } });
-  if (probe.status !== 200) {
-    throw new Error(`부하 유저 로그인 실패(status=${probe.status}). runbook_seed_users.sql 을 먼저 실행하라`);
+  if (LT_USER_IDS.length < DISTINCT_USERS) {
+    throw new Error(`부하 유저가 ${LT_USER_IDS.length} 명뿐이다. 참여 예정 ${DISTINCT_USERS} 명`);
+  }
+  // 우회 필터가 켜져 있는지 먼저 끊는다. 안 켜져 있으면 전건 401 로 끝나 회차 하나를 버린다
+  const probe = http.get(`${BASE_URL}/coupon/me`, { headers: { 'X-Lt-User-Id': LT_USER_IDS[0] } });
+  if (probe.status === 401 || probe.status === 403) {
+    throw new Error('인증 우회가 꺼져 있다. loadtest.auth-bypass.enabled=true 로 서버를 띄워라');
   }
   console.log(`✅ 준비 완료. COUPON_ID=${COUPON_ID} 전략=${STRATEGY} 회차=${ROUND} 참여 사용자=${DISTINCT_USERS}`);
   return { couponId: COUPON_ID, startedAt: Date.now() };
-}
-
-// VU 마다 마지막으로 로그인한 사용자의 토큰만 들고 있는다
-// 반복마다 사용자가 바뀌므로 캐시 적중은 중복 요청 구간에서만 생긴다
-let cachedToken = null;
-let cachedUser = null;
-
-function login(email) {
-  const res = http.post(`${BASE_URL}/auth/login`, JSON.stringify({ email, password: PASSWORD }),
-    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'login' } });
-  loginLatency.add(res.timings.duration);
-  if (res.status !== 200) {
-    loginFail.add(1);
-    return null;
-  }
-  return res.json('accessToken');
 }
 
 export default function (data) {
@@ -130,18 +127,12 @@ export default function (data) {
   // 재고 1만을 채우기 전에 전원이 중복 요청으로 바뀐다
   // 전체 반복 순번으로 골라야 요청 수만큼 서로 다른 사용자가 참여한다
   rushElapsed.add((Date.now() - data.startedAt) / 1000);
-  const userNum = (exec.scenario.iterationInTest % DISTINCT_USERS) + 1;
-  const email = `lt_${userNum}@test.com`;
+  const userIndex = exec.scenario.iterationInTest % DISTINCT_USERS;
 
-  if (cachedUser !== email) {
-    cachedToken = login(email);
-    cachedUser = email;
-  }
-  if (!cachedToken) { issueOther.add(1); return; }
-
+  // 사용자 식별을 헤더로만 넘긴다. 로그인 왕복도, 인증 필터의 DB 조회도 없다
   const headers = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${cachedToken}`,
+    'X-Lt-User-Id': LT_USER_IDS[userIndex],
   };
 
   const startedAt = Date.now();
@@ -152,6 +143,8 @@ export default function (data) {
 
   // status 0 은 응답이 아예 오지 않은 것이다. 실패 분류에 섞으면 타임아웃률을 잃는다
   if (res.status === 0) { issueTimeout.add(1); return; }
+  // 401/403 은 우회가 안 먹은 것이다. 실패 분류에 섞으면 측정 결함이 품절로 보인다
+  if (res.status === 401 || res.status === 403) { authFail.add(1); return; }
 
   // 동기 라운드(S0·S1)는 여기서 확정까지 끝난다
   if (res.status === 200 || res.status === 201) { issueSuccess.add(1); return; }
@@ -198,7 +191,7 @@ export function browseProducts() {
 //
 // 실패를 네 갈래로 나누는 것이 이 스크립트의 목적이다.
 // - OUT_OF_STOCK  : 재고가 실제로 0 (정상 동작)
-// - ISSUE_CONTENTION : 재고는 남았는데 경합으로 실패 = "거짓 품절". 이 값이 라운드 간 개선 지표다
+// - ISSUE_CONTENTION : 재고는 남아 있는데 잠금을 못 얻어 실패. 이 값이 라운드 간 개선 지표다
 // - ALREADY_ISSUED : 중복 요청. Lua 가 중복을 재고보다 먼저 보므로 품절 이후에도 여기로 잡힌다
 // - STORE_MISMATCH : Redis 는 통과했는데 DB 수량이 0. 두 저장소가 어긋난 상태로 조사 대상이다
 function classifyFailure(res) {
@@ -226,7 +219,7 @@ function classifyFailure(res) {
 }
 
 // ErrorCode 이름으로 실패 사유를 나눈다. 분류했으면 true 를 반환한다
-// 이 분리가 "거짓 품절이 사라졌다"를 수치로 지지하는 근거다 - contention 카운터가 0 이어야 한다
+// 이 분리가 있어야 "재고가 남았는데 실패한 건이 사라졌다" 를 수치로 말할 수 있다
 function classify(code) {
   switch (code) {
     case 'COUPON_OUT_OF_STOCK':     issueSoldout.add(1); return true;
@@ -240,7 +233,7 @@ function classify(code) {
 export function teardown() {
   console.log(`✅ 전략=${STRATEGY} 회차=${ROUND} 측정 완료.`);
   console.log('   발급 수·중복·잔여 수량 판정은 runbook_assert.sql 이 한다.');
-  console.log('   실패 내역은 issue_soldout(진짜 품절) / issue_contention(거짓 품절) /');
+  console.log('   실패 내역은 issue_soldout(재고 소진) / issue_contention(재고는 남았으나 경합) /');
   console.log('   issue_dup(중복) / issue_mismatch(저장소 불일치) 로 나눠 읽는다.');
   console.log('   issue_pending 은 폴링 창 안에 확정이 안 끝난 건이다. 실패가 아니다.');
   console.log('   bystander_ok 가 무너졌으면 쿠폰 부하가 무관한 기능까지 끌고 내려간 것이다.');

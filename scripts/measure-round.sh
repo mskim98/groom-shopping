@@ -116,6 +116,10 @@ if [ -n "$RUNNING" ] && [ "$RUNNING" != "$STRATEGY" ]; then
   exit 1
 fi
 echo "  서버 전략: ${RUNNING:-확인 불가(actuator env 미노출)}"
+# 가상 스레드 여부는 결과 해석을 가른다. 회차마다 원장에 남겨 둔다
+VT="$(curl -fsS "${ACTUATOR}/env/spring.threads.virtual.enabled" 2>/dev/null \
+       | sed -n 's/.*"value":"\([^"]*\)".*/\1/p' | head -1 || true)"
+echo "  가상 스레드: ${VT:-확인 불가}"
 
 echo "[1/7] 부하 유저 수 확인"
 HAVE="$(psql_run -tAc "SELECT COUNT(*) FROM users WHERE email LIKE 'lt\_%@test.com'")"
@@ -123,6 +127,20 @@ echo "  현재 ${HAVE} 명 / 필요 ${USERS} 명"
 if [ "$HAVE" -lt "$USERS" ]; then
   echo "  모자라므로 일괄 생성한다"
   psql_file "$RUNBOOK/runbook_seed_users.sql" -v users="$USERS"
+fi
+
+# 부하 유저의 실제 id 목록을 파일로 넘긴다
+# 순번에 기준값을 더하는 방식은 못 쓴다 - 다른 테스트가 만든 계정이 사이에 끼어들어
+# id 가 연속이 아니다 (실측: 10만 구간에 98,256 명만 부하 유저였다)
+# 그대로 뒀으면 헤더가 엉뚱한 사용자를 가리켜 중복·품절 집계가 조용히 틀어진다
+IDS_FILE="$ROOT/k6/scripts/lt_user_ids.txt"
+psql_run -tAc "SELECT id FROM users WHERE email LIKE 'lt\_%@test.com' ORDER BY id" \
+  | tr -d ' \r' | sed '/^$/d' > "$IDS_FILE"
+ID_COUNT="$(wc -l < "$IDS_FILE" | tr -d ' ')"
+echo "  부하 유저 id 목록 ${ID_COUNT} 개 준비"
+if [ "$ID_COUNT" -lt "$USERS" ]; then
+  echo "  부하 유저가 ${ID_COUNT} 명뿐이다. 필요 ${USERS} 명" >&2
+  exit 1
 fi
 
 echo "[2/7] DB 초기화"
@@ -145,7 +163,17 @@ redis_run SETNX "$STOCK_KEY" "$STOCK"
 redis_run CONFIG RESETSTAT >/dev/null
 
 echo "[5/7] 부하 - 런타임 지표를 2초 간격으로 병행 수집"
-echo "ts,hikari_active,hikari_pending,hikari_timeout,tomcat_busy,tomcat_max" > "$METRICS"
+# 앞 회차의 쿼리 통계가 남으면 이번 회차의 느린 쿼리를 가려낼 수 없다
+psql_run -tAc "SELECT pg_stat_statements_reset()" >/dev/null 2>&1 || \
+  echo "  (pg_stat_statements 미설치 - 느린 쿼리 판정은 건너뛴다)"
+# 캐시 적중률은 누적값이라 회차 전후의 차이로 봐야 한다
+CACHE_BEFORE="$(psql_run -tAc "SELECT sum(blks_hit) || ',' || sum(blks_read) FROM pg_stat_database WHERE datname='${PG_DB}'" | tr -d ' ')"
+
+# DB 컨테이너의 CPU · 메모리. 사다리에서 "자원이 모자란가" 를 배제하는 칸이다
+DBSTATS="$OUTDIR/coupon_${STRATEGY}_r${ROUND}_${STAMP}_dbstats.csv"
+docker stats "$DB_CONTAINER" --format '{{.CPUPerc}},{{.MemUsage}}' > "$DBSTATS" 2>/dev/null &
+DBSTATS_PID=$!
+echo "ts,hikari_active,hikari_pending,hikari_timeout,tomcat_busy,tomcat_max,pg_active,pg_lock_waits" > "$METRICS"
 # 지표는 /actuator/metrics 가 아니라 /actuator/prometheus 에서 긁는다
 # 이 애플리케이션은 health · info · prometheus 만 노출하고 metrics 는 500 을 낸다
 # 한 번의 요청에서 5개 값을 함께 뽑으므로 값들이 같은 순간의 것이 된다
@@ -154,12 +182,17 @@ sample_metrics() {
     local snap
     snap="$(curl -fsS "${ACTUATOR}/prometheus" 2>/dev/null || true)"
     pick() { printf '%s\n' "$snap" | awk -v m="$1" '$0 ~ "^"m"[{ ]" {print $NF; exit}'; }
-    printf '%s,%s,%s,%s,%s,%s\n' "$(date +%H:%M:%S)" \
+    # DB 안에서 실제로 돌고 있는 세션 수와 잠금 대기 수
+    # 커넥션 풀이 마른 것이 "DB 가 느려서" 인지 "요청이 많아서" 인지를 가르는 값이다
+    local pg
+    pg="$(psql_run -tAc "SELECT count(*) FILTER (WHERE state='active') || ',' || count(*) FILTER (WHERE wait_event_type='Lock') FROM pg_stat_activity WHERE datname='${PG_DB}'" 2>/dev/null | tr -d ' ')"
+    printf '%s,%s,%s,%s,%s,%s,%s\n' "$(date +%H:%M:%S)" \
       "$(pick hikaricp_connections_active)" \
       "$(pick hikaricp_connections_pending)" \
       "$(pick hikaricp_connections_timeout_total)" \
       "$(pick tomcat_threads_busy_threads)" \
-      "$(pick tomcat_threads_config_max_threads)" >> "$METRICS"
+      "$(pick tomcat_threads_config_max_threads)" \
+      "${pg:-,}" >> "$METRICS"
     sleep 2
   done
 }
@@ -167,7 +200,7 @@ sample_metrics() {
 sample_metrics &
 SAMPLER_PID=$!
 # 부하가 중간에 죽어도 샘플러가 남지 않게 한다
-trap 'kill "$SAMPLER_PID" 2>/dev/null || true' EXIT
+trap 'kill "$SAMPLER_PID" "$DBSTATS_PID" 2>/dev/null || true' EXIT
 
 LOAD_STARTED_AT=$(date +%s)
 set +e
@@ -179,6 +212,8 @@ k6 run \
   -e ITERATIONS="$ITERATIONS" \
   -e STRATEGY="$STRATEGY" \
   -e ROUND="$ROUND" \
+  -e LT_USER_COUNT="$ID_COUNT" \
+  -e DISTINCT_USERS="${DISTINCT_USERS:-}" \
   --summary-export="$OUT" \
   --summary-trend-stats='avg,min,med,max,p(90),p(95),p(99)' \
   "$ROOT/k6/scripts/coupon-issue-test.js"
@@ -187,10 +222,42 @@ set -e
 LOAD_SECONDS=$(( $(date +%s) - LOAD_STARTED_AT ))
 kill "$SAMPLER_PID" 2>/dev/null || true
 wait "$SAMPLER_PID" 2>/dev/null || true
+kill "$DBSTATS_PID" 2>/dev/null || true
+wait "$DBSTATS_PID" 2>/dev/null || true
 trap - EXIT
 # k6 종료 코드가 0 이 아닌 것은 threshold 미달일 뿐이고 회차 실패가 아니다
 # 라운드마다 기대치가 다르므로 값으로 기록하고 판정은 단언으로 한다
 echo "  k6 종료 코드: ${K6_EXIT} (0 이 아니면 threshold 미달. 회차는 계속 판정한다)"
+
+# 비동기 확정은 부하가 끝나도 아직 큐에 남아 있다
+# 그 상태에서 발급 수를 세면 "덜 처리된 상태"가 미달로 잡혀, 라운드 비교가 성립하지 않는다
+# 더 늘지 않을 때까지 기다린 뒤에 센다
+if [ "$STRATEGY" = "kafka" ]; then
+  echo "[5.5/7] 확정 배수 대기 - 발급 수가 더 늘지 않을 때까지"
+  DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-300}"
+  DRAIN_STARTED_AT=$(date +%s)
+  PREV=-1
+  STABLE=0
+  while :; do
+    CUR="$(psql_run -tAc "SELECT COUNT(*) FROM coupon_issue WHERE coupon_id = ${CID}" | tr -d ' ')"
+    if [ "$CUR" = "$PREV" ]; then
+      STABLE=$((STABLE + 1))
+    else
+      STABLE=0
+    fi
+    PREV="$CUR"
+    # 3회 연속 같은 값이면 배수가 끝난 것으로 본다. 1회로 판정하면 폴링 간격 사이의 정체를 완료로 읽는다
+    [ "$STABLE" -ge 3 ] && break
+    ELAPSED=$(( $(date +%s) - DRAIN_STARTED_AT ))
+    if [ "$ELAPSED" -ge "$DRAIN_TIMEOUT" ]; then
+      echo "  ${DRAIN_TIMEOUT}s 안에 멈추지 않았다 (마지막 ${CUR}건). 이 회차의 발급 수는 배수 미완 상태다" >&2
+      break
+    fi
+    sleep 2
+  done
+  DRAIN_SECONDS=$(( $(date +%s) - DRAIN_STARTED_AT ))
+  echo "  배수 ${DRAIN_SECONDS}s, 확정 ${PREV}건"
+fi
 
 echo "[6/7] 정합성 단언"
 psql_file "$RUNBOOK/runbook_assert.sql" -v couponId="$CID" -v stock="$STOCK"
@@ -199,6 +266,19 @@ psql_file "$RUNBOOK/runbook_assert.sql" -v couponId="$CID" -v stock="$STOCK"
 A_ISSUED="$(psql_run -tAc "SELECT COUNT(*) FROM coupon_issue WHERE coupon_id = ${CID}")"
 A_DUP="$(psql_run -tAc "SELECT COUNT(*) FROM (SELECT user_id FROM coupon_issue WHERE coupon_id = ${CID} GROUP BY user_id HAVING COUNT(*) > 1) t")"
 A_REMAIN="$(psql_run -tAc "SELECT quantity FROM coupon WHERE id = ${CID}")"
+
+# 라운드마다 기대값이 반대라 스크립트가 직접 판정한다
+# S0·S1 은 quantity 가 남은 수량이라 0 이어야 하고, S2 는 불변 발행 수량이라 STOCK 그대로여야 한다
+if [ "$STRATEGY" = "kafka" ]; then
+  EXPECT_QUANTITY="$STOCK"
+else
+  EXPECT_QUANTITY=0
+fi
+if [ "$A_REMAIN" = "$EXPECT_QUANTITY" ]; then
+  echo "  [단언3] quantity=${A_REMAIN} (기대 ${EXPECT_QUANTITY}) PASS"
+else
+  echo "  [단언3] quantity=${A_REMAIN} (기대 ${EXPECT_QUANTITY}) FAIL" >&2
+fi
 
 echo "  [단언4] 미확정(WAITING) 상태 키 == 0"
 STATUS_KEYS="$(mktemp)"
@@ -212,8 +292,23 @@ fi
 rm -f "$STATUS_KEYS"
 echo "  waiting=${WAITING}"
 
+echo "  [참고] 컨슈머 랙 - 0 이 아니면 아직 확정되지 않은 건이 남았다"
+# 부하 종료 시점에 랙이 남아 있으면 단언 1 의 발급 수는 "덜 처리된 상태"라 미달과 구별되지 않는다
+if command -v docker >/dev/null 2>&1; then
+  docker exec -i "${KAFKA_CONTAINER:-kafka}" kafka-consumer-groups \
+    --bootstrap-server localhost:9092 --group coupon-issue-group --describe 2>/dev/null \
+    | awk 'NR==1 || $2=="coupon-issue-requests"' || echo "  (랙 조회 실패 - 컨테이너명을 KAFKA_CONTAINER 로 지정하라)"
+fi
+
 echo "  [참고] Redis 재고 · 발급자 SET"
 echo "  stock=$(redis_run GET "$STOCK_KEY")  issued_users=$(redis_run SCARD "$ISSUED_KEY")"
+
+echo "  [사다리] 캐시 적중률과 느린 쿼리"
+CACHE_AFTER="$(psql_run -tAc "SELECT sum(blks_hit) || ',' || sum(blks_read) FROM pg_stat_database WHERE datname='${PG_DB}'" | tr -d ' ')"
+# 이 회차 동안 실행된 쿼리만 총 실행시간 순으로 남긴다
+psql_run -tAc "SELECT round(total_exec_time::numeric,1) || ' ms total | ' || calls || ' calls | ' || round(mean_exec_time::numeric,2) || ' ms avg | ' || left(query, 120) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 15" \
+  > "$OUTDIR/coupon_${STRATEGY}_r${ROUND}_${STAMP}_slowqueries.txt" 2>/dev/null || true
+SLOW_TOP_MS="$(psql_run -tAc "SELECT round(max(mean_exec_time)::numeric,2) FROM pg_stat_statements WHERE calls > 100" 2>/dev/null | tr -d ' ')"
 
 echo "[7/7] Redis 명령 통계 - 요청당 왕복 수 판정용"
 redis_run INFO commandstats > "$OUTDIR/coupon_${STRATEGY}_r${ROUND}_${STAMP}_commandstats.txt"
@@ -225,6 +320,8 @@ SUMMARY="$OUT" RUNTIME="$METRICS" \
 LOAD_SECONDS="$LOAD_SECONDS" K6_EXIT="$K6_EXIT" \
 A_ISSUED="$A_ISSUED" A_DUP="$A_DUP" A_REMAIN="$A_REMAIN" A_WAITING="$WAITING" \
 STOCK="$STOCK" VUS="$VUS" ITERATIONS="$ITERATIONS" \
+DBSTATS="$DBSTATS" CACHE_BEFORE="$CACHE_BEFORE" CACHE_AFTER="$CACHE_AFTER" \
+SLOW_TOP_MS="${SLOW_TOP_MS:-}" VIRTUAL_THREADS="${VT:-unknown}" \
 python3 "$ROOT/scripts/append-round.py"
 
 echo "----------------------------------------------"

@@ -30,3 +30,12 @@ backend/gradlew.bat
 # 소스 트리에 섞여 있던 수동 테스트 가이드도 함께 제외
 backend/src/main/java/groom/backend/domain/notification/NOTIFICATION_API_POSTMAN_GUIDE.md
 backend/src/main/java/groom/backend/domain/notification/POSTMAN_SSE_TEST_GUIDE.md
+
+# 부하 유저 id 목록 - 회차마다 DB 에서 다시 뽑는다
+k6/scripts/lt_user_ids.txt
+
+# ── 측정 도구는 로컬 전용 ─────────────────────────────────────
+# 런북 SQL · 회차 실행 스크립트 · 부하 드라이버는 애플리케이션 코드가 아니라
+# 측정 절차의 산출물이라 저장소에 넣지 않는다. 로컬 파일은 그대로 둔다
+scripts/
+k6/
