@@ -8,6 +8,19 @@ spring:
     ansi:
       enabled: always
 
+  # 톰캣이 요청마다 가상 스레드를 쓴다. 플랫폼 스레드 200 개라는 상한이 사라진다
+  # 켠 근거 - S0·S1 실측에서 DB 잠금 대기 0 · 최장 쿼리 0.38ms 인데도
+  # tomcat.threads.busy 가 200/200 이었다. DB 는 한가한데 받아 줄 스레드가 없던 상태다
+  #
+  # ⚠ 이것만으로 처리량이 늘지는 않는다. 대기할 수 있는 수가 늘 뿐이고,
+  # 커넥션 풀(50)이 상한이면 풀 앞의 줄만 길어져 응답 시간이 오히려 나빠질 수 있다
+  # 효과는 게이트에서 거절되는 90% 쪽에서 나오고 확정 경로에는 나오지 않는다
+  #
+  # 끄고 재려면 SPRING_THREADS_VIRTUAL_ENABLED=false 로 띄운다. 라운드 비교용 손잡이다
+  threads:
+    virtual:
+      enabled: ${SPRING_THREADS_VIRTUAL_ENABLED:true}
+
   datasource:
     url: jdbc:postgresql://localhost:5432/shopping_db_dev
     username: dev
@@ -148,14 +161,25 @@ coupon:
   issue:
     # 어느 라운드로 뜰지 정하는 값. 기동 시점에 고정된다
     # db-lock(S0) · lua-then-lock(S1) 은 측정 전용이고 kafka(S2) 가 프로덕션 기본값이다
-    # 지금 기본값이 db-lock 인 것은 kafka 전략 구현체가 아직 없기 때문이다 - Task 4 에서 되돌린다
-    strategy: ${COUPON_ISSUE_STRATEGY:db-lock}
+    strategy: ${COUPON_ISSUE_STRATEGY:kafka}
+    # 파티션 수 = 컨슈머 수. 키가 userId 라 한 쿠폰의 이벤트가 파티션 전체에 흩어진다
+    # 자동 생성에 맡기면 브로커 기본값(1)로 만들어져 컨슈머 3개가 배정을 못 받고 논다
+    partitions: ${COUPON_ISSUE_PARTITIONS:4}
+    consumer-concurrency: ${COUPON_ISSUE_CONCURRENCY:4}
+    # 한 번에 받아 한 문장으로 넣는 건수
+    # 줄어드는 것은 커넥션 획득 · 트랜잭션 · 왕복이고, INSERT · 인덱스 갱신 · WAL 은 건수 그대로 남는다
+    # 그래서 어느 지점부터 이득이 멈추는지가 스윕의 측정 대상이다
+    batch-size: ${COUPON_ISSUE_BATCH_SIZE:500}
+    # 성공 결과까지 결과 토픽에 실을지. 지금 결과 컨슈머는 로그만 남기고 클라이언트는 상태를 폴링한다
+    # 켜면 요청 수만큼 메시지가 한 벌 더 돌아 같은 브로커에서 요청 토픽과 경합한다
+    publish-success-results: ${COUPON_PUBLISH_SUCCESS_RESULTS:false}
   warmup:
     batch-size: 1000
   reconcile:
     enabled: true
-    # 보정 주기. 짧게 잡을 이유가 없다 - 게이트 좁아짐은 누적형이라 분 단위로 충분하다
-    delay-ms: 60000
+    # 주기 실행을 없앴다. delay-ms 는 더 이상 읽히지 않는다 -
+    # 진행 중 이벤트에서는 고아와 처리 중인 요청이 겉으로 같아, 되돌리면 남의 자리를 뺏는다
+    # 대조는 종료된 쿠폰에만 적용하고 마감 시 1회 부른다
     batch-size: 500
 
 # 추첨 지연 큐 폴링

@@ -8,7 +8,12 @@ services:
     # 한 JVM 안에 Spring 컨텍스트가 여러 개 캐시되면 50 x N 이 100 을 넘어
     # flyway 초기화가 "FATAL: sorry, too many clients already" 로 실패한다.
     # 풀 50 은 측정 조건이라 건드리지 않고 DB 쪽 상한을 올린다.
-    command: postgres -c max_connections=300
+    # pg_stat_statements : 병목이 "느린 쿼리" 인지 아닌지를 가르는 유일한 싼 수단이다
+    # 없으면 쿼리 지연을 애플리케이션 지표에서 역산해야 하고, 그러면 대기와 실행이 섞인다
+    command: >
+      postgres -c max_connections=300
+               -c shared_preload_libraries=pg_stat_statements
+               -c pg_stat_statements.track=all
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -24,6 +29,12 @@ services:
     image: redis:latest
     container_name: redis
     restart: always
+    # AOF everysec - 재기동 시 소실 범위를 최대 60초(RDB 기본)에서 최대 1초로 줄인다
+    # S2 에서 Redis 는 재고 판정의 유일한 기준이 됐다. DB 조건부 UPDATE 가 뒤에서 초과 발급을
+    # 흡수하던 그물을 걷어냈으므로, 재고 키가 사라지면 되돌릴 근거가 함께 사라진다
+    # always 를 쓰지 않는 이유는 쓰기마다 fsync 라 발급 경로가 그대로 느려지기 때문이다
+    # 소실이 1초치로 줄면 랙 기반 복원이 다뤄야 할 오차의 크기 자체가 작아진다
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "6379:6379"
     networks:

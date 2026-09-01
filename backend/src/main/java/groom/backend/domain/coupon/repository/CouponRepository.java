@@ -38,6 +38,13 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
   @Query("UPDATE Coupon c SET c.quantity = c.quantity - 1 WHERE c.id = :couponId AND c.quantity > 0")
   int decreaseQuantityAtomically(@Param("couponId") Long couponId);
 
+  // 마감 시 확정 발급 수를 한 번 굳힌다. 이후로는 변하지 않으므로 리포트가 매번 COUNT 하지 않는다
+  // 엔티티를 읽어 세터로 넣지 않는 이유는 이 시점에 quantity 를 함께 덮어쓸 위험을 없애기 위해서다 -
+  // quantity 는 S2 이후 불변 발행 수량이고, 그 불변성이 초과 발급 판정의 유일한 기준선이다
+  @Modifying(clearAutomatically = true)
+  @Query("UPDATE Coupon c SET c.issuedCount = :issuedCount WHERE c.id = :couponId")
+  int freezeIssuedCount(@Param("couponId") Long couponId, @Param("issuedCount") Long issuedCount);
+
   // 부팅 워밍업용 키셋(seek) 페이지네이션. id 오름차순으로 활성 쿠폰만 훑는다.
   // OFFSET 방식과 달리 페이지가 뒤로 갈수록 느려지지 않고, 영속성 컨텍스트에 전량을 올리지 않는다.
   @Query("SELECT c FROM Coupon c WHERE c.id > :lastId AND c.isActive = true ORDER BY c.id ASC")

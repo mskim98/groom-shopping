@@ -134,6 +134,9 @@ public class CouponController {
       case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
       case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
       case CONTENTION -> throw new BusinessException(ErrorCode.COUPON_ISSUE_CONTENTION);
+      // 판정 자체가 불가능한 상태다. 409 로 묶으면 "거절됐다" 와 구별되지 않아
+      // 클라이언트가 재시도해야 하는지 아닌지를 응답만 보고 정할 수 없다
+      case UNAVAILABLE -> throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
     };
   }
 
@@ -151,6 +154,7 @@ public class CouponController {
   @ApiResponses({
           @ApiResponse(responseCode = "202", description = "요청 접수(처리 대기)"),
           @ApiResponse(responseCode = "409", description = "접수 게이트 거절 - 품절(COUPON_OUT_OF_STOCK) 또는 중복(COUPON_ALREADY_ISSUED)"),
+          @ApiResponse(responseCode = "503", description = "재고 키 미초기화 - 판정 불가(COUPON_ISSUE_UNAVAILABLE)"),
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
   })
   @PostMapping("/issue-async/{coupon_id}")
@@ -159,12 +163,19 @@ public class CouponController {
           @AuthenticationPrincipal(expression = "user") User user,
           @Parameter(description = "쿠폰 ID", example = "1")
           @PathVariable("coupon_id") Long couponId) {
-    String requestId = couponAsyncIssueService.enqueue(couponId, user.getId());
+    CouponIssueResult result = couponAsyncIssueService.enqueue(couponId, user.getId());
     // 202 Accepted: "요청은 받았고 처리는 비동기로 진행 중". 대기 순번은 응답하지 않는다 -
     // 발급 판정은 컨슈머 도달 순서로 정해지므로, 큐에 적재된 순번을 돌려주면 지킬 수 없는 순서를 약속하게 된다.
-    return ResponseEntity.accepted().body(Map.of(
-            "requestId", requestId,
-            "status", "WAITING"));
+    return switch (result.status()) {
+      case ACCEPTED -> ResponseEntity.accepted().body(Map.of(
+              "requestId", result.requestId(),
+              "status", "WAITING"));
+      case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
+      case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
+      case UNAVAILABLE -> throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
+      // 접수는 확정하지 않으므로 SUCCESS · CONTENTION 이 나올 자리가 없다
+      default -> throw new BusinessException(ErrorCode.SERVER_ERROR);
+    };
   }
 
   @Operation(

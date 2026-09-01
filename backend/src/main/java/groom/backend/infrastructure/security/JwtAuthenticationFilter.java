@@ -114,8 +114,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         log.warn("Refresh token used as access token");
                     }
                 }
-            } else {
-                // 토큰이 없거나 유효하지 않은 경우
+            } else if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                // 토큰이 없고, 앞선 필터가 인증해 두지도 않은 경우
+                // 이미 인증된 요청까지 여기서 거절하면 앞 필터의 인증이 통째로 무시된다
                 setErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TOKEN",
                         "인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
                 return;

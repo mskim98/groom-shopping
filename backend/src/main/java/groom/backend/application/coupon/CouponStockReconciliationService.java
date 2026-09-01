@@ -17,18 +17,27 @@ import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * 재고 대조·보정 배치.
+ * 재고 대조·보정과 마감 처리. <b>주기 실행하지 않는다</b>
  *
- * <p>Lua 게이트는 통과분을 되돌리지 않으므로, 컨슈머 확정에서 탈락했거나 크래시로 유실된 건이 쌓이면
- * 실제 재고보다 게이트가 먼저 마감된다. 이 배치가 그 좁아짐을 되돌린다
+ * <p>주기 실행을 뺀 이유는 둘이다
+ * <ul>
+ *   <li><b>이벤트 진행 중에는 고아와 처리 중인 요청을 구별할 수단이 없다.</b> 게이트를 통과했는데
+ *       아직 저장되지 않은 건은 두 경우가 완전히 같은 모습이라, 되돌리면 남의 자리를 뺏는다
+ *       현재 코드도 고아 정리는 이미 쿠폰 종료 후에만 하고 있었다</li>
+ *   <li><b>S2 에서 {@code quantity} 가 불변이 되면 대조식이 뒤집힌다.</b> 지금까지의 식
+ *       {@code 기대재고 = quantity + 확정발급 − 예약} 은 quantity 가 "남은 수량"일 때만 성립한다
+ *       불변 발행 수량에 그 식을 쓰면 확정이 늘수록 기대값이 커져 주기마다 재고를 되살린다</li>
+ * </ul>
  *
- * <p><b>분산 락이 지키는 대상이 바로 이 배치다.</b> 서버를 N 대로 늘리면 {@code @Scheduled} 가
- * N 번 실행되고, 같은 쿠폰의 재고 키를 동시에 고쳐 쓰면 보정이 서로를 덮는다
- * 락을 쓸 조건은 빈도가 낮고 · 임계 구역이 길고 · 중복 실행의 피해가 큰 경우인데 배치는 셋 다 맞고,
+ * <p>그래서 대조는 <b>종료된 쿠폰</b>에만 적용하고, 진행 중 실패의 보상은 확정 경로가 그 자리에서 한다
+ * (게이트 되돌리기 · 재처리 소진 시 자리 반납)
+ *
+ * <p><b>분산 락이 지키는 대상이 바로 이 작업이다.</b> 서버를 N 대로 늘리면 마감이 N 번 실행되고,
+ * 같은 쿠폰의 재고 키를 동시에 고쳐 쓰면 보정이 서로를 덮는다
+ * 락을 쓸 조건은 빈도가 낮고 · 임계 구역이 길고 · 중복 실행의 피해가 큰 경우인데 이 작업은 셋 다 맞고,
  * 발급 경로는 셋 다 반대여서 그쪽에서는 걷어냈다
  */
 // 끌 수 있어야 한다. 이 배치는 Redis 재고를 되돌리므로, 재고와 DB 를 일부러 어긋나게 두고
@@ -49,6 +58,7 @@ public class CouponStockReconciliationService {
     private final Counter correctedCounter;
     private final Counter loosenedCounter;
     private final Counter orphanCounter;
+    private final Counter overIssuedCounter;
 
     @Value("${coupon.reconcile.batch-size:500}")
     private int batchSize;
@@ -68,13 +78,18 @@ public class CouponStockReconciliationService {
                 .description("게이트가 느슨해 경고만 남긴 횟수").register(meterRegistry);
         this.orphanCounter = Counter.builder("coupon.stock.reconcile.orphans")
                 .description("종료 쿠폰에서 회수한 고아 예약 수").register(meterRegistry);
+        // 방어선이 Lua 하나로 줄어든 뒤의 최종 감시자다. 이 값이 0 이 아니면 그 쿠폰의 접수를 막는다
+        this.overIssuedCounter = Counter.builder("coupon.stock.over.issued")
+                .description("발행 수량을 넘겨 발급된 수").register(meterRegistry);
     }
 
     /**
-     * 주기 실행 진입점. 인스턴스 중 하나만 실제로 돈다
+     * 전 쿠폰 대조 진입점. 인스턴스 중 하나만 실제로 돈다
+     *
+     * <p>주기 실행하지 않는다. 운영자가 부르거나 마감 처리에서 부른다 -
+     * 진행 중 이벤트에 이 작업을 걸면 처리 중인 요청의 자리를 되돌려 남에게 넘긴다
      */
-    @Scheduled(fixedDelayString = "${coupon.reconcile.delay-ms:60000}")
-    public void reconcileScheduled() {
+    public void reconcileWithLock() {
         RLock lock = redissonClient.getLock(RECONCILE_LOCK_KEY);
         boolean acquired = false;
         try {
@@ -126,6 +141,11 @@ public class CouponStockReconciliationService {
      */
     public ReconcileReport reconcileCoupon(Coupon coupon) {
         Long couponId = coupon.getId();
+        if (!isFinished(coupon)) {
+            // 진행 중이면 손대지 않는다. 게이트를 통과했는데 아직 저장되지 않은 건과
+            // 되돌려야 할 고아가 겉으로 완전히 같아, 여기서 고치면 남의 자리를 뺏는다
+            return null;
+        }
         Long redisStock = couponStockRedisRepository.getStock(couponId);
         if (redisStock == null) {
             // 워밍업 대상이 아니거나 아직 심기 전이다. 여기서 심으면 워밍업의 SETNX 규칙을 우회하게 된다
@@ -137,32 +157,59 @@ public class CouponStockReconciliationService {
         long reserved = couponStockRedisRepository.countIssuedUsers(couponId);
         long expected = dbQuantity + confirmed - reserved;
 
-        int orphansRemoved = 0;
-        if (isFinished(coupon)) {
-            orphansRemoved = removeOrphanReservations(couponId);
-            if (orphansRemoved > 0) {
-                // 고아를 뺐으므로 기대값을 다시 계산한다
-                reserved -= orphansRemoved;
-                expected = dbQuantity + confirmed - reserved;
-            }
+        int orphansRemoved = removeOrphanReservations(couponId);
+        if (orphansRemoved > 0) {
+            // 고아를 뺐으므로 기대값을 다시 계산한다
+            reserved -= orphansRemoved;
+            expected = dbQuantity + confirmed - reserved;
         }
 
+        // 종료된 쿠폰의 재고 키는 고쳐 쓰지 않는다. 더 발급될 일이 없어 고칠 이유가 없고,
+        // 고치면 그 회차의 마지막 상태를 읽어 판정하는 쪽이 사후에 만들어진 값을 보게 된다
+        // 어긋남은 기록만 남긴다 - 그것이 조사에 필요한 상태다
         long correctedTo = redisStock;
         if (redisStock < expected) {
-            // 게이트가 실제보다 좁다. 되돌리지 않은 통과분이 쌓인 상태다
-            couponStockRedisRepository.initStock(couponId, expected);
-            correctedTo = expected;
             correctedCounter.increment();
-            log.warn("[COUPON_RECONCILE_WIDEN] couponId={}, {} -> {}", couponId, redisStock, expected);
+            log.warn("[COUPON_RECONCILE_NARROW] couponId={}, redis={}, expected={} (고치지 않음)",
+                    couponId, redisStock, expected);
         } else if (redisStock > expected) {
-            // 내리지 않는다. 내리면 이미 게이트를 통과한 요청의 자리를 뺏어 확정 단계에서 실패시킨다
-            // 느슨한 게이트가 초과발급으로 이어지지 않는 근거는 DB 조건부 UPDATE 와 uq_coupon_issue_user 다
             loosenedCounter.increment();
-            log.warn("[COUPON_RECONCILE_LOOSE] couponId={}, redis={}, expected={} (내리지 않음)",
+            log.warn("[COUPON_RECONCILE_LOOSE] couponId={}, redis={}, expected={} (고치지 않음)",
                     couponId, redisStock, expected);
         }
 
         return new ReconcileReport(couponId, redisStock, expected, correctedTo, orphansRemoved);
+    }
+
+    /**
+     * 쿠폰 마감 - 고아 회수 후 확정 발급 수를 한 번 굳히고, 넘었으면 알린다
+     *
+     * <p>이벤트가 끝난 뒤 1 회만 부른다. 이후로는 값이 변하지 않으므로 리포트가 매번 셀 이유가 없다 -
+     * 지난 이벤트 100 개를 조회하는 화면이 {@code COUNT} 100 번 대신 컬럼 읽기 100 번이 된다
+     *
+     * <p><b>초과 발급을 자동으로 되돌리지 않는다.</b> 회수하려면 "누구 것을 뺏을지" 를 정해야 하는데
+     * 그것은 시스템이 판단할 문제가 아니고, 원인을 모른 채 고치면 조사에 필요한 상태가 사라진다
+     * 경보의 역할은 고치기가 아니라 번지기 전에 멈추기다
+     *
+     * @return 굳힌 확정 발급 수
+     */
+    public long closeCoupon(Long couponId) {
+        Coupon coupon = couponRepository.findById(couponId).orElseThrow(
+                () -> new IllegalArgumentException("존재하지 않는 쿠폰: " + couponId));
+        reconcileCoupon(coupon);
+
+        long issued = couponIssueRepository.countByCoupon_Id(couponId);
+        couponRepository.freezeIssuedCount(couponId, issued);
+
+        // quantity 는 S2 이후 불변 발행 수량이다. 이 비교가 성립하는 근거가 그 불변성이다
+        long quantity = coupon.getQuantity() == null ? 0L : coupon.getQuantity();
+        if (issued > quantity) {
+            log.error("[COUPON_OVER_ISSUED] couponId={}, issued={}, quantity={}, over={}",
+                    couponId, issued, quantity, issued - quantity);
+            overIssuedCounter.increment(issued - quantity);
+        }
+        log.info("[COUPON_CLOSED] couponId={}, issued={}, quantity={}", couponId, issued, quantity);
+        return issued;
     }
 
     // 종료된 쿠폰만 대상으로 한다. 진행 중 쿠폰에서는 고아와 in-flight 예약을 구분할 수 없다

@@ -35,9 +35,9 @@ import org.springframework.data.redis.core.RedisTemplate;
  * <p>enqueue → 대기열 등록·WAITING, process → 발급·SUCCESS 흐름을 검증한다.
  * 컨슈머의 비동기 타이밍에 의존하지 않도록 process() 를 직접 호출해 처리 로직을 검증한다.
  *
- * <p>게이트는 {@code enqueue} 에 있다. process() 는 {@code gateReserved} 에 따라 {@code confirmIssue}
- * (게이트 예약분 확정) 또는 {@code issueCouponInDbOnly}(폴백)로 갈린다. 두 경로 모두 DB 수량을 1 줄이므로
- * DB 수량만으로는 구분되지 않는다. 어느 경로를 탔는지는 <b>Redis 재고값</b>으로만 판별한다.
+ * <p>게이트는 {@code enqueue} 에 있고 확정 경로는 재고를 다시 검사하지 않는다.
+ * 어느 경로를 탔는지는 <b>Redis 재고값</b>으로 판별한다 - DB 수량은 이제 아무도 고치지 않아
+ * 경로 판별의 근거가 되지 못한다.
  */
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -74,7 +74,16 @@ class CouponAsyncIssueIntegrationTest {
     // deleteAll() 은 V2 시드 사용자(admin@test.com · user_N@test.com)까지 지운다.
     // payment 는 users 로 ON DELETE CASCADE 인데 payment_compensation 에는 CASCADE 가 없어,
     // 부하 실행이 남긴 보상 레코드가 있으면 fk_payment_compensation_payment 위반으로 삭제가 막힌다.
-    // 테스트가 자기 것만 정리하면 남의 데이터 상태에 결과가 흔들리지 않는다
+    // 테스트가 자기 것만 정리하면 남의 데이터 상태가 결과를 바꾸지 않는다
+    // 이 클래스가 만든 쿠폰만 이름으로 찾아 지운다
+    private void deleteFixtureCoupons() {
+        if (couponId != null) {
+            couponIssueRepository.deleteAll(couponIssueRepository.findByCoupon_Id(couponId));
+            couponRepository.findById(couponId).ifPresent(couponRepository::delete);
+            couponId = null;
+        }
+    }
+
     private void deleteFixtureUsers() {
         FIXTURE_EMAILS.forEach(email ->
                 userRepository.findByEmail(email).ifPresent(userRepository::delete));
@@ -82,8 +91,9 @@ class CouponAsyncIssueIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        couponIssueRepository.deleteAll();
-        couponRepository.deleteAll();
+        // deleteAll() 을 쓰지 않는다. 이 테스트가 만들지 않은 쿠폰까지 지우면
+        // 같은 DB 를 쓰는 측정용 쿠폰이 사라져 부하 실행이 전건 404 로 끝난다 (실제로 한 번 겪었다)
+        deleteFixtureCoupons();
         deleteFixtureUsers();
         requestIds.clear();
 
@@ -107,6 +117,8 @@ class CouponAsyncIssueIntegrationTest {
         // Redis 잔여 키 정리 (재고/발급자 SET/상태)
         // 발급자 SET 을 남기면 다음 테스트가 COUPON_ALREADY_ISSUED 로 깨진다
         deleteCouponKeys();
+        deleteFixtureCoupons();
+        deleteFixtureUsers();
         List<String> statusKeys = new ArrayList<>();
         for (String requestId : requestIds) {
             statusKeys.add("coupon:issue:status:" + requestId);
@@ -119,25 +131,41 @@ class CouponAsyncIssueIntegrationTest {
         }
     }
 
-    // Redis 재고를 심지 않은 상태 = tryIssue 가 NOT_INITIALIZED → issueCouponInDbOnly 폴백 경로
-    // 폴백이 끊기지 않았음을 지키는 케이스다 (Lua 경로 검증은 아래 세 케이스가 맡는다)
+    // 재고 키가 없으면 판정할 근거가 없다. 접수는 여기서 기다리지 않고 즉시 돌려보낸다
+    // 통과시키면 그 뒤에 판정할 사람이 아무도 없어 무제한 발급이 되고,
+    // 심어질 때까지 기다리면 그 대기가 그대로 요청 스레드 점유가 된다
     @Test
-    @DisplayName("재고 미워밍업 시 DB 폴백으로 발급 - enqueue WAITING, process SUCCESS")
-    void enqueueThenProcess_success() {
-        // when - 비동기 발급 접수
-        lastRequestId = couponAsyncIssueService.enqueue(couponId, userId);
+    @DisplayName("재고 미워밍업 시 접수는 브로커에 싣지 않고 보류로 응답한다")
+    void enqueue_미워밍업이면_싣지_않는다() {
+        int statusKeysBefore = countStatusKeys();
 
-        // then - 초기 상태 WAITING
-        assertThat(couponAsyncIssueService.getStatus(lastRequestId)).isEqualTo("WAITING");
+        // when
+        var result = couponAsyncIssueService.enqueue(couponId, userId);
 
-        // when - 컨슈머가 호출하는 처리 로직 직접 실행
-        // 재고를 심지 않았으므로 접수 게이트가 NOT_INITIALIZED 로 통과시킨다 → gateReserved=false
-        couponAsyncIssueService.process(new CouponIssueRequestEvent(lastRequestId, couponId, userId, false));
+        // then - 상태 키가 늘지 않았다 = 발행도 없었다
+        assertThat(result.status())
+                .isEqualTo(groom.backend.application.coupon.strategy.CouponIssueResult.Status.UNAVAILABLE);
+        assertThat(countStatusKeys()).isEqualTo(statusKeysBefore);
+        assertThat(couponIssueRepository.findByCouponIdAndUserId(couponId, userId)).isEmpty();
+    }
 
-        // then - 상태 SUCCESS + DB 발급 + 수량 차감
-        assertThat(couponAsyncIssueService.getStatus(lastRequestId)).isEqualTo("SUCCESS");
+    // 접수가 만들지 않는 이벤트(구 메시지 · 복구 중 발행분)를 컨슈머가 받았을 때다
+    // 재고 키가 없으면 초기화 잠금을 잡고 심은 뒤 다시 판정한다
+    // 심는 값이 맞아떨어지는 이유 : COUNT 는 확정된 발급만 세므로 처리 중인 이벤트가 그 몫을 소비한다
+    @Test
+    @DisplayName("게이트 예약이 없는 이벤트는 컨슈머가 재고를 심고 다시 판정한다")
+    void process_예약없는_이벤트는_재고를_심고_재판정한다() {
+        String requestId = newRequestId();
+
+        // when - 재고 키가 없는 상태에서 gateReserved=false 이벤트가 도착한다
+        couponAsyncIssueService.process(new CouponIssueRequestEvent(requestId, couponId, userId, false));
+
+        // then - 재고를 심고(DB 수량 − 확정 발급 수) 재판정해 확정까지 갔다
+        assertThat(couponAsyncIssueService.getStatus(requestId)).isEqualTo("SUCCESS");
         assertThat(couponIssueRepository.findByCouponIdAndUserId(couponId, userId)).isNotEmpty();
-        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY - 1);
+        assertThat(couponStockRedisRepository.getStock(couponId)).isEqualTo(DB_QUANTITY - 1);
+        // 확정 경로는 coupon 테이블을 만지지 않는다. 감산이 되살아나면 이 단언이 깨진다
+        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY);
     }
 
     // 증명: 접수 게이트가 재고를 깎고, 컨슈머는 그 예약을 DB 로 확정만 한다
@@ -154,11 +182,13 @@ class CouponAsyncIssueIntegrationTest {
         // when
         couponAsyncIssueService.process(new CouponIssueRequestEvent(requestId, couponId, userId, true));
 
-        // then - 상태 SUCCESS + DB 발급 + DB 수량 차감
+        // then - 상태 SUCCESS + DB 발급. DB 수량은 그대로다
         assertThat(couponAsyncIssueService.getStatus(requestId)).isEqualTo("SUCCESS");
         assertThat(couponIssueRepository.findByCouponIdAndUserId(couponId, userId)).isPresent();
         assertThat(couponIssueRepository.findCouponIssueByUserId(userId)).hasSize(1);
-        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY - 1);
+        // quantity 는 불변 발행 수량이 됐다. 이 단언이 깨지면 확정 경로에 감산이 되살아난 것이고,
+        // 그러면 같은 쿠폰의 모든 확정이 한 행을 두고 다시 줄을 선다
+        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY);
 
         // then - Lua 경로만 만들 수 있는 흔적: 재고 DECR + 발급자 SADD
         assertThat(couponStockRedisRepository.getStock(couponId)).isEqualTo(REDIS_STOCK - 1);
@@ -178,10 +208,8 @@ class CouponAsyncIssueIntegrationTest {
         int statusKeysBefore = countStatusKeys();
 
         // when & then - 접수 단계에서 끊긴다
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(couponId, userId))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
+        assertThat(couponAsyncIssueService.enqueue(couponId, userId).status())
+                .isEqualTo(groom.backend.application.coupon.strategy.CouponIssueResult.Status.SOLD_OUT);
 
         // then - 브로커에 싣지 않았고 DB 도 손대지 않았다
         assertThat(countStatusKeys()).isEqualTo(statusKeysBefore);
@@ -202,17 +230,16 @@ class CouponAsyncIssueIntegrationTest {
         assertThat(couponAsyncIssueService.getStatus(firstRequestId)).isEqualTo("SUCCESS");
 
         // when & then - 두 번째는 접수에서 끊긴다
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(couponId, userId))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.COUPON_ALREADY_ISSUED);
+        assertThat(couponAsyncIssueService.enqueue(couponId, userId).status())
+                .isEqualTo(groom.backend.application.coupon.strategy.CouponIssueResult.Status.ALREADY_ISSUED);
 
         // findByCouponIdAndUserId 는 Optional 이라 중복 행이 생기면 조회 자체가 깨진다. 행 수로 직접 센다
         assertThat(couponIssueRepository.findCouponIssueByUserId(userId)).hasSize(1);
 
         // then - 재고는 한 번만 차감된다 (중복 요청이 차감 전에 막혔다는 근거)
         assertThat(couponStockRedisRepository.getStock(couponId)).isEqualTo(REDIS_STOCK - 1);
-        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY - 1);
+        // DB 수량은 아무도 고치지 않는다. 재고 판정의 근거는 Redis 한 곳뿐이다
+        assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY);
     }
 
     // 증명: Lua 가 중복 검사를 재고 검사보다 먼저 한다
@@ -231,10 +258,8 @@ class CouponAsyncIssueIntegrationTest {
         assertThat(couponStockRedisRepository.getStock(couponId)).isZero();
 
         // when & then - 같은 사용자가 품절 이후에 다시 요청하면 품절이 아니라 중복으로 분류된다
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(couponId, userId))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.COUPON_ALREADY_ISSUED);
+        assertThat(couponAsyncIssueService.enqueue(couponId, userId).status())
+                .isEqualTo(groom.backend.application.coupon.strategy.CouponIssueResult.Status.ALREADY_ISSUED);
 
         // 재고는 0 에서 더 내려가지 않는다 (DECR 이전에 막혔다는 근거)
         assertThat(couponStockRedisRepository.getStock(couponId)).isZero();
@@ -250,10 +275,8 @@ class CouponAsyncIssueIntegrationTest {
         couponStockRedisRepository.initStock(couponId, 0L);
 
         // when & then
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(couponId, userId))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
+        assertThat(couponAsyncIssueService.enqueue(couponId, userId).status())
+                .isEqualTo(groom.backend.application.coupon.strategy.CouponIssueResult.Status.SOLD_OUT);
 
         assertThat(couponIssueRepository.findByCouponIdAndUserId(couponId, userId)).isEmpty();
     }

@@ -131,11 +131,15 @@ public enum ErrorCode {
     COUPON_INVALID_POLICY(HttpStatus.BAD_REQUEST, "쿠폰 정책에 맞지 않은 사용방식입니다."),
     COUPON_OUT_OF_STOCK(HttpStatus.CONFLICT, "발급 수량이 소진되었습니다."),
     COUPON_ALREADY_ISSUED(HttpStatus.CONFLICT, "이미 발급받은 쿠폰입니다."),
-    // 품절과 구분한다 - 락 대기 초과·인터럽트는 재고가 남아 있는데 실패한 "거짓 품절"이다
-    // 같은 코드로 뭉치면 "거짓 품절이 사라졌다"를 수치로 지지할 수 없다
+    // 품절과 구분한다 - 락 대기 초과·인터럽트는 재고가 남아 있는데도 처리하지 못해 실패한 경우다
+    // 같은 코드로 뭉치면 재고 소진으로 실패한 건과 경합으로 실패한 건을 수치로 가를 수 없다
     COUPON_ISSUE_CONTENTION(HttpStatus.CONFLICT, "발급 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해주세요."),
     // Redis 게이트는 통과했는데 DB 수량이 이미 0 - 두 저장소가 어긋난 상태다
     COUPON_STORE_MISMATCH(HttpStatus.CONFLICT, "쿠폰 재고 정보가 일치하지 않습니다."),
+    // 재고 키가 없어 판정할 근거가 없는 상태. 409 로 묶으면 안 된다 -
+    // 409 는 "판정했고 거절이다" 이고 이쪽은 "아직 판정할 수 없다" 라 재시도 여부가 반대다
+    // 접수 경로는 여기서 기다리지 않고 즉시 돌려보낸다. 기다리면 그 대기가 곧 스레드 점유가 된다
+    COUPON_ISSUE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "쿠폰 발급을 준비 중입니다. 잠시 후 다시 시도해주세요."),
 
     // ===================== Payment 에러 코드 ====================
     /** 서킷브레이커 OPEN - PG 일시 장애로 결제 차단 (사용자에게 잠시 후 재시도 안내) */

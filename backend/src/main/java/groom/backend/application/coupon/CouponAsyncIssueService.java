@@ -3,177 +3,379 @@ package groom.backend.application.coupon;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.coupon.event.CouponIssueRequestEvent;
 import groom.backend.application.coupon.event.CouponIssueResultEvent;
+import groom.backend.application.coupon.strategy.CouponIssueResult;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
-import groom.backend.domain.auth.entity.User;
-import groom.backend.domain.auth.repository.UserRepository;
+import groom.backend.domain.coupon.model.entity.Coupon;
+import groom.backend.domain.coupon.repository.CouponIssueRepository;
+import groom.backend.domain.coupon.repository.CouponRepository;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * 쿠폰 비동기 발급.
+ * 쿠폰 비동기 발급 - S2 엔진
  *
- * <p>유일한 발급 경로다. 접수 단계의 Lua 게이트가 마감·중복을 1차로 자르고, 통과분만
- * couponId 키로 Kafka 에 실린다. 같은 쿠폰의 이벤트는 한 파티션에 모이므로 판정자는 항상 1명이고,
- * 상호배제를 분산 락으로 사는 대신 파티션 소유권으로 얻는다.
+ * <p>접수는 판정만 하고 즉시 돌려보내고, 저장은 컨슈머가 배치로 한다
+ * 이 분리가 S1 의 손잡이(잠금 대기 상한)를 통째로 없앤다 - 짧게 잡으면 재고가 남았는데 실패하고
+ * 길게 잡으면 스레드를 오래 붙드는 딜레마 자체가, 저장이 응답 경로 밖으로 나가면 성립하지 않는다
  *
- * <p>게이트를 브로커 앞에 둔 이유 : 마감·중복이 확정된 요청까지 통과시키면 큐와 컨슈머가
- * 어차피 버릴 메시지를 나르게 된다.
+ * <p>발행 키는 {@code userId} 다. {@code couponId} 로 두면 한 쿠폰의 이벤트가 파티션 하나에만 쌓여
+ * 파티션을 늘려도 컨슈머가 늘어난 만큼 일하지 못한다. 키를 바꿀 수 있는 근거는 순서 의존을 없앤 것이고,
+ * 그 근거가 곧 재고 행 감산 제거다 - 판정이 Redis 한 곳에서 끝나므로 도착 순서가 결과를 바꾸지 않는다
  *
- * <p>클라이언트는 즉시 requestId 를 받고, 처리 결과는 Redis 상태값을 polling 해서 확인한다.
- * 대기 순번은 응답하지 않는다 - 판정은 컨슈머 도달 순서로 정해지므로 큐 적재 순번을 돌려주면
- * 지킬 수 없는 순서를 약속하게 된다.
+ * <p>클라이언트는 즉시 requestId 를 받고 Redis 상태값을 폴링한다
+ * 대기 순번은 응답하지 않는다 - 판정은 이미 접수 시점에 끝났고 저장 순서는 약속할 수 있는 것이 아니다
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CouponAsyncIssueService {
 
-    private static final String REQUEST_TOPIC = "coupon-issue-requests";
+    public static final String REQUEST_TOPIC = "coupon-issue-requests";
+    public static final String CONSUMER_GROUP = "coupon-issue-group";
     private static final String RESULT_TOPIC = "coupon-issue-results";
     private static final String STATUS_KEY_PREFIX = "coupon:issue:status:";
+    private static final String INIT_LOCK_PREFIX = "coupon:init:";
     private static final Duration STATUS_TTL = Duration.ofHours(1);
+    // 초기화 잠금 대기 상한
+    // 넘기면 포기한다 - 컨슈머가 오래 멈추면 max.poll.interval.ms(5분)에 걸려 리밸런싱으로 번지고,
+    // 그러면 그 배치가 통째로 재처리된다
+    private static final long INIT_LOCK_WAIT_SECONDS = 2;
 
     public static final String STATUS_WAITING = "WAITING";
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED_PREFIX = "FAILED:";
 
-    private final CouponIssueService couponIssueService;       // 기존 발급 로직 재사용
-    private final UserRepository userRepository;
-    private final RedisTemplate<String, String> redisTemplate; // 요청별 처리 상태 저장(polling 용)
-    private final KafkaTemplate<String, String> paymentEventKafkaTemplate; // 7.1 String 템플릿 재사용
-    private final ObjectMapper objectMapper;
+    private final CouponRepository couponRepository;
+    private final CouponIssueRepository couponIssueRepository;
+    private final CouponIssueBatchWriter couponIssueBatchWriter;
     private final CouponStockRedisRepository couponStockRedisRepository;
+    private final RedisTemplate<String, String> redisTemplate;
+    // 결제와 갈라 둔 전용 템플릿. 여기 타임아웃은 접수 스레드 점유 상한이라 결제와 목적이 다르다
+    private final KafkaTemplate<String, String> couponIssueKafkaTemplate;
+    private final ObjectMapper objectMapper;
+    private final RedissonClient redissonClient;
+    private final CouponStockRecoveryService couponStockRecoveryService;
+
+    // 성공 결과까지 결과 토픽에 실을지
+    // 기본값이 false 인 이유 - 지금 결과 컨슈머는 로그만 남기고 클라이언트는 Redis 상태를 폴링한다
+    // 성공까지 실으면 요청 수만큼 메시지가 한 벌 더 돌아 같은 브로커에서 요청 토픽과 경합한다
+    // 파티션 선형성을 재는 라운드에서 그 경합은 측정 대상이 아닌 잡음이다
+    // SSE 푸시를 붙이는 시점에 켠다
+    @Value("${coupon.issue.publish-success-results:false}")
+    private boolean publishSuccessResults;
 
     /**
-     * 접수 게이트를 통과한 요청만 큐에 적재하고 requestId 를 반환한다. (컨트롤러는 202 Accepted)
+     * 접수 - 판정하고 큐에 싣는다. 여기서 기다리는 일이 없어야 한다
      *
-     * <p>게이트를 브로커 앞에 둔 이유 : 마감·중복이 확정된 요청은 브로커와 컨슈머 자원을 쓸 필요가 없다
-     * 컨슈머 안에 두면 어차피 버려질 메시지가 전부 파티션을 통과한다
+     * <p>게이트를 브로커 앞에 두는 이유 : 마감·중복이 확정된 요청까지 통과시키면
+     * 큐와 컨슈머가 어차피 버릴 메시지를 나르게 된다
      *
-     * <p>게이트 통과 순서를 발급 순서로 쓰지 않는다 - 게이트 통과와 {@code send} 사이에 컨텍스트 스위칭이
-     * 나면 오프셋 순서가 뒤바뀐다. 순서의 진실은 오프셋 하나뿐이고, 게이트는 마감·중복만 자른다
+     * <p>재고 키가 없으면 판정할 근거가 없다. 심어질 때까지 여기서 기다리지 않고 즉시 503 으로 돌려보낸다 -
+     * 접수 경로의 대기는 그대로 요청 스레드 점유가 되고, 그것이 S0 에서 톰캣이 200/200 으로 찼던 이유다
      */
-    public String enqueue(Long couponId, Long userId) {
+    public CouponIssueResult enqueue(Long couponId, Long userId) {
+        if (couponStockRecoveryService.isRecovering()) {
+            // 재고를 세우는 중이다. 지금 판정하면 아직 없는 근거로 통과 여부를 정하게 된다
+            return CouponIssueResult.unavailable();
+        }
         CouponStockRedisRepository.IssueResult gate =
                 couponStockRedisRepository.tryIssue(couponId, userId);
-        boolean gateReserved;
         switch (gate) {
-            case OUT_OF_STOCK -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
-            case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
-            case NOT_INITIALIZED -> {
-                // 재고 키가 없으면 게이트가 판정할 근거가 없다. 통과시키고 컨슈머의 DB 폴백에 맡긴다
-                log.warn("[COUPON_GATE_NOT_INITIALIZED] couponId={}, userId={}", couponId, userId);
-                gateReserved = false;
+            case OUT_OF_STOCK -> {
+                return CouponIssueResult.soldOut();
             }
-            default -> gateReserved = true;
+            case ALREADY_ISSUED -> {
+                return CouponIssueResult.alreadyIssued();
+            }
+            case NOT_INITIALIZED -> {
+                // 게이트만으로는 "아직 안 심었다" 와 "그런 쿠폰이 없다" 가 구별되지 않는다
+                // 없는 쿠폰에 503 을 주면 클라이언트가 영원히 재시도하므로 여기서만 한 번 확인한다
+                // 조회 1 회가 붙지만 이 분기는 정상 운영에서 돌지 않는다 - 워밍업이 키를 미리 심는다
+                if (couponRepository.findById(couponId)
+                        .filter(coupon -> Boolean.TRUE.equals(coupon.getIsActive())).isEmpty()) {
+                    throw new BusinessException(ErrorCode.COUPON_NOT_FOUND);
+                }
+                log.warn("[COUPON_GATE_NOT_INITIALIZED] strategy=kafka couponId={}, userId={}", couponId, userId);
+                return CouponIssueResult.unavailable();
+            }
+            default -> {
+                // 통과. 여기서부터 Redis 재고는 이미 깎였으므로 확정에 실패하면 반드시 되돌려야 한다
+            }
         }
 
         String requestId = UUID.randomUUID().toString();
-        // 초기 상태 WAITING 기록 (polling 시 "대기 중" 표시용)
         redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
 
-        CouponIssueRequestEvent event =
-                new CouponIssueRequestEvent(requestId, couponId, userId, gateReserved);
-        // key = couponId → 같은 쿠폰 요청은 같은 파티션(직렬 처리)
-        send(REQUEST_TOPIC, couponId.toString(), event);
-        log.info("[COUPON_ASYNC_ENQUEUE] requestId={}, couponId={}, userId={}, gateReserved={}",
-                requestId, couponId, userId, gateReserved);
-        return requestId;
+        // gateReserved=true - 접수가 이미 자리를 배정했다. 컨슈머는 다시 판정하지 않는다
+        // 키는 userId 다. 같은 쿠폰의 이벤트가 파티션 전체에 흩어져야 컨슈머가 늘어난 만큼 일한다
+        publishRequest(requestId, couponId, userId);
+        return CouponIssueResult.accepted(requestId);
     }
 
     /**
-     * 컨슈머가 호출하는 실제 발급 처리. 파티션 단위 직렬 소비라 락 없이 확정한다.
+     * 요청 이벤트를 발행한다. 발행에 실패하면 배정한 자리를 되돌린다
+     *
+     * <p>{@code send} 는 즉시 돌아오므로 브로커 장애는 여기서 예외로 나타나지 않는다
+     * 되돌리는 시점은 콜백이고, 그때까지 걸리는 시간의 상한은 {@code delivery.timeout.ms} 가 정한다
+     * 상한이 없으면 배정만 되고 아무도 확정하지 않는 자리가 소리 없이 쌓인다
+     */
+    private void publishRequest(String requestId, Long couponId, Long userId) {
+        CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId, true);
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (Exception e) {
+            couponStockRedisRepository.rollbackIssue(couponId, userId);
+            throw new BusinessException(ErrorCode.SERVER_ERROR);
+        }
+        couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
+                .whenComplete((sent, error) -> {
+                    if (error == null) {
+                        return;
+                    }
+                    log.error("[COUPON_ENQUEUE_PUBLISH_FAILED] couponId={}, userId={}, error={}",
+                            couponId, userId, error.toString());
+                    couponStockRedisRepository.rollbackIssue(couponId, userId);
+                    redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
+                            STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
+                });
+    }
+
+    /**
+     * 단건 처리. 배치 경로로 넘겨 확정 규칙을 한 곳에만 둔다
      */
     public void process(CouponIssueRequestEvent event) {
-        String statusKey = STATUS_KEY_PREFIX + event.requestId();
-        try {
-            User user = userRepository.findById(event.userId())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-            if (event.gateReserved()) {
-                // 게이트가 이미 재고를 깎았다. 여기서 또 깎으면 실제보다 빨리 마감된다
-                couponIssueService.confirmIssue(event.couponId(), user);
-            } else {
-                issueWithoutGateReservation(event, user);
-            }
+        processBatch(List.of(event));
+    }
 
-            redisTemplate.opsForValue().set(statusKey, STATUS_SUCCESS, STATUS_TTL);
-            send(RESULT_TOPIC, event.couponId().toString(),
-                    new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(), STATUS_SUCCESS, null));
-            log.info("[COUPON_ASYNC_SUCCESS] requestId={}, couponId={}", event.requestId(), event.couponId());
-        } catch (BusinessException e) {
-            String reason = e.getErrorCode().name();
-            log.warn("[COUPON_ASYNC_FAILED] requestId={}, couponId={}, reason={}",
-                    event.requestId(), event.couponId(), reason);
-            recordFailure(event, statusKey, reason);
-        } catch (RuntimeException e) {
-            // BusinessException 이 아닌 실패도 상태를 남긴다
-            // 대표적으로 persistIssuedCoupon 의 트랜잭션 timeout 초과가 TransactionTimedOutException 으로 나온다
-            // 남기지 않으면 상태 키가 WAITING 인 채 TTL 까지 방치돼 클라이언트 polling 이 영영 대기한다
-            log.error("[COUPON_ASYNC_ERROR] requestId={}, couponId={}, error={}",
-                    event.requestId(), event.couponId(), e.toString());
-            recordFailure(event, statusKey, ErrorCode.SERVER_ERROR.name());
+    /**
+     * 컨슈머가 부르는 확정 처리
+     *
+     * <p>재고를 검사하지 않는다. 게이트를 통과해 여기 왔다는 것이 곧 "발급해도 된다" 는 답이고,
+     * 여기서 다시 세면 세는 것과 넣는 것 사이에 남이 끼어들어 잠금이 되돌아온다
+     *
+     * <p>실패하면 예외를 던져 오프셋 커밋을 막는다. 배치 전체가 다시 오지만
+     * {@code ON CONFLICT DO NOTHING} 이라 이미 들어간 행은 조용히 건너뛴다
+     */
+    public void processBatch(List<CouponIssueRequestEvent> events) {
+        if (events.isEmpty()) {
+            return;
+        }
+        // 키가 userId 라 한 배치에 여러 쿠폰이 섞일 수 있다. 쿠폰 단위로 모아야 한 문장으로 넣는다
+        Map<Long, List<CouponIssueRequestEvent>> byCoupon = new LinkedHashMap<>();
+        for (CouponIssueRequestEvent event : events) {
+            byCoupon.computeIfAbsent(event.couponId(), k -> new ArrayList<>()).add(event);
+        }
+        Map<String, String> statuses = new LinkedHashMap<>();
+        List<CouponIssueResultEvent> results = new ArrayList<>();
+
+        for (Map.Entry<Long, List<CouponIssueRequestEvent>> entry : byCoupon.entrySet()) {
+            confirmOneCoupon(entry.getKey(), entry.getValue(), statuses, results);
+        }
+        writeStatuses(statuses);
+        for (CouponIssueResultEvent result : results) {
+            send(RESULT_TOPIC, String.valueOf(result.userId()), result);
+        }
+    }
+
+    private void confirmOneCoupon(Long couponId, List<CouponIssueRequestEvent> events,
+                                  Map<String, String> statuses, List<CouponIssueResultEvent> results) {
+        Optional<Coupon> found = couponRepository.findById(couponId);
+        if (found.isEmpty() || !Boolean.TRUE.equals(found.get().getIsActive())) {
+            // 자리를 배정받았는데 쿠폰이 사라졌다. 배정분을 되돌리지 않으면 아무도 못 받는 수량이 된다
+            for (CouponIssueRequestEvent event : events) {
+                couponStockRedisRepository.rollbackIssue(couponId, event.userId());
+                fail(event, ErrorCode.COUPON_NOT_FOUND.name(), statuses, results);
+            }
+            return;
+        }
+        LocalDateTime expiresAt = LocalDateTime.of(found.get().getExpireDate(), LocalTime.MIN);
+
+        List<CouponIssueRequestEvent> confirmable = new ArrayList<>();
+        for (CouponIssueRequestEvent event : events) {
+            if (event.gateReserved()) {
+                confirmable.add(event);
+            } else if (rejudge(found.get(), event, statuses, results)) {
+                confirmable.add(event);
+            }
+        }
+        if (confirmable.isEmpty()) {
+            return;
+        }
+
+        List<Long> userIds = confirmable.stream().map(CouponIssueRequestEvent::userId).toList();
+        Set<Long> inserted = couponIssueBatchWriter.insertAll(couponId, expiresAt, userIds);
+
+        for (CouponIssueRequestEvent event : confirmable) {
+            if (inserted.contains(event.userId())) {
+                statuses.put(event.requestId(), STATUS_SUCCESS);
+                if (publishSuccessResults) {
+                    results.add(new CouponIssueResultEvent(event.requestId(), couponId, event.userId(),
+                            STATUS_SUCCESS, null));
+                }
+                continue;
+            }
+            // 들어가지 않았다 = 이 사용자는 이미 그 쿠폰을 갖고 있다
+            // 발급자 SET 에서는 빼지 않는다 - 빼면 게이트가 그를 다시 통과시켜 같은 실패를 반복한다
+            // 자리만 되돌려 뒤 요청이 쓰게 한다
+            couponStockRedisRepository.rollbackStockOnly(couponId);
+            log.warn("[COUPON_DUPLICATE_BLOCKED_BY_DB] couponId={}, userId={}", couponId, event.userId());
+            fail(event, ErrorCode.COUPON_ALREADY_ISSUED.name(), statuses, results);
         }
     }
 
     /**
-     * 접수 때 게이트가 판정하지 못한 요청({@code gateReserved=false})을 처리한다
+     * 접수가 판정하지 못한 요청({@code gateReserved=false})을 컨슈머에서 다시 판정한다
      *
-     * <p>접수와 소비 사이에 재고 키가 심어졌을 수 있으므로 게이트를 한 번 더 돌린다
-     * 접수 경로에서 재고가 심어지기를 기다리게 하는 대신 큐를 거치는 시간을 복구 시간으로 쓴다 -
-     * 접수는 Lua 왕복 1회와 이벤트 발행만 하는 성질을 지키고, 요청 스레드도 붙잡지 않는다
+     * <p>접수 경로는 이제 이런 이벤트를 만들지 않는다(재고 키가 없으면 503 으로 돌려보낸다)
+     * 여기 오는 것은 배포 전에 실린 구 메시지나 Redis 소실 복구 중에 발행된 건이다
      *
-     * <p>여기서 재시도해도 경합하지 않는다 - 같은 쿠폰의 이벤트는 한 파티션에 모이고
-     * 그 파티션의 컨슈머는 1명이라, 이 메서드는 쿠폰당 한 번에 하나만 돈다
+     * <p>키가 {@code userId} 라 한 쿠폰의 이벤트가 파티션 4 개에 흩어진다
+     * 그래서 재고 키가 없다는 사실을 컨슈머 4 개가 동시에 발견할 수 있고, 초기화 잠금이 필요해진다
      *
-     * <p>{@code gateReserved=false} 는 접수 때 재고를 깎지 않았다는 뜻이라 여기서 처음 깎는 것이 맞다
-     * {@code true} 인 요청을 이 경로로 태우면 같은 요청이 재고를 두 번 깎아 실제보다 빨리 마감된다
+     * @return 확정 대상이면 true
      */
-    private void issueWithoutGateReservation(CouponIssueRequestEvent event, User user) {
+    private boolean rejudge(Coupon coupon, CouponIssueRequestEvent event,
+                            Map<String, String> statuses, List<CouponIssueResultEvent> results) {
         CouponStockRedisRepository.IssueResult retry =
                 couponStockRedisRepository.tryIssue(event.couponId(), event.userId());
-        if (retry != CouponStockRedisRepository.IssueResult.NOT_INITIALIZED) {
-            // 재고 키가 접수 이후에 심어졌다는 뜻이다. 이 로그가 안 찍히면 재시도가 이득을 못 낸 것이라
-            // 복구 경로(워밍업·쿠폰 생성 시 적재)를 먼저 봐야 한다
-            log.info("[COUPON_GATE_RETRY] requestId={}, couponId={}, result={}",
-                    event.requestId(), event.couponId(), retry);
+        if (retry == CouponStockRedisRepository.IssueResult.NOT_INITIALIZED) {
+            try {
+                ensureStockInitialized(coupon);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail(event, ErrorCode.COUPON_ISSUE_CONTENTION.name(), statuses, results);
+                return false;
+            }
+            retry = couponStockRedisRepository.tryIssue(event.couponId(), event.userId());
         }
         switch (retry) {
-            // 재시도가 재고를 깎았다. DB 확정이 실패하면 되돌려야 하므로 롤백을 가진 confirmIssue 로 보낸다
-            case SUCCESS -> couponIssueService.confirmIssue(event.couponId(), user);
-            // 깎지 않았으므로 되돌릴 것이 없다. 예외로 끊어 실패 사유만 남긴다
-            case OUT_OF_STOCK -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
-            case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
-            // 재시도해도 재고 키가 없다. DB 비관적 락 폴백이 판정하고 커밋 후 재고를 심는다
-            case NOT_INITIALIZED -> couponIssueService.issueCouponInDbOnly(event.couponId(), user);
+            case SUCCESS -> {
+                return true;
+            }
+            case OUT_OF_STOCK -> fail(event, ErrorCode.COUPON_OUT_OF_STOCK.name(), statuses, results);
+            case ALREADY_ISSUED -> fail(event, ErrorCode.COUPON_ALREADY_ISSUED.name(), statuses, results);
+            // 잠금까지 거치고도 키가 없다. 판정할 근거가 끝내 없으므로 통과시키지 않는다 -
+            // 통과시키면 그 뒤에 판정할 사람이 아무도 없어 무제한 발급이 된다
+            default -> fail(event, ErrorCode.COUPON_ISSUE_UNAVAILABLE.name(), statuses, results);
         }
-    }
-
-    // 실패 상태를 Redis 에 기록하고 결과 토픽으로 알린다
-    private void recordFailure(CouponIssueRequestEvent event, String statusKey, String reason) {
-        redisTemplate.opsForValue().set(statusKey, STATUS_FAILED_PREFIX + reason, STATUS_TTL);
-        send(RESULT_TOPIC, event.couponId().toString(),
-                new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(), "FAILED", reason));
+        return false;
     }
 
     /**
-     * requestId 의 현재 처리 상태를 조회한다. (클라이언트 polling)
+     * 재고 키를 심는다. 잠금이 지키는 것은 정확성이 아니라 비용이다
+     *
+     * <p>잠금 키({@code coupon:init:{couponId}})는 재고 키와 아무 연결이 없다
+     * Redis 는 "이 잠금을 가진 자만 저 키를 만질 수 있다" 를 강제하지 않는다
+     * 정확성은 {@code SET NX} 가 지키고, 잠금은 {@code COUNT} 쿼리를 컨슈머 수만큼에서 1 회로 줄인다
+     *
+     * <p>심는 값이 맞아떨어지는 이유 : {@code COUNT} 는 확정된 발급만 세므로 지금 처리 중인 폴백 이벤트는 빠진다
+     * 그만큼 재고가 많게 심어지는데, 바로 그 이벤트들이 재판정으로 그 몫을 소비한다
+     */
+    private void ensureStockInitialized(Coupon coupon) throws InterruptedException {
+        Long couponId = coupon.getId();
+        RLock initLock = redissonClient.getLock(INIT_LOCK_PREFIX + couponId);
+        if (!initLock.tryLock(INIT_LOCK_WAIT_SECONDS, TimeUnit.SECONDS)) {
+            return;
+        }
+        try {
+            // 기다리는 동안 남이 이미 심었을 수 있다. 얻고 나서 다시 본다
+            if (couponStockRedisRepository.getStock(couponId) != null) {
+                return;
+            }
+            long quantity = coupon.getQuantity() == null ? 0L : coupon.getQuantity();
+            long remaining = Math.max(0L, quantity - couponIssueRepository.countByCoupon_Id(couponId));
+            couponStockRedisRepository.initStockIfAbsent(couponId, remaining);
+            log.warn("[COUPON_STOCK_REINITIALIZED] couponId={}, remaining={}", couponId, remaining);
+        } finally {
+            if (initLock.isHeldByCurrentThread()) {
+                initLock.unlock();
+            }
+        }
+    }
+
+    /**
+     * 재처리를 다 쓰고도 실패한 배치를 정리한다
+     *
+     * <p>배정된 자리를 되돌리지 않으면 그 수량은 아무도 받지 못한 채 사라진다
+     * 주기 배치를 없앴으므로 이 자리가 마지막 보상 지점이다
+     */
+    public void abandonBatch(List<CouponIssueRequestEvent> events, Throwable cause) {
+        Map<String, String> statuses = new LinkedHashMap<>();
+        List<CouponIssueResultEvent> results = new ArrayList<>();
+        for (CouponIssueRequestEvent event : events) {
+            couponStockRedisRepository.rollbackIssue(event.couponId(), event.userId());
+            fail(event, ErrorCode.SERVER_ERROR.name(), statuses, results);
+        }
+        log.error("[COUPON_BATCH_ABANDONED] size={}, error={}", events.size(), String.valueOf(cause));
+        writeStatuses(statuses);
+        for (CouponIssueResultEvent result : results) {
+            send(RESULT_TOPIC, String.valueOf(result.userId()), result);
+        }
+    }
+
+    private void fail(CouponIssueRequestEvent event, String reason,
+                      Map<String, String> statuses, List<CouponIssueResultEvent> results) {
+        statuses.put(event.requestId(), STATUS_FAILED_PREFIX + reason);
+        results.add(new CouponIssueResultEvent(event.requestId(), event.couponId(), event.userId(),
+                "FAILED", reason));
+    }
+
+    /**
+     * 상태 키를 한 번의 왕복으로 쓴다
+     *
+     * <p>건마다 왕복하면 배치로 줄인 왕복이 여기서 그대로 되살아난다
+     */
+    private void writeStatuses(Map<String, String> statuses) {
+        if (statuses.isEmpty()) {
+            return;
+        }
+        // SessionCallback 을 쓰는 이유 - 템플릿이 쓰던 직렬화를 그대로 탄다
+        // 저수준 콜백으로 바이트를 직접 넣으면 폴링이 읽는 쪽과 직렬화가 갈릴 수 있고,
+        // 그러면 상태가 늘 UNKNOWN 으로 보인다
+        redisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public Object execute(RedisOperations operations) {
+                RedisOperations<String, String> ops = (RedisOperations<String, String>) operations;
+                statuses.forEach((requestId, status) ->
+                        ops.opsForValue().set(STATUS_KEY_PREFIX + requestId, status, STATUS_TTL));
+                return null;
+            }
+        });
+    }
+
+    /**
+     * requestId 의 현재 처리 상태를 조회한다 (클라이언트 폴링)
      */
     public String getStatus(String requestId) {
         String status = redisTemplate.opsForValue().get(STATUS_KEY_PREFIX + requestId);
-        // 만료/미존재 시 알 수 없음으로 응답
         return status != null ? status : "UNKNOWN";
     }
 
-    // 이벤트를 JSON 으로 직렬화해 토픽으로 발행한다.
     private void send(String topic, String key, Object event) {
         try {
-            paymentEventKafkaTemplate.send(topic, key, objectMapper.writeValueAsString(event));
+            couponIssueKafkaTemplate.send(topic, key, objectMapper.writeValueAsString(event));
         } catch (Exception e) {
             log.error("[COUPON_ASYNC_PUBLISH_FAILED] topic={}, key={}, error={}", topic, key, e.getMessage());
             throw new BusinessException(ErrorCode.SERVER_ERROR);

@@ -33,7 +33,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 /**
  * 발급 실패 사유가 서로 다른 ErrorCode 로 갈라지는지 고정한다
  *
- * <p>진짜 품절·DB 수량 소진·경합 실패가 한 코드로 뭉쳐 있으면
+ * <p>재고 소진·DB 수량 소진·경합 실패가 한 코드로 뭉쳐 있으면
  * 실패 집계에서 "재고가 남았는데 실패한 건"과 "정말 소진된 건"을 나눌 수 없다
  */
 @ExtendWith(MockitoExtension.class)

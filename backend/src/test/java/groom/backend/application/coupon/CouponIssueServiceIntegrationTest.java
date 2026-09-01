@@ -1,5 +1,6 @@
 package groom.backend.application.coupon;
 
+import groom.backend.application.coupon.strategy.CouponIssueResult;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
@@ -79,7 +80,7 @@ class CouponIssueServiceIntegrationTest {
     // deleteAll() 은 V2 시드 사용자(admin@test.com · user_N@test.com)까지 지운다.
     // payment 는 users 로 ON DELETE CASCADE 인데 payment_compensation 에는 CASCADE 가 없어,
     // 부하 실행이 남긴 보상 레코드가 있으면 fk_payment_compensation_payment 위반으로 삭제가 막힌다.
-    // 테스트가 자기 것만 정리하면 남의 데이터 상태에 결과가 흔들리지 않는다
+    // 테스트가 자기 것만 정리하면 남의 데이터 상태가 결과를 바꾸지 않는다
     private void deleteFixtureUsers() {
         FIXTURE_EMAILS.forEach(email ->
                 userRepository.findByEmail(email).ifPresent(userRepository::delete));
@@ -170,7 +171,7 @@ class CouponIssueServiceIntegrationTest {
     // setUp 이 모든 쿠폰을 워밍업하므로 게이트는 SUCCESS 이고 gateReserved=true 다
     // 워밍업하지 않은 쿠폰을 다루는 케이스는 이 헬퍼를 쓰지 않는다
     private CouponIssueResponse issue(Long couponId, User user) {
-        String requestId = couponAsyncIssueService.enqueue(couponId, user.getId());
+        String requestId = couponAsyncIssueService.enqueue(couponId, user.getId()).requestId();
         couponAsyncIssueService.process(
                 new CouponIssueRequestEvent(requestId, couponId, user.getId(), true));
         String status = couponAsyncIssueService.getStatus(requestId);
@@ -210,21 +211,19 @@ class CouponIssueServiceIntegrationTest {
     }
 
     // 존재하지 않는 쿠폰 ID로 발급 요청 시 실패하는지 테스트
-    // 재고 키가 없으므로 게이트는 NOT_INITIALIZED 로 통과시키고, DB 폴백이 COUPON_NOT_FOUND 로 판정한다
+    // 재고 키가 없어 게이트가 판정하지 못하는데, 접수는 그 상태를 그대로 503 으로 돌려보내지 않는다
+    // 없는 쿠폰에 503 을 주면 클라이언트가 영원히 재시도하므로 이 분기에서만 존재 여부를 확인한다
     @Test
     @DisplayName("쿠폰 발급 실패 - 존재하지 않는 쿠폰")
     void issueCoupon_notFound() {
         // given
         Long nonExistentId = 999L;
-        String requestId = couponAsyncIssueService.enqueue(nonExistentId, testUser.getId());
 
-        // when - 게이트가 판정하지 못했으므로 gateReserved=false
-        couponAsyncIssueService.process(
-                new CouponIssueRequestEvent(requestId, nonExistentId, testUser.getId(), false));
-
-        // then
-        assertThat(couponAsyncIssueService.getStatus(requestId))
-                .isEqualTo("FAILED:" + ErrorCode.COUPON_NOT_FOUND.name());
+        // when & then - 브로커에 싣지 않고 접수 단계에서 끊는다
+        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(nonExistentId, testUser.getId()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.COUPON_NOT_FOUND);
     }
 
     // 비활성화된 쿠폰에 대한 발급 요청 시 실패하는 시나리오
@@ -233,7 +232,7 @@ class CouponIssueServiceIntegrationTest {
     @DisplayName("쿠폰 발급 실패 - 비활성화된 쿠폰")
     void issueCoupon_inactiveCoupon() {
         // given
-        String requestId = couponAsyncIssueService.enqueue(inactiveCoupon.getId(), testUser.getId());
+        String requestId = couponAsyncIssueService.enqueue(inactiveCoupon.getId(), testUser.getId()).requestId();
 
         // when
         couponAsyncIssueService.process(new CouponIssueRequestEvent(
@@ -285,13 +284,10 @@ class CouponIssueServiceIntegrationTest {
         );
 
         // when & then - 두 번째는 접수 게이트에서 끊긴다
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(limitedCoupon.getId(), testUser2.getId()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(exception -> {
-                    BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
-                    assertThat(businessException.getMessage()).contains("수량이 소진되었습니다");
-                });
+        // 거절을 예외가 아니라 상태로 돌려주는 이유 : 접수는 결과를 응답으로 옮기는 일까지만 하고,
+        // 어떤 HTTP 코드로 나갈지는 컨트롤러가 정한다 - 라운드가 달라도 그 매핑이 한 곳에 있어야 비교가 성립한다
+        assertThat(couponAsyncIssueService.enqueue(limitedCoupon.getId(), testUser2.getId()).status())
+                .isEqualTo(CouponIssueResult.Status.SOLD_OUT);
     }
 
     // 동일 사용자가 같은 쿠폰을 중복 발급하려 할 때 실패해야 하는 테스트
@@ -303,13 +299,8 @@ class CouponIssueServiceIntegrationTest {
         issue(activeCoupon.getId(), testUser);
 
         // when & then - 같은 사용자의 두 번째 요청은 발급자 SET 에 걸려 접수에서 끊긴다
-        assertThatThrownBy(() -> couponAsyncIssueService.enqueue(activeCoupon.getId(), testUser.getId()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(exception -> {
-                    BusinessException businessException = (BusinessException) exception;
-                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.COUPON_ALREADY_ISSUED);
-                    assertThat(businessException.getMessage()).contains("이미 발급받은 쿠폰입니다");
-                });
+        assertThat(couponAsyncIssueService.enqueue(activeCoupon.getId(), testUser.getId()).status())
+                .isEqualTo(CouponIssueResult.Status.ALREADY_ISSUED);
     }
 
     // 사용자의 보유 쿠폰 목록을 정상적으로 조회하는 테스트

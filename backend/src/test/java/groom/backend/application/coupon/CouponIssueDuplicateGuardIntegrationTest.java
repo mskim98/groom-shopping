@@ -64,7 +64,7 @@ class CouponIssueDuplicateGuardIntegrationTest {
     // deleteAll() 은 V2 시드 사용자(admin@test.com · user_N@test.com)까지 지운다.
     // payment 는 users 로 ON DELETE CASCADE 인데 payment_compensation 에는 CASCADE 가 없어,
     // 부하 실행이 남긴 보상 레코드가 있으면 fk_payment_compensation_payment 위반으로 삭제가 막힌다.
-    // 테스트가 자기 것만 정리하면 남의 데이터 상태에 결과가 흔들리지 않는다
+    // 테스트가 자기 것만 정리하면 남의 데이터 상태가 결과를 바꾸지 않는다
     private void deleteFixtureUsers() {
         FIXTURE_EMAILS.forEach(email ->
                 userRepository.findByEmail(email).ifPresent(userRepository::delete));

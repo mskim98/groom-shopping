@@ -25,6 +25,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final UserDetailsService userDetailsService;
 
+    // 측정 전용 필터. 조건이 안 맞으면 빈이 없으므로 Optional 로 받는다
+    private final java.util.Optional<groom.backend.infrastructure.security.LoadTestAuthBypassFilter> loadTestAuthBypassFilter;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -46,7 +49,26 @@ public class SecurityConfig {
                 .addFilterBefore(jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class); // JWT 필터를 스프링 시큐리티의 UsernamePasswordAuthenticationFilter 이전에 삽입하여 토큰 기반 인증 처리.
 
+        // 측정 전용 우회 필터는 빈이 있을 때만 끼운다 (dev + loadtest.auth-bypass.enabled)
+        // JWT 필터보다 앞에 둬야 토큰 없이 들어온 요청이 인증 없음으로 먼저 잘리지 않는다
+        loadTestAuthBypassFilter.ifPresent(filter ->
+                http.addFilterBefore(filter, JwtAuthenticationFilter.class));
+
         return http.build();
+    }
+
+    // 측정 전용 우회 필터도 같은 이중 등록 함정에 걸린다
+    // 서블릿 쪽이 먼저 돌면서 요청을 '처리됨' 으로 표시하면, 시큐리티 체인 안의 같은 필터가 건너뛴다
+    // 그 사이 SecurityContextHolderFilter 가 컨텍스트를 비우므로 인증이 통째로 사라져 401 이 된다 (실제로 겪었다)
+    @Bean
+    public FilterRegistrationBean<groom.backend.infrastructure.security.LoadTestAuthBypassFilter>
+            loadTestAuthBypassFilterRegistration(
+            java.util.Optional<groom.backend.infrastructure.security.LoadTestAuthBypassFilter> filter) {
+        FilterRegistrationBean<groom.backend.infrastructure.security.LoadTestAuthBypassFilter> registration =
+                new FilterRegistrationBean<>();
+        filter.ifPresent(registration::setFilter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     // JwtAuthenticationFilter 는 @Component 라 서블릿 컨테이너에 자동 등록되어 시큐리티 체인과 '이중 등록'된다.
