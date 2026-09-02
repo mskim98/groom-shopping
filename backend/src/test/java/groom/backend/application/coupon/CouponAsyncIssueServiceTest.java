@@ -1,6 +1,7 @@
 package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -38,6 +39,10 @@ import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
@@ -115,6 +120,43 @@ class CouponAsyncIssueServiceTest {
         // 키가 couponId 이면 한 쿠폰의 이벤트가 파티션 하나에만 쌓여 컨슈머를 늘려도 소용이 없다
         verify(couponIssueKafkaTemplate).send(eq("coupon-issue-requests"), eq("100"), anyString());
         verify(valueOps).set(anyString(), eq("WAITING"), any(Duration.class));
+    }
+
+    /**
+     * send 가 동기로 던지는 경로 - 되돌림이 콜백에만 걸려 있으면 이 갈래가 통째로 새어 나간다
+     *
+     * <p>2026-09-02 초당 5,000 도착 측정에서 실제로 발생했다. 새로 만든 토픽의 메타데이터를
+     * 1초 안에 못 받아 132건이 여기로 던졌고, 되돌림 로그가 0건인데 재고 132개가 잠겼다
+     */
+    @Test
+    @DisplayName("발행이 동기로 실패하면 배정한 자리를 되돌린다")
+    void enqueue_발행이_동기로_실패하면_자리를_되돌린다() {
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
+        given(couponIssueKafkaTemplate.send(anyString(), anyString(), anyString()))
+                .willThrow(new KafkaException("Send failed",
+                        new TimeoutException("Topic coupon-issue-requests not present in metadata after 1000 ms")));
+
+        assertThatThrownBy(() -> service.enqueue(1L, 100L))
+                .isInstanceOf(BusinessException.class);
+
+        // 되돌리지 않으면 그 수량은 아무도 받지 못한 채 잠긴다
+        verify(couponStockRedisRepository).rollbackIssue(1L, 100L);
+    }
+
+    @Test
+    @DisplayName("발행이 동기로 실패하면 상태를 실패로 남긴다")
+    void enqueue_발행이_동기로_실패하면_상태를_실패로_남긴다() {
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
+        given(couponIssueKafkaTemplate.send(anyString(), anyString(), anyString()))
+                .willThrow(new KafkaException("Send failed"));
+
+        assertThatThrownBy(() -> service.enqueue(1L, 100L))
+                .isInstanceOf(BusinessException.class);
+
+        // WAITING 으로 남겨 두면 폴링이 사유를 못 얻고 TTL 로 사라진다
+        verify(valueOps).set(anyString(), eq("FAILED:" + ErrorCode.SERVER_ERROR.name()), any(Duration.class));
     }
 
     @Test

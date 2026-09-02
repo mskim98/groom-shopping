@@ -135,9 +135,17 @@ public class CouponAsyncIssueService {
     /**
      * 요청 이벤트를 발행한다. 발행에 실패하면 배정한 자리를 되돌린다
      *
-     * <p>{@code send} 는 즉시 돌아오므로 브로커 장애는 여기서 예외로 나타나지 않는다
-     * 되돌리는 시점은 콜백이고, 그때까지 걸리는 시간의 상한은 {@code delivery.timeout.ms} 가 정한다
-     * 상한이 없으면 배정만 되고 아무도 확정하지 않는 자리가 소리 없이 쌓인다
+     * <p>실패는 두 갈래로 나타나고 <b>되돌림이 양쪽 모두에 걸려 있어야 한다</b>
+     * <ul>
+     *   <li>비동기 - 브로커가 받지 못한 경우. 콜백으로 오며 상한은 {@code delivery.timeout.ms} 가 정한다</li>
+     *   <li>동기 - 토픽 메타데이터를 못 받거나 프로듀서 버퍼가 차서 {@code max.block.ms} 를 넘긴 경우.
+     *       {@code send} 자체가 던지므로 <b>콜백이 등록되지 않는다</b></li>
+     * </ul>
+     *
+     * <p>동기 갈래를 콜백에만 맡겨 두면 자리를 배정한 채 아무도 되돌리지 않아 그 수량이 잠긴다.
+     * 2026-09-02 초당 5,000 도착 측정에서 실제로 발생 - 새로 만든 토픽의 메타데이터 대기가
+     * 1초를 넘겨 132건이 동기로 던졌고, 되돌림 로그는 0건인데 재고 132개가 잠겼다
+     * (발급 9,868 / 재고 10,000)
      */
     private void publishRequest(String requestId, Long couponId, Long userId) {
         CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId, true);
@@ -145,20 +153,31 @@ public class CouponAsyncIssueService {
         try {
             payload = objectMapper.writeValueAsString(event);
         } catch (Exception e) {
-            couponStockRedisRepository.rollbackIssue(couponId, userId);
+            recoverFailedPublish(requestId, couponId, userId, e);
             throw new BusinessException(ErrorCode.SERVER_ERROR);
         }
-        couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
-                .whenComplete((sent, error) -> {
-                    if (error == null) {
-                        return;
-                    }
-                    log.error("[COUPON_ENQUEUE_PUBLISH_FAILED] couponId={}, userId={}, error={}",
-                            couponId, userId, error.toString());
-                    couponStockRedisRepository.rollbackIssue(couponId, userId);
-                    redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
-                            STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
-                });
+        try {
+            couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
+                    .whenComplete((sent, error) -> {
+                        if (error == null) {
+                            return;
+                        }
+                        recoverFailedPublish(requestId, couponId, userId, error);
+                    });
+        } catch (Exception e) {
+            recoverFailedPublish(requestId, couponId, userId, e);
+            throw new BusinessException(ErrorCode.SERVER_ERROR);
+        }
+    }
+
+    // 배정한 자리를 되돌리고 상태를 실패로 남긴다
+    // 상태를 남기지 않으면 클라이언트의 폴링이 WAITING 만 보다가 TTL 로 사라져 실패 사유가 부재해진다
+    private void recoverFailedPublish(String requestId, Long couponId, Long userId, Throwable cause) {
+        log.error("[COUPON_ENQUEUE_PUBLISH_FAILED] couponId={}, userId={}, error={}",
+                couponId, userId, cause.toString());
+        couponStockRedisRepository.rollbackIssue(couponId, userId);
+        redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
+                STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
     }
 
     /**
