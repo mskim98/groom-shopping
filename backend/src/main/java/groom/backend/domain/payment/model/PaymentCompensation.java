@@ -22,7 +22,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 /**
  * Toss 승인 후 DB 처리(재고 차감 · 주문 상태 변경) 실패 시 Toss 취소 API로 자동 환불을 시도하고, 그 취소마저 실패한 경우 이 테이블에 기록한다.
- * {@code PaymentCompensationScheduler}가 주기적으로 {@code status = PENDING | FAILED} 이고 {@code nextRetryAt}이 도래한 건을 다시 시도
+ * {@code PaymentCompensationScheduler}가 주기적으로 {@code status = PENDING | FAILED} 이고 {@code nextRetryAt}이 지난 건을 다시 시도
  */
 @Entity
 @Table(name = "payment_compensation")

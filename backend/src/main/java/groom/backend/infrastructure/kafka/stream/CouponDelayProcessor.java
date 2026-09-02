@@ -15,7 +15,7 @@ import org.apache.kafka.streams.state.KeyValueStore;
  * 쿠폰 지연 비활성화 처리기 (Kafka Streams 신 Processor API).
  * <p>
  * 입력 토픽의 이벤트를 즉시 내보내지 않고 StateStore 에 '실행 예정 초' 를 키로 적재한 뒤,
- * WALL_CLOCK_TIME punctuator 가 1초마다 도래한 건만 출력 토픽으로 forward 한다.
+ * WALL_CLOCK_TIME punctuator 가 1초마다 실행 시각이 지난 건만 출력 토픽으로 forward 한다.
  * WALL_CLOCK 을 쓰는 이유는 STREAM_TIME 이 신규 레코드 없이는 전진하지 않아,
  * 유입이 멈춘 구간에서 대기 중인 쿠폰이 영원히 비활성화되지 않기 때문이다.
  */
@@ -61,7 +61,7 @@ public class CouponDelayProcessor implements Processor<String, CouponDelayEvent,
     stateStore.put(executionSecond, wrapper);
   }
 
-  // 도래한 초만 range 로 훑어 forward 하고 즉시 지운다. 지우지 않으면 다음 초에 중복 처리된다
+  // 실행 시각이 지난 초만 range 로 훑어 forward 하고 즉시 지운다. 지우지 않으면 다음 초에 중복 처리된다
   private void checkStoreAndForward(long wallClockTime) {
     long currentSecond = wallClockTime / 1000;
     try (KeyValueIterator<Long, CouponDelayEventListWrapper> iter = stateStore.range(0L, currentSecond)) {
