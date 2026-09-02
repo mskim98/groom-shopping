@@ -59,6 +59,57 @@ const POLL_INTERVAL_S = parseFloat(__ENV.POLL_INTERVAL_S || '1');
 const STRATEGY = __ENV.STRATEGY || 'unknown';
 const ROUND = __ENV.ROUND || '0';
 
+// 부하 모델 선택 - 기본값은 기존 shared-iterations 라 앞선 회차가 그대로 재현된다
+//
+// shared  : 고정 VU 가 응답을 받아야 다음 요청을 보낸다(닫힌 모델).
+//           요청 속도가 서버가 아니라 VU 수 ÷ 반복 1회 소요로 정해지므로,
+//           반복 안에 폴링 sleep 이 있으면 그 값이 곧 도착률의 상한이 된다
+//           (실측: 500 VU ÷ 1초 폴링 = 초당 500건에서 멈춤)
+// arrival : 도착률을 직접 지정한다(열린 모델). 서버가 못 받으면 k6 가
+//           dropped_iterations 로 보고하므로 포화 지점이 드러난다
+const RUSH_EXECUTOR = __ENV.RUSH_EXECUTOR || 'shared';
+const ARRIVAL_RATE = parseInt(__ENV.ARRIVAL_RATE || '5000', 10);
+const ARRIVAL_DURATION = __ENV.ARRIVAL_DURATION || '20s';
+// 열린 모델은 응답이 늦어지면 VU 를 더 꺼내 쓴다. 상한이 낮으면 도착률을 못 채우고
+// 그것이 서버 포화와 구별되지 않으므로 넉넉히 잡는다
+const PRE_VUS = parseInt(__ENV.PRE_VUS || '2000', 10);
+const MAX_VUS = parseInt(__ENV.MAX_VUS || '8000', 10);
+
+// spike : 실제 이벤트 모양(오픈 직후 급등 - 유지 - 감쇠). 총량은 약 10만 건으로 맞춘다
+// 등간격 유입은 총량과 평균 속도는 재현하지만 모양이 평평해, 순간 몰림에서만 나는 거동을 못 본다
+const SPIKE_PEAK = parseInt(__ENV.SPIKE_PEAK || '5000', 10);
+const spikeStages = [
+  { duration: '1s', target: SPIKE_PEAK },                        // 오픈 - 급등
+  { duration: '8s', target: SPIKE_PEAK },                        // 최고치 유지
+  { duration: '12s', target: Math.round(SPIKE_PEAK / 5) },       // 재고 소진 뒤 감쇠
+  { duration: '22s', target: Math.round(SPIKE_PEAK / 5) },       // 잔여 유입
+];
+
+const rushScenario = RUSH_EXECUTOR === 'spike'
+  ? {
+      executor: 'ramping-arrival-rate',
+      startRate: 0,
+      timeUnit: '1s',
+      stages: spikeStages,
+      preAllocatedVUs: PRE_VUS,
+      maxVUs: MAX_VUS,
+    }
+  : RUSH_EXECUTOR === 'arrival'
+  ? {
+      executor: 'constant-arrival-rate',
+      rate: ARRIVAL_RATE,
+      timeUnit: '1s',
+      duration: ARRIVAL_DURATION,
+      preAllocatedVUs: PRE_VUS,
+      maxVUs: MAX_VUS,
+    }
+  : {
+      executor: 'shared-iterations',
+      vus: VUS,
+      iterations: ITERATIONS,
+      maxDuration: MAX_DURATION,
+    };
+
 const issueLatency = new Trend('issue_latency', true);   // 발급 요청의 서버 응답시간(ms)
 const confirmLatency = new Trend('confirm_latency', true); // 접수부터 확정 관측까지(ms). 비동기 라운드 전용
 // 인증은 부하에서 뺀다. 요청마다 로그인하면 사용자 조회가 요청당 2회(로그인 + 인증 필터) 붙어
@@ -84,12 +135,7 @@ const bystanderLat = new Trend('bystander_latency', true);
 
 export const options = {
   scenarios: {
-    coupon_rush: {
-      executor: 'shared-iterations',
-      vus: VUS,
-      iterations: ITERATIONS,
-      maxDuration: MAX_DURATION,
-    },
+    coupon_rush: rushScenario,
     bystander: {
       executor: 'constant-arrival-rate',
       rate: 20,
