@@ -39,3 +39,6 @@ k6/scripts/lt_user_ids.txt
 # 측정 절차의 산출물이라 저장소에 넣지 않는다. 로컬 파일은 그대로 둔다
 scripts/
 k6/
+
+# docgraph 문서 그래프 색인 (파생본, ~/.claude/rules/docgraph.md)
+.docgraph/
