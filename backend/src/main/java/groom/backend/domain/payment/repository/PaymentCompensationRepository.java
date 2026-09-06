@@ -18,4 +18,7 @@ public interface PaymentCompensationRepository {
     // ① status in (PENDING, FAILED) AND nextRetryAt <= now — 정상 재시도 대상
     // ② status = PROCESSING AND updatedAt <= staleThreshold — 선점한 인스턴스가 죽어 회수 대상
     List<PaymentCompensation> findRetryable(LocalDateTime now, LocalDateTime staleThreshold, int limit);
+
+    // 이번 회차가 조회하는 시점의 재시도 대기 전체 수(페이지 상한 없음). carried = due - processed 계측용
+    long countRetryable(LocalDateTime now, LocalDateTime staleThreshold);
 }

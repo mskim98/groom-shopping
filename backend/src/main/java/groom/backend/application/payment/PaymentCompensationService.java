@@ -10,6 +10,8 @@ import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -20,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -51,6 +55,13 @@ public class PaymentCompensationService {
     private final PaymentCompensationBatchProperties batchProperties;
     // 회차 시작에 회로 상태를 읽어 OPEN 이면 쉬기 위해 주입
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    // 적재·처리 지표 노출용
+    private final MeterRegistry meterRegistry;
+
+    // 회차 지표 - 게이지가 가리키는 값. 게이지는 이 AtomicLong 을 읽으므로 @PostConstruct 등록 여부와 무관하게 갱신된다
+    private final AtomicLong dueGauge = new AtomicLong(0);      // 회차 시작 시점의 재시도 대기 전체 수
+    private final AtomicLong carriedGauge = new AtomicLong(0);  // due - processed. 한 페이지로 못 비운 적재
+    private final AtomicLong givenUpTotal = new AtomicLong(0);  // 재시도 한도 초과로 최종 포기한 누적 수
 
     /**
      * 기동 시 배치 설정을 검증한다. 어긋나면 기동을 실패시켜 잘못된 값으로 배치가 도는 것을 막는다.
@@ -67,6 +78,13 @@ public class PaymentCompensationService {
         // 회로는 resilience4j 가 첫 호출에 lazily 생성하므로, 여기서 이름으로 미리 만들어 회차 조회가 항상 성립하게 한다.
         // yml 에 정의가 없으면 기본 설정으로 생성되므로 오타는 잡지 못한다 - 이 한계는 보고서에 명시
         batchProperties.getSkipWhenOpen().forEach(circuitBreakerRegistry::circuitBreaker);
+
+        Gauge.builder("payment_compensation_due", dueGauge, AtomicLong::get)
+                .description("회차 시작 시점의 재시도 대기 전체 수").register(meterRegistry);
+        Gauge.builder("payment_compensation_carried", carriedGauge, AtomicLong::get)
+                .description("carried = due - processed. 한 페이지로 못 비운 적재").register(meterRegistry);
+        Gauge.builder("payment_compensation_given_up_total", givenUpTotal, AtomicLong::get)
+                .description("재시도 한도 초과로 최종 포기(GIVEN_UP)한 누적 수").register(meterRegistry);
     }
 
     // 토스가 살아 있다는 신호(429·403·409)를 받았을 때 다음 시도까지 미루는 시간
@@ -126,10 +144,16 @@ public class PaymentCompensationService {
             return;
         }
 
+        // 적재 계수 - 이번 회차가 마주한 전체 대기 수(페이지 상한 없음). 선점이 PROCESSING 으로 바꾸기 전에 센다
+        LocalDateTime now = LocalDateTime.now();
+        long due = compensationRepository.countRetryable(now, now.minus(Duration.ofMillis(retryDelayMs * 3)));
+
         // 프록시 경유라야 선점 조회의 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
         List<PaymentCompensation> retryables = selfProvider.getObject().acquireRetryableBatch();
 
         if (retryables.isEmpty()) {
+            dueGauge.set(due);
+            carriedGauge.set(Math.max(0, due));
             return;
         }
 
@@ -138,6 +162,7 @@ public class PaymentCompensationService {
 
         // 한 페이지를 워커 수만큼 동시에 취소한다. 가상 스레드 실행기 + Semaphore 로 동시 PG 호출을 workers 로 제한.
         // 건별 결과는 executeCompensation 안의 recordResult(REQUIRES_NEW) 가 독립 커밋한다
+        AtomicInteger succeeded = new AtomicInteger(0);
         Semaphore gate = new Semaphore(batchProperties.getWorkers());
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<?>> futures = new ArrayList<>();
@@ -145,7 +170,9 @@ public class PaymentCompensationService {
                 futures.add(executor.submit(() -> {
                     gate.acquire();
                     try {
-                        executeCompensation(compensation);
+                        if (executeCompensation(compensation)) {
+                            succeeded.incrementAndGet();
+                        }
                     } finally {
                         gate.release();
                     }
@@ -159,6 +186,18 @@ public class PaymentCompensationService {
                     log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] {}", e.getMessage());
                 }
             }
+        }
+
+        // 적재 판정 - 한 페이지로 대기를 못 비웠으면(carried > 0) PG 장애로 보고 정지 플래그 회로를 강제 OPEN.
+        // 다음 회차는 그 회로가 OPEN 이라 쉬고, 30초 뒤 HALF_OPEN 회차의 한 페이지가 PG 회복을 확인한다
+        long carried = Math.max(0, due - retryables.size());
+        dueGauge.set(due);
+        carriedGauge.set(carried);
+        boolean overloadedButHealthy = batchProperties.isOpenOnCarriedOnlyWhenNoSuccess() && succeeded.get() > 0;
+        if (carried > 0 && !overloadedButHealthy) {
+            circuitBreakerRegistry.circuitBreaker(batchProperties.getOpenOnCarried()).transitionToOpenState();
+            log.warn("[PAYMENT_COMPENSATION_BATCH_CARRIED] carried={} (due={} processed={} succeeded={}) - {} 강제 OPEN",
+                    carried, due, retryables.size(), succeeded.get(), batchProperties.getOpenOnCarried());
         }
     }
 
@@ -189,7 +228,7 @@ public class PaymentCompensationService {
     // 이 메서드에는 트랜잭션을 두지 않는다.
     // PG 응답을 기다리는 동안 DB 커넥션을 쥐면 실패 1건이 취소 타임아웃(30초)만큼 풀을 점유해
     // 풀 50 이 초당 1.7건의 실패에 마른다. 호출은 밖에서, 기록만 REQUIRES_NEW 로 짧게 한다
-    public void executeCompensation(PaymentCompensation compensation) {
+    public boolean executeCompensation(PaymentCompensation compensation) {
         // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
         // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를
         // 새 요청으로 오인해 이중 환불이 난다 -> 멱등키가 목적을 잃는다
@@ -205,8 +244,8 @@ public class PaymentCompensationService {
         } catch (Exception e) {
             failure = e;
         }
-        // 프록시 경유라야 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
-        selfProvider.getObject().recordResult(compensation, failure);
+        // 프록시 경유라야 @Transactional(REQUIRES_NEW) 가 실제로 적용된다. 성공(SUCCEEDED) 여부를 돌려준다
+        return selfProvider.getObject().recordResult(compensation, failure);
     }
 
     /**
@@ -215,14 +254,14 @@ public class PaymentCompensationService {
     // @Transactional(REQUIRES_NEW) : 환불 결과 기록을 항상 독립 커밋한다.
     // 호출부(compensate·배치)의 트랜잭션에 합류하면 결과 기록이 함께 롤백될 수 있다.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void recordResult(PaymentCompensation compensation, Exception failure) {
+    public boolean recordResult(PaymentCompensation compensation, Exception failure) {
         if (failure == null) {
             compensation.markSucceeded();
             compensationRepository.save(compensation);
 
             log.info("[PAYMENT_COMPENSATION_SUCCESS] PaymentKey: {}, RetryCount: {}",
                     compensation.getPaymentKey(), compensation.getRetryCount());
-            return;
+            return true;
         }
 
         // 토스가 이미 목적을 달성한 응답 - 실패가 아니라 성공으로 기록한다
@@ -232,17 +271,17 @@ public class PaymentCompensationService {
 
             log.info("[PAYMENT_COMPENSATION_ALREADY_CANCELED] PaymentKey: {}",
                     compensation.getPaymentKey());
-            return;
+            return true;
         }
 
-        // 토스가 살아 있다는 신호 - retryCount 는 올리지 않고 다음 시각만 미룬다
+        // 토스가 살아 있다는 신호 - retryCount 는 올리지 않고 다음 시각만 미룬다. 성공은 아니므로 false
         if (failure instanceof TossRetryLaterException) {
             compensation.deferWithoutCounting(Duration.ofMillis(retryLaterDeferMs));
             compensationRepository.save(compensation);
 
             log.warn("[PAYMENT_COMPENSATION_RETRY_LATER] PaymentKey: {}, NextRetryAt: {}",
                     compensation.getPaymentKey(), compensation.getNextRetryAt());
-            return;
+            return false;
         }
 
         compensation.markFailed(failure.getMessage());
@@ -254,6 +293,7 @@ public class PaymentCompensationService {
 
         // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
         if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
+            givenUpTotal.incrementAndGet();
             dlqProducer.publish(new PaymentCompensationDlqEvent(
                     compensation.getId(),
                     compensation.getPaymentId(),
@@ -264,5 +304,6 @@ public class PaymentCompensationService {
                     compensation.getRetryCount(),
                     LocalDateTime.now()));
         }
+        return false;
     }
 }

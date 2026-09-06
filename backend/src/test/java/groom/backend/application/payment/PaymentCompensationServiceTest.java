@@ -3,6 +3,7 @@ package groom.backend.application.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -32,6 +33,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -54,6 +56,8 @@ class PaymentCompensationServiceTest {
     private CircuitBreakerRegistry circuitBreakerRegistry;
     @Spy
     private PaymentCompensationBatchProperties batchProperties = new PaymentCompensationBatchProperties();
+    @Spy
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
     @InjectMocks
     private PaymentCompensationService service;
 
@@ -231,6 +235,53 @@ class PaymentCompensationServiceTest {
         service.acquireRetryableBatch();
 
         verify(compensationRepository).findRetryable(any(), any(), eq(37));
+    }
+
+    // ── Task 4: 적재 판정(carried > 0 → 강제 OPEN) ──
+
+    private PaymentCompensationService setUpBatchRound(long due, java.util.List<PaymentCompensation> page) {
+        PaymentCompensationService proxy = proxy();
+        given(proxy.acquireRetryableBatch()).willReturn(page);
+        given(compensationRepository.countRetryable(any(), any())).willReturn(due);
+        return proxy;
+    }
+
+    @Test
+    @DisplayName("한 페이지로 대기를 못 비우면(carried > 0) open-on-carried 회로를 강제 OPEN 한다")
+    void forcesOpenWhenCarriedPositive() {
+        // due 300, 이번 회차가 가져간 페이지 100 → carried 200
+        setUpBatchRound(300, java.util.List.of(newCompensation(5), newCompensation(5)));
+        CircuitBreaker flag = mock(CircuitBreaker.class);
+        given(circuitBreakerRegistry.circuitBreaker("toss-cancel")).willReturn(flag);
+
+        service.retryPendingCompensations();
+
+        verify(flag).transitionToOpenState();
+    }
+
+    @Test
+    @DisplayName("한 페이지로 대기를 다 비우면(carried == 0) 강제 OPEN 하지 않는다")
+    void doesNotForceOpenWhenCarriedZero() {
+        // due 2 = 페이지 2 → carried 0
+        setUpBatchRound(2, java.util.List.of(newCompensation(5), newCompensation(5)));
+
+        service.retryPendingCompensations();
+
+        // open-on-carried 회로를 아예 조회하지 않는다
+        verify(circuitBreakerRegistry, never()).circuitBreaker("toss-cancel");
+    }
+
+    @Test
+    @DisplayName("보조 조건(onlyWhenNoSuccess)이 켜지면 그 페이지에 성공이 있으면 carried > 0 이어도 강제 OPEN 하지 않는다")
+    void skipsForceOpenWhenSuccessAndOnlyWhenNoSuccess() {
+        batchProperties.setOpenOnCarriedOnlyWhenNoSuccess(true);
+        PaymentCompensationService proxy = setUpBatchRound(300, java.util.List.of(newCompensation(5), newCompensation(5)));
+        // recordResult 가 성공(true)을 돌려주면 succeeded > 0 이 되어 강제 OPEN 을 건너뛴다
+        given(proxy.recordResult(any(), any())).willReturn(true);
+
+        service.retryPendingCompensations();
+
+        verify(circuitBreakerRegistry, never()).circuitBreaker("toss-cancel");
     }
 
     // ── T5: 선점 조회는 배치와 독립된 REQUIRES_NEW 트랜잭션이다 ──

@@ -54,4 +54,20 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
                 .setParameter("limit", limit)
                 .getResultList();
     }
+
+    // 적재 계수용 - 선점 SQL 과 같은 WHERE 이나 LIMIT·FOR UPDATE 없이 총량만 센다
+    private static final String COUNT_RETRYABLE_SQL = """
+            SELECT count(*) FROM payment_compensation
+            WHERE (status IN ('PENDING', 'FAILED') AND next_retry_at <= :now)
+               OR (status = 'PROCESSING' AND updated_at <= :staleThreshold)
+            """;
+
+    @Override
+    public long countRetryable(LocalDateTime now, LocalDateTime staleThreshold) {
+        Object result = entityManager.createNativeQuery(COUNT_RETRYABLE_SQL)
+                .setParameter("now", now)
+                .setParameter("staleThreshold", staleThreshold)
+                .getSingleResult();
+        return ((Number) result).longValue();
+    }
 }
