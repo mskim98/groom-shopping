@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum CompensationStatus {
     PENDING("재시도 대기"),
+    PROCESSING("배치 인스턴스가 선점해 처리 중"),
     SUCCEEDED("보상 성공"),
     FAILED("보상 실패 (재시도 대상)"),
     GIVEN_UP("재시도 한도 초과 - 수동 처리 대상");

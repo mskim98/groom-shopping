@@ -70,4 +70,54 @@ class PaymentCompensationTransitionTest {
         assertThat(compensation.getNextRetryAt()).isAfter(java.time.LocalDateTime.now().plusMinutes(1));
         assertThat(compensation.getNextRetryAt()).isBefore(java.time.LocalDateTime.now().plusMinutes(3));
     }
+
+    // ── T5: PROCESSING 전이 (다중 인스턴스 선점) ──
+
+    @Test
+    @DisplayName("PENDING 은 선점되어 PROCESSING 으로 전이할 수 있다")
+    void pendingToProcessingIsAllowed() {
+        PaymentCompensation compensation = newCompensation(5);
+        assertThatCode(compensation::markProcessing).doesNotThrowAnyException();
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("FAILED 도 선점되어 PROCESSING 으로 전이할 수 있다")
+    void failedToProcessingIsAllowed() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markFailed("1회차 실패");
+        assertThatCode(compensation::markProcessing).doesNotThrowAnyException();
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("PROCESSING 에서 성공 기록으로 전이할 수 있다")
+    void processingToSucceededIsAllowed() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        assertThatCode(compensation::markSucceeded).doesNotThrowAnyException();
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
+    }
+
+    @Test
+    @DisplayName("PROCESSING 에서 실패 기록으로 전이할 수 있다")
+    void processingToFailedIsAllowed() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        assertThatCode(() -> compensation.markFailed("취소 호출 실패")).doesNotThrowAnyException();
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("SUCCEEDED 는 종단이라 PROCESSING 으로 되돌릴 수 없다")
+    void succeededRejectsProcessing() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markSucceeded();
+
+        assertThatThrownBy(compensation::markProcessing)
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
+    }
 }

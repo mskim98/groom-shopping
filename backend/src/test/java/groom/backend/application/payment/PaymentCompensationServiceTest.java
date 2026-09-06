@@ -157,12 +157,35 @@ class PaymentCompensationServiceTest {
     void batchRetryRecordsResultViaProxy() {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation pending = newCompensation(5);
-        given(compensationRepository.findRetryable(any(LocalDateTime.class), anyInt()))
-                .willReturn(List.of(pending));
+        given(proxy.acquireRetryableBatch()).willReturn(List.of(pending));
 
         service.retryPendingCompensations();
 
         verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
         verify(proxy).recordResult(pending, null);
+    }
+
+    // ── T5: 선점 조회는 배치와 독립된 REQUIRES_NEW 트랜잭션이다 ──
+
+    @Test
+    @DisplayName("배치는 선점 조회를 프록시로 호출하고, 선점 조회 자체는 REQUIRES_NEW 트랜잭션이다")
+    void retryPendingCompensations_delegatesAcquireToProxy() {
+        PaymentCompensationService proxy = proxy();
+        given(proxy.acquireRetryableBatch()).willReturn(List.of());
+
+        service.retryPendingCompensations();
+
+        verify(proxy).acquireRetryableBatch();
+        verify(compensationRepository, never()).findRetryable(any(), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("acquireRetryableBatch 는 REQUIRES_NEW 트랜잭션이다")
+    void acquireRetryableBatchIsTransactional() throws NoSuchMethodException {
+        Method acquire = PaymentCompensationService.class.getMethod("acquireRetryableBatch");
+
+        Transactional tx = acquire.getAnnotation(Transactional.class);
+        assertThat(tx).isNotNull();
+        assertThat(tx.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
     }
 }

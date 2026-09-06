@@ -6,12 +6,14 @@ import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -37,6 +39,11 @@ public class PaymentCompensationService {
     private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
+
+    // 배치 주기와 값을 맞춘다(@Scheduled 의 fixedDelayString 과 동일한 프로퍼티·기본값)
+    // 죽은 인스턴스 회수 기준(staleThreshold)이 이 값의 3배이므로 항상 같은 값을 참조해야 한다
+    @Value("${payment.compensation.retry-delay-ms:30000}")
+    private long retryDelayMs = 30000;
 
     /**
      * 즉시 보상(환불)을 시도한다. 실패 시 재시도 대상으로 기록
@@ -78,8 +85,8 @@ public class PaymentCompensationService {
     // 직전 실행이 끝난 뒤 지정 시간(기본 30초) 뒤 다시 실행 → 일시적 네트워크 오류로 못한 환불을 재시도.
     @Scheduled(fixedDelayString = "${payment.compensation.retry-delay-ms:30000}")
     public void retryPendingCompensations() {
-        List<PaymentCompensation> retryables = compensationRepository.findRetryable(
-                LocalDateTime.now(), RETRY_BATCH_SIZE);
+        // 프록시 경유라야 선점 조회의 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
+        List<PaymentCompensation> retryables = selfProvider.getObject().acquireRetryableBatch();
 
         if (retryables.isEmpty()) {
             return;
@@ -96,6 +103,17 @@ public class PaymentCompensationService {
                         compensation.getId(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * 선점 조회 - SKIP LOCKED 로 이번 배치가 처리할 행을 골라 PROCESSING 으로 갱신·독립 커밋한다.
+     * 죽은 인스턴스가 PROCESSING 에 묶어 둔 행은 staleThreshold(배치 주기의 3배) 를 지나면 다시 선점 대상이 된다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<PaymentCompensation> acquireRetryableBatch() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime staleThreshold = now.minus(Duration.ofMillis(retryDelayMs * 3));
+        return compensationRepository.findRetryable(now, staleThreshold, RETRY_BATCH_SIZE);
     }
 
     /**
