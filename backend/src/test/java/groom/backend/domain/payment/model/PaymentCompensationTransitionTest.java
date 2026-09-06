@@ -88,6 +88,8 @@ class PaymentCompensationTransitionTest {
         assertThat(compensation.getStatus()).isEqualTo(statusBefore);
         assertThat(compensation.getRetryCount()).isEqualTo(retryCountBefore);
         assertThat(compensation.getNextRetryAt()).isAfterOrEqualTo(deferredFrom.plusSeconds(45));
+    }
+
     // ── T5: PROCESSING 전이 (다중 인스턴스 선점) ──
 
     @Test
