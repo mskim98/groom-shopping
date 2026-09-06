@@ -98,9 +98,10 @@ class PaymentCompensationRedriveIntegrationTest {
         // GIVEN_UP 이 아닌 행 - 런북 대상 id 목록에 함께 포함시켜, 이 행이 안전한 이유가
         // "id 목록에서 뺐기 때문" 이 아니라 "런북 WHERE 의 status 조건" 임을 검증한다
         UUID otherPaymentId = insertPaymentRow();
+        String untouchedPaymentKey = "pk-untouched-" + UUID.randomUUID();
         PaymentCompensation succeeded = compensationRepository.save(PaymentCompensation.builder()
                 .paymentId(otherPaymentId)
-                .paymentKey("pk-untouched-" + UUID.randomUUID())
+                .paymentKey(untouchedPaymentKey)
                 .amount(2000)
                 .reason("DB 후처리 실패")
                 .maxRetryCount(5)
@@ -133,6 +134,12 @@ class PaymentCompensationRedriveIntegrationTest {
         PaymentCompensation untouched = compensationRepository.findById(succeeded.getId()).orElseThrow();
         assertThat(untouched.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
         assertThat(untouched.getRetryCount()).isEqualTo(0);
+
+        // 상태값만으로는 "재처리됐지만 우연히 같은 결과에 도달" 을 가려내지 못한다(취소 API 가 항상
+        // 성공 응답을 주는 스텁이라, 대상 밖 행이 재처리돼도 종국엔 같은 SUCCEEDED/retryCount=0 에
+        // 도달할 수 있다). 그 행의 결제키로 취소 요청 자체가 아예 없었는지를 직접 확인해야
+        // "런북 WHERE 의 status 조건이 막았다" 는 것을 증명한다
+        WIRE_MOCK.verify(0, postRequestedFor(urlPathEqualTo("/v1/payments/" + untouchedPaymentKey + "/cancel")));
     }
 
     private String loadRunbookSql() throws IOException {
