@@ -87,10 +87,17 @@ public class PaymentCompensation {
 
     // 허용 전이표. SUCCEEDED·GIVEN_UP 은 종단이라 어떤 전이도 나가지 않는다
     // 조회 쿼리(findRetryable)의 상태 조건에만 의존하면 새 호출부가 생기는 순간 뚫린다
+    // PROCESSING 은 배치 인스턴스가 선점 조회로 붙이는 상태다. 선점 자체는 네이티브
+    // UPDATE...RETURNING 으로 커밋되어 이 전이표를 거치지 않지만, 이 표는 이후 결과
+    // 기록(markSucceeded·markFailed)이 PROCESSING 에서 나가는 것을 허용하는 데 쓰인다
     private static final Map<CompensationStatus, Set<CompensationStatus>> ALLOWED_TRANSITIONS = Map.of(
             CompensationStatus.PENDING, EnumSet.of(
-                    CompensationStatus.SUCCEEDED, CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+                    CompensationStatus.PROCESSING, CompensationStatus.SUCCEEDED,
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
             CompensationStatus.FAILED, EnumSet.of(
+                    CompensationStatus.PROCESSING, CompensationStatus.SUCCEEDED,
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+            CompensationStatus.PROCESSING, EnumSet.of(
                     CompensationStatus.SUCCEEDED, CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
             CompensationStatus.SUCCEEDED, EnumSet.noneOf(CompensationStatus.class),
             CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class));
@@ -102,6 +109,11 @@ public class PaymentCompensation {
             throw new BusinessException(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
         }
         this.status = next;
+    }
+
+    /** 배치 인스턴스가 이 레코드를 선점했음을 엔티티 상태에도 반영한다 */
+    public void markProcessing() {
+        transitionTo(CompensationStatus.PROCESSING);
     }
 
     public void markSucceeded() {
