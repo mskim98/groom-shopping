@@ -164,18 +164,19 @@ class PaymentCompensationServiceTest {
     // ── 진입점 ──
 
     @Test
-    @DisplayName("보상 의도 기록(프록시) → PG 호출 → 결과 기록(프록시) 순서로 진행된다")
-    void intentIsRecordedBeforeExecution() {
+    @DisplayName("결정 C — compensate 는 대기 기록만 하고 PG 취소는 하지 않는다(배치가 유일 취소 경로)")
+    void compensateOnlyRecordsIntentAndDoesNotCancel() {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation recorded = newCompensation(5);
         given(proxy.recordCompensationIntent(any(), anyString(), any(), anyString())).willReturn(recorded);
 
         service.compensate(UUID.randomUUID(), "pk-1", 1000, "DB 후처리 실패");
 
-        InOrder inOrder = inOrder(proxy, tossPaymentClient);
-        inOrder.verify(proxy).recordCompensationIntent(any(), anyString(), any(), anyString());
-        inOrder.verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
-        inOrder.verify(proxy).recordResult(recorded, null);
+        // 요청 스레드가 취소 응답을 기다리면 커넥션이 취소 지연만큼 물린다 - 취소는 배치가 한다
+        verify(proxy).recordCompensationIntent(any(), anyString(), any(), anyString());
+        verify(tossPaymentClient, never()).cancelPayment(anyString(), anyString(), anyString());
+        verify(proxy, never()).executeCompensation(any());
+        verify(proxy, never()).recordResult(any(), any());
     }
 
     @Test

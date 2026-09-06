@@ -60,16 +60,15 @@ public class PaymentCompensationService {
      * @param amount        승인 금액 (기록용)
      * @param failureReason 내부 DB 실패 원인
      */
-    // 이 메서드 자체는 트랜잭션을 갖지 않는다.
-    // 의도 기록(INSERT)과 실행(Toss 취소)을 별도 트랜잭션으로 쪼갠다. 같은 트랜잭션에 두면
-    // 실행이 무너질 때 채무 기록 자체가 롤백돼 배치가 주울 대상이 사라진다
+    // 결정 C(2026-09-06) - 대기 기록만 하고 즉시 취소를 하지 않는다.
+    // 여기서 PG 취소를 인라인으로 호출하면 실패를 처리하는 요청 스레드가 취소 응답을 기다리는 동안
+    // 요청 커넥션을 취소 지연(최대 30초)만큼 물어 풀이 마른다. PENDING(nextRetryAt=now) 으로 남기면
+    // retryPendingCompensations 배치가 다음 회차에 주워 트랜잭션 밖에서 취소한다. 취소 경로가 배치 하나뿐
     public void compensate(UUID paymentId, String paymentKey, Integer amount, String failureReason) {
-        PaymentCompensation compensation = selfProvider.getObject()
+        selfProvider.getObject()
                 .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
 
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
-
-        executeCompensation(compensation);
     }
 
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */

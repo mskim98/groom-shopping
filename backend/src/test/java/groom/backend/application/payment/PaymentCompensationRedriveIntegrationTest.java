@@ -76,6 +76,9 @@ class PaymentCompensationRedriveIntegrationTest {
     @BeforeEach
     void resetWireMock() {
         WIRE_MOCK.resetAll();
+        // 다른 통합 시험이 한 DB 를 공유하면 그들이 남긴 대기 행이 배치 한 회차(50건)를 채워
+        // 이 시험의 재구동 행이 뽑히지 않는다. 시작마다 보상 장부를 비워 회차 순서 의존을 없앤다
+        jdbcTemplate.update("DELETE FROM payment_compensation");
     }
 
     @Test
