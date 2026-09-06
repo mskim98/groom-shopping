@@ -11,6 +11,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.payment.dto.TossPaymentConfirmRequest;
+import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -46,6 +47,7 @@ import org.springframework.web.client.RestTemplate;
 class TossPaymentResilienceIntegrationTest {
 
     private static final String CONFIRM_PATH = "/v1/payments/confirm";
+    private static final String CANCEL_PATH = "/v1/payments/pk-cancel/cancel";
 
     // 수동 생명주기 WireMock: static 블록에서 시작해 @DynamicPropertySource 가 포트를 안전하게 참조하도록 한다.
     private static final WireMockServer WIRE_MOCK = new WireMockServer(options().dynamicPort());
@@ -86,6 +88,7 @@ class TossPaymentResilienceIntegrationTest {
     void resetState() {
         WIRE_MOCK.resetAll();
         circuitBreakerRegistry.circuitBreaker("toss").reset();
+        circuitBreakerRegistry.circuitBreaker("toss-cancel").reset();
     }
 
     @Test
@@ -109,6 +112,24 @@ class TossPaymentResilienceIntegrationTest {
 
         // then - 8초를 다 기다리지 않고 5s 부근에서 컷(여유 포함 6.5s 미만)
         assertThat(elapsed).isLessThan(6500);
+    }
+
+    // 취소는 승인과 타임아웃을 갈라 둔다. 토스 문서가 장애 시 30초를 권장하고, 5초로 자르면 정상 처리 중인
+    // 취소를 실패로 오판해 보상 장부에 채무가 남는다. 승인(5s)이 그대로인지는 위 테스트가 지킨다
+    @Test
+    @DisplayName("③ 취소는 승인 타임아웃(5s)보다 긴 지연(7s)에도 컷되지 않는다 - 취소 전용 타임아웃 30s")
+    void cancel_은_승인보다_긴_응답타임아웃을_가진다() {
+        WIRE_MOCK.stubFor(post(urlPathEqualTo(CANCEL_PATH))
+                .willReturn(aResponse().withFixedDelay(7000).withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"paymentKey\":\"pk-cancel\",\"status\":\"CANCELED\"}")));
+
+        long start = System.currentTimeMillis();
+        TossPaymentResponse response = tossPaymentClient.cancelPayment("pk-cancel", "테스트 취소", "idem-cancel");
+        long elapsed = System.currentTimeMillis() - start;
+
+        assertThat(response.getPaymentKey()).isEqualTo("pk-cancel");
+        assertThat(elapsed).isGreaterThanOrEqualTo(7000);
     }
 
     @Test

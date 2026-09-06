@@ -11,8 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -24,10 +24,18 @@ import org.springframework.web.client.RestTemplate;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class TossPaymentClientImpl implements TossPaymentClient {
 
     private final RestTemplate restTemplate;
+    // 취소 전용(응답 한도 30s · 별도 풀). 승인 템플릿(5s)과 갈라 두는 이유는 RestTemplateConfig 참고
+    private final RestTemplate cancelRestTemplate;
+
+    // Lombok @RequiredArgsConstructor 는 @Qualifier 를 생성자 파라미터로 복사하지 않아 직접 쓴다
+    public TossPaymentClientImpl(RestTemplate restTemplate,
+                                 @Qualifier("tossCancelRestTemplate") RestTemplate cancelRestTemplate) {
+        this.restTemplate = restTemplate;
+        this.cancelRestTemplate = cancelRestTemplate;
+    }
 
     @Value("${payment.toss.secret-key}")
     private String secretKey;
@@ -103,7 +111,7 @@ public class TossPaymentClientImpl implements TossPaymentClient {
                 paymentKey, cancelReason, idempotencyKey);
 
         try {
-            ResponseEntity<TossPaymentResponse> response = restTemplate.exchange(
+            ResponseEntity<TossPaymentResponse> response = cancelRestTemplate.exchange(
                     url,
                     HttpMethod.POST,
                     entity,

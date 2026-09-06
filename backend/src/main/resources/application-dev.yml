@@ -207,7 +207,11 @@ http:
   client:
     toss:
       connect-timeout: 3s            # TCP 핸드셰이크 한도
-      response-timeout: 5s           # 응답 수신 한도
+      response-timeout: 5s           # 승인 응답 수신 한도 (사용자가 기다리는 요청)
+      # 취소 전용 응답 한도. 토스 문서가 장애 시 30초를 권장 - 5초로 자르면 정상 처리 중인 취소를
+      # 실패로 오판한다. 호출을 트랜잭션 밖으로 뺀 뒤(PaymentCompensationService)에만 안전한 값 -
+      # 안이면 실패 1건이 30 커넥션·초라 풀 50 이 초당 1.7건에 마른다
+      cancel-response-timeout: 30s
       connection-request-timeout: 2s # 풀에서 커넥션 획득 대기 한도
       max-total: 50                  # 풀 전체 최대 커넥션
       max-per-route: 20              # 목적지당 최대 커넥션

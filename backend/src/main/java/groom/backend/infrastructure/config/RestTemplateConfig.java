@@ -12,6 +12,7 @@ import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
@@ -25,6 +26,11 @@ public class RestTemplateConfig {
     // 응답 수신 한도 (요청 보낸 뒤 응답이 올 때까지 기다리는 시간)
     @Value("${http.client.toss.response-timeout:5s}")
     private Duration responseTimeout;
+
+    // 취소 전용 응답 수신 한도. 토스가 장애 시 30초를 권장한다 - 5초로 자르면 정상 처리 중인 취소를
+    // 실패로 오판해 보상 장부에 채무가 남는다. 승인은 사용자가 기다리는 요청이라 5초를 유지한다
+    @Value("${http.client.toss.cancel-response-timeout:30s}")
+    private Duration cancelResponseTimeout;
 
     // 풀에서 커넥션을 빌릴 때 대기 한도 (풀 고갈 시 무한 대기 방지)
     @Value("${http.client.toss.connection-request-timeout:2s}")
@@ -40,8 +46,21 @@ public class RestTemplateConfig {
 
     // @Bean : 풀링 + 타임아웃이 적용된 RestTemplate 을 빈으로 등록한다.
     // 기존 'return new RestTemplate();' 은 JDK 기본 클라이언트라 무한 대기 가능 → Apache HttpClient5 로 교체.
+    // @Primary : 취소 전용 템플릿이 추가되면서 같은 타입 빈이 둘이 됐다. 한정자 없는 주입은 이쪽(승인·5s)
     @Bean
+    @Primary
     public RestTemplate restTemplate(LatencyLoggingInterceptor latencyLoggingInterceptor) {
+        return build(responseTimeout, latencyLoggingInterceptor);
+    }
+
+    // 취소 전용. 타임아웃만 다른 게 아니라 커넥션 풀도 따로 둔다 -
+    // 30초를 기다리는 취소가 승인 풀을 점유하면 사용자 결제가 풀 획득 대기(2s)에서 죽는다
+    @Bean
+    public RestTemplate tossCancelRestTemplate(LatencyLoggingInterceptor latencyLoggingInterceptor) {
+        return build(cancelResponseTimeout, latencyLoggingInterceptor);
+    }
+
+    private RestTemplate build(Duration responseTimeout, LatencyLoggingInterceptor latencyLoggingInterceptor) {
         // ConnectionConfig : 커넥션 자체에 거는 타임아웃 (HttpClient5 에서 connect/socket 은 여기로 분리됨)
         ConnectionConfig connectionConfig = ConnectionConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(connectTimeout.toMillis()))

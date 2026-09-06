@@ -2,9 +2,10 @@ package groom.backend.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.BDDMockito.given;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -17,6 +18,7 @@ import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +30,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentCompensationServiceTest {
@@ -53,16 +57,67 @@ class PaymentCompensationServiceTest {
                 .build();
     }
 
+    private PaymentCompensationService proxy() {
+        PaymentCompensationService proxy = mock(PaymentCompensationService.class);
+        given(selfProvider.getObject()).willReturn(proxy);
+        return proxy;
+    }
+
+    // ── 실행 단계: PG 호출은 트랜잭션 밖, 결과 기록만 프록시(REQUIRES_NEW) ──
+
     @Test
-    void executeCompensation_재시도_한도_초과로_GIVEN_UP되면_DLQ로_발행한다() {
+    @DisplayName("PG 취소 호출을 먼저 하고 그 결과를 값으로 프록시의 recordResult 에 넘긴다")
+    void executeCompensation_callsPgThenRecordsResultViaProxy() {
+        PaymentCompensationService proxy = proxy();
+        PaymentCompensation compensation = newCompensation(5);
+
+        service.executeCompensation(compensation);
+
+        InOrder inOrder = inOrder(tossPaymentClient, proxy);
+        inOrder.verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
+        inOrder.verify(proxy).recordResult(compensation, null);
+        // 실행 단계 자체는 장부를 건드리지 않는다 - 기록은 recordResult 만 한다
+        verify(compensationRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PG 호출 실패는 예외를 값으로 넘겨 기록하고 호출부로 전파하지 않는다")
+    void executeCompensation_passesFailureAsValue() {
+        PaymentCompensationService proxy = proxy();
+        PaymentCompensation compensation = newCompensation(5);
+        RuntimeException failure = new RuntimeException("toss down");
+        given(tossPaymentClient.cancelPayment(anyString(), anyString(), anyString())).willThrow(failure);
+
+        service.executeCompensation(compensation);
+
+        verify(proxy).recordResult(compensation, failure);
+    }
+
+    @Test
+    @DisplayName("결과 기록만 REQUIRES_NEW 트랜잭션이고 PG 호출 단계에는 트랜잭션이 없다")
+    void onlyRecordResultIsTransactional() throws NoSuchMethodException {
+        Method execute = PaymentCompensationService.class
+                .getMethod("executeCompensation", PaymentCompensation.class);
+        Method record = PaymentCompensationService.class
+                .getMethod("recordResult", PaymentCompensation.class, Exception.class);
+
+        // PG 응답을 기다리는 동안 DB 커넥션을 쥐면 실패 1건이 타임아웃(30초)만큼 풀을 점유한다
+        assertThat(execute.getAnnotation(Transactional.class)).isNull();
+        Transactional tx = record.getAnnotation(Transactional.class);
+        assertThat(tx).isNotNull();
+        assertThat(tx.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
+    }
+
+    // ── 기록 단계 ──
+
+    @Test
+    void recordResult_재시도_한도_초과로_GIVEN_UP되면_DLQ로_발행한다() {
         PaymentCompensation compensation = newCompensation(3);
-        given(tossPaymentClient.cancelPayment(anyString(), anyString(), anyString()))
-                .willThrow(new RuntimeException("toss down"));
         given(compensationRepository.save(any())).willReturn(compensation);
 
         // maxRetry=3 → 3번째 실패에서 GIVEN_UP 전이
         for (int i = 0; i < 3; i++) {
-            service.executeCompensation(compensation);
+            service.recordResult(compensation, new RuntimeException("toss down"));
         }
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.GIVEN_UP);
@@ -70,44 +125,44 @@ class PaymentCompensationServiceTest {
     }
 
     @Test
-    void executeCompensation_성공하면_DLQ로_발행하지_않는다() {
+    void recordResult_성공이면_SUCCEEDED_이고_DLQ로_발행하지_않는다() {
         PaymentCompensation compensation = newCompensation(3);
-        given(tossPaymentClient.cancelPayment(anyString(), anyString(), anyString())).willReturn(null);
         given(compensationRepository.save(any())).willReturn(compensation);
 
-        service.executeCompensation(compensation);
+        service.recordResult(compensation, null);
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
         verify(dlqProducer, never()).publish(any());
     }
 
+    // ── 진입점 ──
+
     @Test
-    @DisplayName("보상 의도 기록은 실행과 분리된 별도 진입점으로 먼저 커밋된다")
+    @DisplayName("보상 의도 기록(프록시) → PG 호출 → 결과 기록(프록시) 순서로 진행된다")
     void intentIsRecordedBeforeExecution() {
-        PaymentCompensationService proxy = mock(PaymentCompensationService.class);
-        given(selfProvider.getObject()).willReturn(proxy);
+        PaymentCompensationService proxy = proxy();
         PaymentCompensation recorded = newCompensation(5);
         given(proxy.recordCompensationIntent(any(), anyString(), any(), anyString())).willReturn(recorded);
 
         service.compensate(UUID.randomUUID(), "pk-1", 1000, "DB 후처리 실패");
 
-        InOrder inOrder = inOrder(proxy);
+        InOrder inOrder = inOrder(proxy, tossPaymentClient);
         inOrder.verify(proxy).recordCompensationIntent(any(), anyString(), any(), anyString());
-        inOrder.verify(proxy).executeCompensation(recorded);
+        inOrder.verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
+        inOrder.verify(proxy).recordResult(recorded, null);
     }
 
     @Test
-    @DisplayName("배치 재시도도 프록시를 거쳐 실행해 트랜잭션이 적용된다")
-    void batchRetryGoesThroughProxy() {
-        PaymentCompensationService proxy = mock(PaymentCompensationService.class);
-        given(selfProvider.getObject()).willReturn(proxy);
+    @DisplayName("배치 재시도도 PG 호출 뒤 결과 기록을 프록시로 넘긴다")
+    void batchRetryRecordsResultViaProxy() {
+        PaymentCompensationService proxy = proxy();
         PaymentCompensation pending = newCompensation(5);
         given(compensationRepository.findRetryable(any(LocalDateTime.class), anyInt()))
                 .willReturn(List.of(pending));
 
         service.retryPendingCompensations();
 
-        verify(proxy).executeCompensation(pending);
-        verify(tossPaymentClient, never()).cancelPayment(anyString(), anyString(), anyString());
+        verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
+        verify(proxy).recordResult(pending, null);
     }
 }

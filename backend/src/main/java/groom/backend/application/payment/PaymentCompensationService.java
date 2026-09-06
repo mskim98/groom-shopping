@@ -35,7 +35,7 @@ public class PaymentCompensationService {
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
     private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
-    // 자기호출 우회: recordCompensationIntent/executeCompensation 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
+    // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
 
     /**
@@ -55,7 +55,7 @@ public class PaymentCompensationService {
 
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
 
-        selfProvider.getObject().executeCompensation(compensation);
+        executeCompensation(compensation);
     }
 
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */
@@ -89,8 +89,7 @@ public class PaymentCompensationService {
 
         for (PaymentCompensation compensation : retryables) {
             try {
-                // 프록시 경유라야 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
-                selfProvider.getObject().executeCompensation(compensation);
+                executeCompensation(compensation);
             } catch (Exception e) {
 
                 log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] CompensationId: {}, Error: {}",
@@ -100,49 +99,64 @@ public class PaymentCompensationService {
     }
 
     /**
-     * Toss 취소 API 호출, 멱등성 키(paymentKey + 보상 레코드 ID)로 이중 환불을 방지
+     * 실행 단계 - Toss 취소 API 를 호출하고 그 결과를 {@link #recordResult} 에 값으로 넘긴다. 멱등성 키(paymentKey + 보상 레코드 ID)로 이중 환불을 방지
      */
-    // @Transactional(REQUIRES_NEW) : 환불 결과 기록을 항상 독립 커밋한다.
-    // 호출부(compensate·배치)의 트랜잭션에 합류하면 결과 기록이 함께 롤백될 수 있다.
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    // 이 메서드에는 트랜잭션을 두지 않는다.
+    // PG 응답을 기다리는 동안 DB 커넥션을 쥐면 실패 1건이 취소 타임아웃(30초)만큼 풀을 점유해
+    // 풀 50 이 초당 1.7건의 실패에 마른다. 호출은 밖에서, 기록만 REQUIRES_NEW 로 짧게 한다
     public void executeCompensation(PaymentCompensation compensation) {
         // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
         // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를
         // 새 요청으로 오인해 이중 환불이 난다 -> 멱등키가 목적을 잃는다
         String idempotencyKey = compensation.getPaymentKey() + ":compensate:" + compensation.getId();
+        Exception failure = null;
         try {
             tossPaymentClient.cancelPayment(
                     compensation.getPaymentKey(),
                     "[보상 트랜잭션] " + compensation.getReason(),
                     idempotencyKey
             );
+        } catch (Exception e) {
+            failure = e;
+        }
+        // 프록시 경유라야 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
+        selfProvider.getObject().recordResult(compensation, failure);
+    }
 
+    /**
+     * 기록 단계 - 호출 결과를 장부에 독립 커밋한다. {@code failure} 가 null 이면 성공
+     */
+    // @Transactional(REQUIRES_NEW) : 환불 결과 기록을 항상 독립 커밋한다.
+    // 호출부(compensate·배치)의 트랜잭션에 합류하면 결과 기록이 함께 롤백될 수 있다.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordResult(PaymentCompensation compensation, Exception failure) {
+        if (failure == null) {
             compensation.markSucceeded();
             compensationRepository.save(compensation);
 
             log.info("[PAYMENT_COMPENSATION_SUCCESS] PaymentKey: {}, RetryCount: {}",
                     compensation.getPaymentKey(), compensation.getRetryCount());
+            return;
+        }
 
-        } catch (Exception e) {
-            compensation.markFailed(e.getMessage());
-            compensationRepository.save(compensation);
+        compensation.markFailed(failure.getMessage());
+        compensationRepository.save(compensation);
 
-            log.error("[PAYMENT_COMPENSATION_FAILED] PaymentKey: {}, RetryCount: {}, Status: {}, Error: {}",
-                    compensation.getPaymentKey(), compensation.getRetryCount(),
-                    compensation.getStatus(), e.getMessage());
+        log.error("[PAYMENT_COMPENSATION_FAILED] PaymentKey: {}, RetryCount: {}, Status: {}, Error: {}",
+                compensation.getPaymentKey(), compensation.getRetryCount(),
+                compensation.getStatus(), failure.getMessage());
 
-            // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
-            if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
-                dlqProducer.publish(new PaymentCompensationDlqEvent(
-                        compensation.getId(),
-                        compensation.getPaymentId(),
-                        compensation.getPaymentKey(),
-                        compensation.getAmount(),
-                        compensation.getReason(),
-                        e.getMessage(),
-                        compensation.getRetryCount(),
-                        LocalDateTime.now()));
-            }
+        // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
+        if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
+            dlqProducer.publish(new PaymentCompensationDlqEvent(
+                    compensation.getId(),
+                    compensation.getPaymentId(),
+                    compensation.getPaymentKey(),
+                    compensation.getAmount(),
+                    compensation.getReason(),
+                    failure.getMessage(),
+                    compensation.getRetryCount(),
+                    LocalDateTime.now()));
         }
     }
 }
