@@ -7,6 +7,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -69,5 +71,22 @@ class PaymentCompensationTransitionTest {
         compensation.markFailed("1회차");
         assertThat(compensation.getNextRetryAt()).isAfter(java.time.LocalDateTime.now().plusMinutes(1));
         assertThat(compensation.getNextRetryAt()).isBefore(java.time.LocalDateTime.now().plusMinutes(3));
+    }
+
+    @Test
+    @DisplayName("deferWithoutCounting 은 상태·retryCount 를 그대로 두고 nextRetryAt 만 미룬다")
+    void deferWithoutCountingKeepsStatusAndRetryCount() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markFailed("1회차 실패"); // FAILED, retryCount=1 인 상태에서 분류 재시도가 온 경우를 재현
+
+        CompensationStatus statusBefore = compensation.getStatus();
+        Integer retryCountBefore = compensation.getRetryCount();
+        LocalDateTime deferredFrom = LocalDateTime.now();
+
+        compensation.deferWithoutCounting(Duration.ofSeconds(45));
+
+        assertThat(compensation.getStatus()).isEqualTo(statusBefore);
+        assertThat(compensation.getRetryCount()).isEqualTo(retryCountBefore);
+        assertThat(compensation.getNextRetryAt()).isAfterOrEqualTo(deferredFrom.plusSeconds(45));
     }
 }

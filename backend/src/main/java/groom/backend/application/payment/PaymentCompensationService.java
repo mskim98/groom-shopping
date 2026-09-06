@@ -5,13 +5,17 @@ import groom.backend.domain.payment.model.PaymentCompensation;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
+import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import groom.backend.infrastructure.payment.TossRetryLaterException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -37,6 +41,11 @@ public class PaymentCompensationService {
     private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
+
+    // 토스가 살아 있다는 신호(429·403·409)를 받았을 때 다음 시도까지 미루는 시간
+    // retry-delay-ms(스케줄러 주기, 기본 30초)보다 길게 잡아 같은 회차 안에서 바로 재충돌하지 않게 한다
+    @Value("${payment.compensation.retry-later-defer-ms:45000}")
+    private long retryLaterDeferMs;
 
     /**
      * 즉시 보상(환불)을 시도한다. 실패 시 재시도 대상으로 기록
@@ -136,6 +145,26 @@ public class PaymentCompensationService {
 
             log.info("[PAYMENT_COMPENSATION_SUCCESS] PaymentKey: {}, RetryCount: {}",
                     compensation.getPaymentKey(), compensation.getRetryCount());
+            return;
+        }
+
+        // 토스가 이미 목적을 달성한 응답 - 실패가 아니라 성공으로 기록한다
+        if (failure instanceof TossAlreadyCanceledException) {
+            compensation.markSucceeded();
+            compensationRepository.save(compensation);
+
+            log.info("[PAYMENT_COMPENSATION_ALREADY_CANCELED] PaymentKey: {}",
+                    compensation.getPaymentKey());
+            return;
+        }
+
+        // 토스가 살아 있다는 신호 - retryCount 는 올리지 않고 다음 시각만 미룬다
+        if (failure instanceof TossRetryLaterException) {
+            compensation.deferWithoutCounting(Duration.ofMillis(retryLaterDeferMs));
+            compensationRepository.save(compensation);
+
+            log.warn("[PAYMENT_COMPENSATION_RETRY_LATER] PaymentKey: {}, NextRetryAt: {}",
+                    compensation.getPaymentKey(), compensation.getNextRetryAt());
             return;
         }
 

@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.payment;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.payment.dto.TossPaymentConfirmRequest;
@@ -20,6 +21,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -122,15 +124,51 @@ public class TossPaymentClientImpl implements TossPaymentClient {
 
             return response.getBody();
 
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            String tossErrorCode = extractTossErrorCode(e.getResponseBodyAsString());
+
+            if (status == 429
+                    || (status == 403 && "FORBIDDEN_CONSECUTIVE_REQUEST".equals(tossErrorCode))
+                    || (status == 409 && "IDEMPOTENT_REQUEST_PROCESSING".equals(tossErrorCode))) {
+                log.warn("[TOSS_API_RETRY_LATER] Cancel deferred - PaymentKey: {}, Status: {}, Code: {}",
+                        paymentKey, status, tossErrorCode);
+                throw new TossRetryLaterException(
+                        "Toss 취소 응답이 재시도 대기를 지시함 - status: " + status + ", code: " + tossErrorCode);
+            }
+            if (status == 400 && "ALREADY_CANCELED_PAYMENT".equals(tossErrorCode)) {
+                log.info("[TOSS_API_ALREADY_CANCELED] Cancel already applied - PaymentKey: {}", paymentKey);
+                throw new TossAlreadyCanceledException(
+                        "Toss 가 이미 취소 처리한 결제 - PaymentKey: " + paymentKey);
+            }
+            log.error("[TOSS_API_ERROR] Payment cancellation failed - Error: {}", e.getMessage());
+            throw new RuntimeException("Toss Payments API 호출 실패: " + e.getMessage(), e);
         } catch (Exception e) {
             log.error("[TOSS_API_ERROR] Payment cancellation failed - Error: {}", e.getMessage());
             throw new RuntimeException("Toss Payments API 호출 실패: " + e.getMessage(), e);
         }
     }
 
+    // 토스 오류 본문의 code 필드만 추출. 파싱 실패(빈 본문·JSON 아님)는 null 로 처리해 기존 실패 경로로 떨어뜨린다
+    private static String extractTossErrorCode(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        try {
+            return new ObjectMapper().readTree(responseBody).path("code").asText(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // 취소 회로 fallback. 보상 서비스의 catch 가 이 예외를 받아 실패로 기록하고 백오프 재시도한다
     private TossPaymentResponse cancelPaymentFallback(
             String paymentKey, String cancelReason, String idempotencyKey, Throwable t) {
+        if (t instanceof TossRetryLaterException || t instanceof TossAlreadyCanceledException) {
+            // 분류된 예외는 그대로 보상 서비스에 넘긴다 - PAYMENT_PG_FAILURE 로 뭉개면
+            // 재시도 대기와 이미 취소된 결제를 구별할 수 없다
+            throw (RuntimeException) t;
+        }
         if (t instanceof CallNotPermittedException) {
             log.warn("[CB_CANCEL_FALLBACK_OPEN] 취소 회로 OPEN, fast-fail - PaymentKey: {}", paymentKey);
         } else {

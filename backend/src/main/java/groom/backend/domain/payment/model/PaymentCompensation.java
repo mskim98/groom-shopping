@@ -9,6 +9,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.Map;
@@ -127,5 +128,13 @@ public class PaymentCompensation {
         this.lastError = errorMessage;
         long backoffMinutes = (long) Math.pow(2, Math.min(this.retryCount, 6));
         this.nextRetryAt = LocalDateTime.now().plusMinutes(backoffMinutes);
+    }
+
+    /**
+     * 토스가 살아 있다는 신호(429·403·409 응답 분류)로 재시도 대기가 필요할 때 호출한다
+     * 상태·retryCount 는 그대로 두고 nextRetryAt 만 미룬다 - 실패로 세지 않기 위해 전이표를 거치지 않는다
+     */
+    public void deferWithoutCounting(Duration deferBy) {
+        this.nextRetryAt = LocalDateTime.now().plus(deferBy);
     }
 }

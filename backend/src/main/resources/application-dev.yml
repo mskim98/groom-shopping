@@ -242,6 +242,12 @@ resilience4j:
         wait-duration-in-open-state: 30s   # 보상 첫 백오프 2분보다 짧게 유지 -> 2회차가 실질 첫 시도
         permitted-number-of-calls-in-half-open-state: 5
         automatic-transition-from-open-to-half-open-enabled: true
+        # 이 둘은 토스가 살아 있다는 신호(429·403·409)와 목적 달성(이미 취소)이라
+        # 회로 실패율에 넣지 않는다 - 넣으면 정상 응답인데도 회로가 OPEN 으로 오판한다
+        # fallback 안에서 재차 걸러내 재시도-스킵과 분리하는 것과는 별개 방어선이다
+        ignore-exceptions:
+          - groom.backend.infrastructure.payment.TossRetryLaterException
+          - groom.backend.infrastructure.payment.TossAlreadyCanceledException
   retry:
     instances:
       toss:

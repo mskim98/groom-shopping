@@ -17,7 +17,9 @@ import groom.backend.domain.payment.model.PaymentCompensation;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
+import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import groom.backend.infrastructure.payment.TossRetryLaterException;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -130,6 +132,30 @@ class PaymentCompensationServiceTest {
         given(compensationRepository.save(any())).willReturn(compensation);
 
         service.recordResult(compensation, null);
+
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
+        verify(dlqProducer, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("429 계열(TossRetryLaterException)은 retryCount 를 올리지 않고 다음 시각만 미룬다")
+    void recordResult_재시도대기_예외면_retryCount_유지한다() {
+        PaymentCompensation compensation = newCompensation(3);
+        given(compensationRepository.save(any())).willReturn(compensation);
+
+        service.recordResult(compensation, new TossRetryLaterException("429 too many requests"));
+
+        assertThat(compensation.getRetryCount()).isEqualTo(0);
+        verify(dlqProducer, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("TossAlreadyCanceledException 은 SUCCEEDED 로 기록하고 DLQ 로 발행하지 않는다")
+    void recordResult_이미취소_예외면_SUCCEEDED로_기록한다() {
+        PaymentCompensation compensation = newCompensation(3);
+        given(compensationRepository.save(any())).willReturn(compensation);
+
+        service.recordResult(compensation, new TossAlreadyCanceledException("이미 취소된 결제"));
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
         verify(dlqProducer, never()).publish(any());
