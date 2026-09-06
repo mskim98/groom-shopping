@@ -30,6 +30,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.annotation.Propagation;
@@ -46,8 +50,19 @@ class PaymentCompensationServiceTest {
     private PaymentCompensationDlqProducer dlqProducer;
     @Mock
     private ObjectProvider<PaymentCompensationService> selfProvider;
+    @Mock
+    private CircuitBreakerRegistry circuitBreakerRegistry;
+    @Spy
+    private PaymentCompensationBatchProperties batchProperties = new PaymentCompensationBatchProperties();
     @InjectMocks
     private PaymentCompensationService service;
+
+    @BeforeEach
+    void resetSkipCircuits() {
+        // 대부분의 테스트는 스킵 판정을 거치지 않으므로 정지 신호 회로를 비워 회로 조회를 막는다.
+        // 스킵 테스트만 이 목록을 채운다
+        batchProperties.setSkipWhenOpen(List.of());
+    }
 
     private PaymentCompensation newCompensation(int maxRetry) {
         return PaymentCompensation.builder()
@@ -76,7 +91,7 @@ class PaymentCompensationServiceTest {
         service.executeCompensation(compensation);
 
         InOrder inOrder = inOrder(tossPaymentClient, proxy);
-        inOrder.verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
+        inOrder.verify(tossPaymentClient).cancelPaymentUncounted(eq("pk-1"), anyString(), anyString());
         inOrder.verify(proxy).recordResult(compensation, null);
         // 실행 단계 자체는 장부를 건드리지 않는다 - 기록은 recordResult 만 한다
         verify(compensationRepository, never()).save(any());
@@ -88,7 +103,7 @@ class PaymentCompensationServiceTest {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation compensation = newCompensation(5);
         RuntimeException failure = new RuntimeException("toss down");
-        given(tossPaymentClient.cancelPayment(anyString(), anyString(), anyString())).willThrow(failure);
+        given(tossPaymentClient.cancelPaymentUncounted(anyString(), anyString(), anyString())).willThrow(failure);
 
         service.executeCompensation(compensation);
 
@@ -174,7 +189,7 @@ class PaymentCompensationServiceTest {
 
         // 요청 스레드가 취소 응답을 기다리면 커넥션이 취소 지연만큼 물린다 - 취소는 배치가 한다
         verify(proxy).recordCompensationIntent(any(), anyString(), any(), anyString());
-        verify(tossPaymentClient, never()).cancelPayment(anyString(), anyString(), anyString());
+        verify(tossPaymentClient, never()).cancelPaymentUncounted(anyString(), anyString(), anyString());
         verify(proxy, never()).executeCompensation(any());
         verify(proxy, never()).recordResult(any(), any());
     }
@@ -188,8 +203,34 @@ class PaymentCompensationServiceTest {
 
         service.retryPendingCompensations();
 
-        verify(tossPaymentClient).cancelPayment(eq("pk-1"), anyString(), anyString());
+        verify(tossPaymentClient).cancelPaymentUncounted(eq("pk-1"), anyString(), anyString());
         verify(proxy).recordResult(pending, null);
+    }
+
+    @Test
+    @DisplayName("결정 C — 정지 신호 회로가 OPEN 이면 회차를 통째로 쉬고 선점 조회조차 하지 않는다")
+    void skipsRoundWhenSkipCircuitOpen() {
+        batchProperties.setSkipWhenOpen(List.of("toss-cancel"));
+        CircuitBreaker open = mock(CircuitBreaker.class);
+        given(open.getState()).willReturn(CircuitBreaker.State.OPEN);
+        given(circuitBreakerRegistry.circuitBreaker("toss-cancel")).willReturn(open);
+
+        service.retryPendingCompensations();
+
+        // 죽은 PG 로 한 페이지를 쏟지 않도록, 선점 조회(프록시 경유)·취소를 아예 하지 않는다
+        verify(selfProvider, never()).getObject();
+        verify(tossPaymentClient, never()).cancelPaymentUncounted(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("선점 조회 건수는 batch-size 설정을 따른다(상수 아님)")
+    void acquireUsesBatchSizeProperty() {
+        batchProperties.setBatchSize(37);
+        given(compensationRepository.findRetryable(any(), any(), anyInt())).willReturn(List.of());
+
+        service.acquireRetryableBatch();
+
+        verify(compensationRepository).findRetryable(any(), any(), eq(37));
     }
 
     // ── T5: 선점 조회는 배치와 독립된 REQUIRES_NEW 트랜잭션이다 ──

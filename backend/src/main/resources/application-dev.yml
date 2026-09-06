@@ -146,6 +146,15 @@ payment:
   toss:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
+  # 보상 재시도 배치 (PaymentCompensationBatchProperties). 결정 C - 취소는 배치가 유일 경로
+  compensation:
+    retry-delay-ms: 30000        # 배치 주기. 회로 OPEN 30초와 같아 회차마다 회로 상태가 한 번 바뀐다
+    retry-later-defer-ms: 45000  # 429·403·409 시 다음 시각만 미루는 간격. 주기(30초)보다 길게
+    batch-size: 100              # 한 회차 = 한 페이지. 워커 5 x PG 0.3초 / 5 = 6초로 회차 안에 비운다
+    workers: 5                   # 페이지를 동시 취소하는 워커 수. 토스 속도 제한 비공개라 보수적(Task 7 답 뒤 조정)
+    skip-when-open:              # 회차 시작에 OPEN 이면 쉰다 - toss(승인 회로) · toss-cancel(배치 정지 플래그)
+      - toss
+      - toss-cancel
 
 # 재고 차감 전략 - pessimistic(기본) | conditional | optimistic. 3자 실측 비교용 스위치
 # 2026-08-09 실측으로 기본값을 optimistic 에서 넘겼다 - 근거는 PessimisticLockStockDecrementer 주석

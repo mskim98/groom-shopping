@@ -8,10 +8,18 @@ import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -33,14 +41,33 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PaymentCompensationService {
 
-    private static final int RETRY_BATCH_SIZE = 50;
-
     // private final : 스프링이 주입하는 협력 객체. 외부에서 못 바꾸게 막아 안전하게 사용.
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
     private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
+    // 배치 설정(페이지 크기 · 워커 수 · 정지 신호 회로 이름들)
+    private final PaymentCompensationBatchProperties batchProperties;
+    // 회차 시작에 회로 상태를 읽어 OPEN 이면 쉬기 위해 주입
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+
+    /**
+     * 기동 시 배치 설정을 검증한다. 어긋나면 기동을 실패시켜 잘못된 값으로 배치가 도는 것을 막는다.
+     * skip-when-open 의 회로는 여기서 미리 생성해 회차마다 getState 를 읽을 수 있게 한다
+     */
+    @PostConstruct
+    void validateBatchConfig() {
+        if (batchProperties.getBatchSize() < 1) {
+            throw new IllegalStateException("payment.compensation.batch-size 는 1 이상이어야 한다: " + batchProperties.getBatchSize());
+        }
+        if (batchProperties.getWorkers() < 1) {
+            throw new IllegalStateException("payment.compensation.workers 는 1 이상이어야 한다: " + batchProperties.getWorkers());
+        }
+        // 회로는 resilience4j 가 첫 호출에 lazily 생성하므로, 여기서 이름으로 미리 만들어 회차 조회가 항상 성립하게 한다.
+        // yml 에 정의가 없으면 기본 설정으로 생성되므로 오타는 잡지 못한다 - 이 한계는 보고서에 명시
+        batchProperties.getSkipWhenOpen().forEach(circuitBreakerRegistry::circuitBreaker);
+    }
 
     // 토스가 살아 있다는 신호(429·403·409)를 받았을 때 다음 시도까지 미루는 시간
     // retry-delay-ms(스케줄러 주기, 기본 30초)보다 길게 잡아 같은 회차 안에서 바로 재충돌하지 않게 한다
@@ -91,6 +118,14 @@ public class PaymentCompensationService {
     // 직전 실행이 끝난 뒤 지정 시간(기본 30초) 뒤 다시 실행 → 일시적 네트워크 오류로 못한 환불을 재시도.
     @Scheduled(fixedDelayString = "${payment.compensation.retry-delay-ms:30000}")
     public void retryPendingCompensations() {
+        // 결정 C - 정지 신호 회로(승인 toss · 배치 정지 플래그 toss-cancel)가 하나라도 OPEN 이면 회차를 통째로 쉰다.
+        // 죽은 PG 로 한 페이지를 쏟지 않기 위함. HALF_OPEN·CLOSED 는 실행한다
+        String open = firstOpenSkipCircuit();
+        if (open != null) {
+            log.info("[PAYMENT_COMPENSATION_BATCH_SKIP] 회로 {} 가 OPEN 이라 이번 회차를 쉰다", open);
+            return;
+        }
+
         // 프록시 경유라야 선점 조회의 @Transactional(REQUIRES_NEW) 가 실제로 적용된다
         List<PaymentCompensation> retryables = selfProvider.getObject().acquireRetryableBatch();
 
@@ -98,17 +133,43 @@ public class PaymentCompensationService {
             return;
         }
 
-        log.info("[PAYMENT_COMPENSATION_BATCH] Retrying {} compensations", retryables.size());
+        log.info("[PAYMENT_COMPENSATION_BATCH] Retrying {} compensations (workers={})",
+                retryables.size(), batchProperties.getWorkers());
 
-        for (PaymentCompensation compensation : retryables) {
-            try {
-                executeCompensation(compensation);
-            } catch (Exception e) {
-
-                log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] CompensationId: {}, Error: {}",
-                        compensation.getId(), e.getMessage());
+        // 한 페이지를 워커 수만큼 동시에 취소한다. 가상 스레드 실행기 + Semaphore 로 동시 PG 호출을 workers 로 제한.
+        // 건별 결과는 executeCompensation 안의 recordResult(REQUIRES_NEW) 가 독립 커밋한다
+        Semaphore gate = new Semaphore(batchProperties.getWorkers());
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<?>> futures = new ArrayList<>();
+            for (PaymentCompensation compensation : retryables) {
+                futures.add(executor.submit(() -> {
+                    gate.acquire();
+                    try {
+                        executeCompensation(compensation);
+                    } finally {
+                        gate.release();
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] {}", e.getMessage());
+                }
             }
         }
+    }
+
+    // skip-when-open 회로 중 OPEN 인 첫 이름을 돌려준다. 없으면 null
+    private String firstOpenSkipCircuit() {
+        for (String name : batchProperties.getSkipWhenOpen()) {
+            if (circuitBreakerRegistry.circuitBreaker(name).getState() == CircuitBreaker.State.OPEN) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /**
@@ -119,7 +180,7 @@ public class PaymentCompensationService {
     public List<PaymentCompensation> acquireRetryableBatch() {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime staleThreshold = now.minus(Duration.ofMillis(retryDelayMs * 3));
-        return compensationRepository.findRetryable(now, staleThreshold, RETRY_BATCH_SIZE);
+        return compensationRepository.findRetryable(now, staleThreshold, batchProperties.getBatchSize());
     }
 
     /**
@@ -135,7 +196,8 @@ public class PaymentCompensationService {
         String idempotencyKey = compensation.getPaymentKey() + ":compensate:" + compensation.getId();
         Exception failure = null;
         try {
-            tossPaymentClient.cancelPayment(
+            // 배치 전용 미계수 취소 - toss-cancel 회로에 계수하지 않아 대량 실패가 수동 취소 엔드포인트를 막지 않는다
+            tossPaymentClient.cancelPaymentUncounted(
                     compensation.getPaymentKey(),
                     "[보상 트랜잭션] " + compensation.getReason(),
                     idempotencyKey

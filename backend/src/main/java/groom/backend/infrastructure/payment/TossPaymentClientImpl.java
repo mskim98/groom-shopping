@@ -98,9 +98,22 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     // @CircuitBreaker : 취소는 승인과 별도 회로("toss-cancel")로 보호한다
     // 같은 회로를 쓰면 취소 실패가 승인 회로를 열어 정상 결제까지 막고, 반대로 승인 장애가
     // 보상 취소를 fast-fail 시켜 채무만 쌓인다. 두 방향 모두 나쁘므로 분리한다
+    // @CircuitBreaker : 사용자 수동 취소 엔드포인트 전용. 배치는 계수하지 않는 cancelPaymentUncounted 를 쓴다(결정 C)
     @CircuitBreaker(name = "toss-cancel", fallbackMethod = "cancelPaymentFallback")
     @Override
     public TossPaymentResponse cancelPayment(String paymentKey, String cancelReason, String idempotencyKey) {
+        return doCancel(paymentKey, cancelReason, idempotencyKey);
+    }
+
+    // 배치 전용 - 회로에 계수되지 않는다. 분류 예외(429/403/409/ALREADY_CANCELED)와 실패는 그대로 던져
+    // 보상 서비스의 recordResult 가 값으로 받아 처리한다(fallback 불필요)
+    @Override
+    public TossPaymentResponse cancelPaymentUncounted(String paymentKey, String cancelReason, String idempotencyKey) {
+        return doCancel(paymentKey, cancelReason, idempotencyKey);
+    }
+
+    // 실제 취소 HTTP 호출·응답 분류. 계수/미계수 두 진입점이 공유한다
+    private TossPaymentResponse doCancel(String paymentKey, String cancelReason, String idempotencyKey) {
         String url = apiUrl + "/v1/payments/" + paymentKey + "/cancel";
 
         HttpHeaders headers = createHeaders(idempotencyKey);
