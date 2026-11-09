@@ -483,15 +483,27 @@ public class CouponAsyncIssueService {
      * <p>이벤트 전체는 못 읽어도 couponId · userId 가 읽히면 어느 자리를 되돌릴지 알 수 있다
      * 읽히지 않으면 되돌릴 대상을 모르므로 건드리지 않는다 - 그 몫은 종료 쿠폰의 고아 예약 회수가 정리한다
      *
+     * <p>requestId 가 읽히지 않으면 어느 요청의 예약인지 특정할 수 없다. 상태 키(coupon:issue:status:null)도
+     * 결과 이벤트(requestId=null)도 만들지 않고 아무것도 반납하지 않는다 - 호출한 컨슈머가 DLQ 에 원문을 남겼고
+     * 여기서는 기록만 한다. 두 요청이 같은 쿠폰 · 사용자를 가리킬 수 있어 couponId · userId 만으로 반납하면 남의 예약을 푼다
+     *
      * @return 예약을 반납했으면 true
      */
     public boolean abandonUnreadable(String rawPayload, Throwable cause) {
+        if (rawPayload == null) {
+            return false;
+        }
         try {
             com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(rawPayload);
             if (node == null || !node.path("couponId").canConvertToLong() || !node.path("userId").canConvertToLong()) {
                 return false;
             }
             String requestId = node.path("requestId").isTextual() ? node.path("requestId").asText() : null;
+            if (requestId == null || requestId.isBlank()) {
+                log.error("[COUPON_UNREADABLE_WITHOUT_REQUEST_ID] couponId={}, userId={}, payload={}",
+                        node.path("couponId").asLong(), node.path("userId").asLong(), rawPayload);
+                return false;
+            }
             abandonBatch(List.of(new CouponIssueRequestEvent(requestId, node.path("couponId").asLong(),
                     node.path("userId").asLong(), true)), cause);
             return true;
