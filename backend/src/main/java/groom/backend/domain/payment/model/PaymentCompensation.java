@@ -94,16 +94,16 @@ public class PaymentCompensation {
     private static final Map<CompensationStatus, Set<CompensationStatus>> ALLOWED_TRANSITIONS = Map.of(
             CompensationStatus.PENDING, EnumSet.of(
                     CompensationStatus.PROCESSING, CompensationStatus.SUCCEEDED,
-                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.FAILED, EnumSet.of(
                     CompensationStatus.PROCESSING, CompensationStatus.SUCCEEDED,
-                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.RECONCILE_NEEDED),
             // PENDING 은 유예(429·403·409)로 되돌아오는 길이다 - PROCESSING 에 남기면 선점 SQL 이 next_retry_at 을 못 보고
             // updated_at 90초 경과 회수만 기다린다
             CompensationStatus.PROCESSING, EnumSet.of(
                     CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
                     CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.SUPERSEDED,
-                    CompensationStatus.NOT_APPROVED),
+                    CompensationStatus.NOT_APPROVED, CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.SUPERSEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
