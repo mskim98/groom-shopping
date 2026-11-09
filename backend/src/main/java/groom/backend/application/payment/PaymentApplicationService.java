@@ -40,6 +40,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 // @Slf4j : log 객체 생성.
 @Slf4j
@@ -125,6 +127,7 @@ public class PaymentApplicationService {
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
             // Toss 승인 자체가 실패 → 외부 승인 없음. 선점한 Redis 재고를 복원하고 DB 상태만 FAILED로 기록.
+            // releaseStock 은 실패해도 던지지 않는다(복원 실패가 FAILED 기록과 원래 예외 전파를 막으면 안 된다)
             releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
             selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage(), paymentKey);
@@ -140,11 +143,11 @@ public class PaymentApplicationService {
         try {
             return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
         } catch (Exception dbError) {
-            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 선점 복원 + 자동 환불(보상 트랜잭션)
-            releaseStock(reservedItems);
+            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션) 의도 기록 + 선점 복원
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
                     orderId, paymentKey, dbError.getMessage(), dbError);
-            // 보상 기록·실행이 실패해도 아래 markPaymentFailed 와 재던지기가 스킵되면 안 된다
+            // 순서: ① 보상 의도 기록(돈이 걸린 일) → ② Redis 복원(실패해도 계속) → ③ FAILED 기록
+            // 앞 단계가 실패해도 뒤 단계와 원래 예외 재던지기가 스킵되면 안 되므로 단계마다 따로 보호한다
             try {
                 paymentCompensationService.compensate(
                         payment.getId(),
@@ -156,7 +159,13 @@ public class PaymentApplicationService {
                 log.error("[PAYMENT_COMPENSATION_ENTRY_FAILED] 보상 진입 실패(수동 처리 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
                         payment.getId(), response.getPaymentKey(), compensationError.getMessage(), compensationError);
             }
-            selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            releaseStock(reservedItems);
+            try {
+                selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            } catch (Exception markError) {
+                log.error("[PAYMENT_MARK_FAILED_ERROR] FAILED 기록 실패(결제가 PENDING 으로 남음) - PaymentId: {}, Error: {}",
+                        payment.getId(), markError.getMessage(), markError);
+            }
             // 도메인 예외는 재포장하지 않는다 - 409(PRODUCT_STOCK_CONFLICT) 가 500 으로 나가면 죽은 카운터가 된다
             if (dbError instanceof BusinessException businessException) {
                 throw businessException;
@@ -191,9 +200,38 @@ public class PaymentApplicationService {
     }
 
     // 선점한 Redis 재고를 복원한다 (결제 실패·보상 시 Redis-DB 정합 유지).
+    // 항목마다 실패를 삼키고 로그만 남긴다 - Redis 장애가 보상 의도 기록·FAILED 기록·원래 예외 전파를 막으면 안 된다.
+    // 복원 못 한 선점분은 StockReconciliationJob 이 DB 재고 기준으로 되맞춘다
     private void releaseStock(List<OrderItem> items) {
         for (OrderItem item : items) {
-            productStockRedisRepository.release(item.getProductId(), item.getQuantity());
+            try {
+                productStockRedisRepository.release(item.getProductId(), item.getQuantity());
+            } catch (Exception e) {
+                log.error("[STOCK_RELEASE_FAILED] Redis 선점 복원 실패 - ProductId: {}, Quantity: {}, Error: {}",
+                        item.getProductId(), item.getQuantity(), e.getMessage());
+            }
+        }
+    }
+
+    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림·장바구니 비우기를 남기지 않게 한다.
+    // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
+    private void runAfterCommit(String name, Runnable task) {
+        Runnable safe = () -> {
+            try {
+                task.run();
+            } catch (Exception e) {
+                log.error("[AFTER_COMMIT_FAILED] {} - Error: {}", name, e.getMessage(), e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safe.run();
+                }
+            });
+        } else {
+            safe.run();
         }
     }
 
@@ -252,15 +290,18 @@ public class PaymentApplicationService {
         List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
         processTicketProducts(order);
 
-        log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
-                payment.getId(), orderId);
-
         // [Outbox] 결제 완료 이벤트를 '같은 트랜잭션'으로 적재 → 커밋 = 이벤트 영구 보존(at-least-once)
-        // 별도 publisher 가 Kafka 로 발행. 알림은 아직 아래 직접 호출도 유지(Strangler 점진 전환).
+        // 별도 publisher 가 Kafka 로 발행. 알림은 아래 직접 호출도 유지(Strangler 점진 전환).
         appendPaymentCompletedOutbox(payment);
 
-        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
-        paymentNotificationService.clearCartItems(order);
+        // 성공 로그 · 알림 · 장바구니 비우기는 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한
+        // 200건에도 성공 로그와 장바구니 비우기가 나가 사용자 장바구니만 비워진다
+        UUID paymentId = payment.getId();
+        runAfterCommit("PAYMENT_CONFIRM_SUCCESS", () -> {
+            log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}", paymentId, orderId);
+            paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
+            paymentNotificationService.clearCartItems(order);
+        });
 
         return payment;
     }
