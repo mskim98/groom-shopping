@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.redisson.api.RedissonClient;
@@ -107,6 +109,7 @@ class CouponStockReconciliationServiceTest {
     @DisplayName("컨슈머 랙이 0 이면 고아 예약을 회수한다")
     void reconcileCoupon_랙이_0이면_고아예약을_회수한다() {
         고아_예약이_하나_있는_종료_쿠폰();
+        명단과_확정_행을_읽는다();
         given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
 
         assertThat(service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10))).orphansRemoved())
@@ -116,8 +119,25 @@ class CouponStockReconciliationServiceTest {
     }
 
     @Test
-    @DisplayName("컨슈머 랙이 남아 있으면 명단에만 있는 예약도 회수하지 않는다")
-    void reconcileCoupon_랙이_남아있으면_회수하지_않는다() {
+    @DisplayName("랙을 먼저 읽고 0 일 때만 발급자 명단과 확정 행을 읽는다")
+    void reconcileCoupon_랙을_명단과_확정_행보다_먼저_읽는다() {
+        고아_예약이_하나_있는_종료_쿠폰();
+        명단과_확정_행을_읽는다();
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
+
+        service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10)));
+
+        // 확정 행을 먼저 읽고 랙을 나중에 읽으면, 그 사이에 커밋된 요청이 "확정 행 목록에 없는데 랙은 0" 으로 보여
+        // 방금 확정된 사용자가 명단에서 지워진다 - 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받는다
+        InOrder order = inOrder(kafkaLagReader, couponStockRedisRepository, couponIssueRepository);
+        order.verify(kafkaLagReader).lagOf(anyString(), anyString());
+        order.verify(couponStockRedisRepository).getIssuedUsers(1L);
+        order.verify(couponIssueRepository).findUserIdsByCouponId(1L);
+    }
+
+    @Test
+    @DisplayName("컨슈머 랙이 남아 있으면 명단도 확정 행도 읽지 않고 회수하지 않는다")
+    void reconcileCoupon_랙이_남아있으면_아무것도_읽지_않는다() {
         고아_예약이_하나_있는_종료_쿠폰();
         // 종료 시각이 지나도 요청 토픽에 아직 소비되지 않은 요청이 있다 - 그 사용자의 행은 곧 들어온다
         given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(7L);
@@ -125,18 +145,21 @@ class CouponStockReconciliationServiceTest {
         assertThat(service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10))).orphansRemoved())
                 .isZero();
 
+        verify(couponStockRedisRepository, never()).getIssuedUsers(anyLong());
+        verify(couponIssueRepository, never()).findUserIdsByCouponId(anyLong());
         // 지우면 곧 확정될 사용자가 게이트를 다시 통과해 같은 쿠폰을 한 번 더 받는다
         verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
     }
 
     @Test
-    @DisplayName("컨슈머 랙을 읽지 못하면 회수하지 않는다")
+    @DisplayName("컨슈머 랙을 읽지 못하면 명단을 읽지 않고 회수하지 않는다")
     void reconcileCoupon_랙을_못_읽으면_회수하지_않는다() {
         고아_예약이_하나_있는_종료_쿠폰();
         given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(-1L);
 
         service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10)));
 
+        verify(couponStockRedisRepository, never()).getIssuedUsers(anyLong());
         verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
     }
 
@@ -153,11 +176,16 @@ class CouponStockReconciliationServiceTest {
         verify(couponRepository).freezeIssuedCount(eq(1L), anyLong());
     }
 
-    // 명단에 1, 2, 3 이 있고 확정 행은 1, 2 뿐이다 - 3 은 아직 저장되지 않았거나 영영 저장되지 않을 예약이다
+    // 재고 키와 개수 조회까지는 랙과 무관하게 읽는다
     private void 고아_예약이_하나_있는_종료_쿠폰() {
         given(couponStockRedisRepository.getStock(1L)).willReturn(35L);
         given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(2L);
         given(couponStockRedisRepository.countIssuedUsers(1L)).willReturn(3L);
+    }
+
+    // 명단에 1, 2, 3 이 있고 확정 행은 1, 2 뿐이다 - 3 은 아직 저장되지 않았거나 영영 저장되지 않을 예약이다
+    // 랙이 0 일 때만 읽히므로 랙이 남은 케이스에서는 스텁하지 않는다
+    private void 명단과_확정_행을_읽는다() {
         given(couponStockRedisRepository.getIssuedUsers(1L)).willReturn(Set.of("1", "2", "3"));
         given(couponIssueRepository.findUserIdsByCouponId(1L)).willReturn(List.of(1L, 2L));
     }
