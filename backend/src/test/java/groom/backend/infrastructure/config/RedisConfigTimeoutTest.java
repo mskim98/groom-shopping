@@ -12,7 +12,10 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.core.env.Environment;
+import org.springframework.test.util.ReflectionTestUtils;
+import io.lettuce.core.resource.DefaultClientResources;
+import java.time.Duration;
 
 /**
  * Redis 명령 타임아웃이 적용된다
@@ -23,8 +26,6 @@ import org.springframework.test.context.TestPropertySource;
  */
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-// 기본값(1초)이 아니라 설정값이 적용되는지 보려고 다른 값을 준다. 전용 컨텍스트라 Streams 락이 부딪히지 않게 끈다
-@TestPropertySource(properties = {"spring.data.redis.timeout=700ms", "spring.kafka.streams.auto-startup=false"})
 @DisplayName("Redis 연결 팩토리 타임아웃")
 class RedisConfigTimeoutTest {
 
@@ -32,16 +33,40 @@ class RedisConfigTimeoutTest {
     private RedisConnectionFactory connectionFactory;
     @Autowired
     private ClientResources bootClientResources;
+    @Autowired
+    private Environment environment;
 
     private LettuceConnectionFactory lettuce() {
         assertThat(connectionFactory).isInstanceOf(LettuceConnectionFactory.class);
         return (LettuceConnectionFactory) connectionFactory;
     }
 
+    // 이 클래스는 전용 컨텍스트를 만들지 않는다. 캐시된 컨텍스트마다 Hikari 풀이 PostgreSQL 연결 상한을 갉아 먹는다
     @Test
-    @DisplayName("명령 타임아웃이 spring.data.redis.timeout 설정값을 따른다")
+    @DisplayName("기동한 앱의 명령 타임아웃이 설정값(없으면 1초)이고 1초를 넘지 않는다")
     void connectionFactory_명령_타임아웃이_설정값이다() {
-        assertThat(lettuce().getTimeout()).isEqualTo(700L);
+        long configured = environment.getProperty("spring.data.redis.timeout", Duration.class, Duration.ofSeconds(1))
+                .toMillis();
+
+        assertThat(lettuce().getTimeout()).isEqualTo(configured).isLessThanOrEqualTo(1_000L);
+    }
+
+    @Test
+    @DisplayName("설정에 준 값이 그대로 명령 타임아웃이 된다")
+    void redisConnectionFactory_설정값이_명령_타임아웃이_된다() {
+        RedisConfig config = new RedisConfig();
+        ReflectionTestUtils.setField(config, "host", "localhost");
+        ReflectionTestUtils.setField(config, "port", 6379);
+        ReflectionTestUtils.setField(config, "commandTimeout", Duration.ofMillis(700));
+        ClientResources resources = DefaultClientResources.create();
+        try {
+            LettuceConnectionFactory factory = (LettuceConnectionFactory) config.redisConnectionFactory(resources);
+
+            assertThat(factory.getTimeout()).isEqualTo(700L);
+            assertThat(factory.getClientConfiguration().getClientResources()).containsSame(resources);
+        } finally {
+            resources.shutdown();
+        }
     }
 
     @Test

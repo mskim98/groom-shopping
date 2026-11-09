@@ -22,7 +22,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import groom.backend.infrastructure.config.RedisConfig;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.cache.CacheManager;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -66,6 +69,9 @@ class CouponIssueServiceIntegrationTest {
 
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
+    @Autowired
+    @Qualifier("couponCacheManager")
+    private CacheManager couponCacheManager;
 
     // 케이스마다 만든 쿠폰의 Redis 키를 tearDown 에서 지우기 위해 모은다
     private final List<Long> touchedCouponIds = new ArrayList<>();
@@ -178,13 +184,16 @@ class CouponIssueServiceIntegrationTest {
         if (!"SUCCESS".equals(status)) {
             throw new IllegalStateException("발급 실패: " + status);
         }
+        // searchMyCoupon 은 userId 키로 캐시된다. 확정 경로는 그 캐시를 비우지 않으므로 같은 사용자의 두 번째 발급 뒤
+        // 비우지 않고 조회하면 첫 호출이 캐시한 목록이 돌아온다. 조회 전에 비워 캐시 상태에 기대지 않는다
+        couponCacheManager.getCache(RedisConfig.COUPON_LIST_CACHE_NAME).evict(user.getId());
         return couponIssueService.searchMyCoupon(user.getId()).stream()
                 .filter(r -> r.getCouponId().equals(couponId))
                 .findFirst().orElseThrow();
     }
 
     // 활성 쿠폰을 정상적으로 발급하는 시나리오 테스트
-    // 접수 게이트 + 컨슈머 확정이 CouponIssue 를 생성하고 수량 감소 및 응답 반환을 검증함
+    // 접수 게이트 + 컨슈머 확정이 CouponIssue 를 생성하고 발행 수량 불변 및 응답 반환을 검증함
     // 데이터베이스 반영 후 CouponIssue와 Coupon 수량이 올바르게 변경되었는지 확인
     @Test
     @DisplayName("쿠폰 발급 성공")
@@ -205,9 +214,9 @@ class CouponIssueServiceIntegrationTest {
         assertThat(savedIssue.getCoupon().getId()).isEqualTo(activeCoupon.getId());
         assertThat(savedIssue.getIsActive()).isTrue();
 
-        // 쿠폰 수량이 감소했는지 확인
+        // V15 이후 quantity 는 고정된 발행 수량이다. 확정 경로는 coupon 테이블을 만지지 않는다
         Coupon updatedCoupon = couponRepository.findById(activeCoupon.getId()).orElseThrow();
-        assertThat(updatedCoupon.getQuantity()).isEqualTo(99L);
+        assertThat(updatedCoupon.getQuantity()).isEqualTo(100L);
     }
 
     // 존재하지 않는 쿠폰 ID로 발급 요청 시 실패하는지 테스트

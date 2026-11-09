@@ -1,12 +1,10 @@
 package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import groom.backend.application.coupon.event.CouponIssueRequestEvent;
 import groom.backend.domain.auth.enums.Grade;
 import groom.backend.domain.auth.enums.Role;
@@ -25,12 +23,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
  * 컨슈머 재전달이 재고를 부풀리지 않는다 (실 PostgreSQL + Redis + Kafka 필요)
@@ -41,8 +38,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
  */
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-// 스파이 빈 때문에 전용 컨텍스트가 하나 더 뜬다. Kafka Streams 상태 디렉터리 락이 앞 컨텍스트와 부딪히지 않게 끈다
-@TestPropertySource(properties = "spring.kafka.streams.auto-startup=false")
 @DisplayName("쿠폰 컨슈머 재전달 멱등")
 class CouponRedeliveryIdempotencyTest {
 
@@ -60,8 +55,13 @@ class CouponRedeliveryIdempotencyTest {
     private SpringDataUserRepository userRepository;
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
-    @MockitoSpyBean
+    @Autowired
     private CouponStockRedisRepository stockRepository;
+
+    // 전용 컨텍스트를 만들면 캐시된 컨텍스트마다 Hikari 풀이 PostgreSQL 연결 상한을 갉아 먹는다
+    // 스파이 대신 서비스의 중복 차단 로그로 "재고 반납 경로를 탔는가" 를 센다 - 그 로그는 rollbackStockOnly 바로 앞에서 찍힌다
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private Logger serviceLogger;
 
     private Long couponId;
     private final List<Long> userIds = new ArrayList<>();
@@ -86,11 +86,21 @@ class CouponRedeliveryIdempotencyTest {
                     .isEqualTo(CouponStockRedisRepository.IssueResult.SUCCESS);
             events.add(new CouponIssueRequestEvent(UUID.randomUUID().toString(), couponId, user.getId(), true));
         }
-        clearInvocations(stockRepository);
+        serviceLogger = (Logger) LoggerFactory.getLogger(CouponAsyncIssueService.class);
+        logs.list.clear();
+        logs.start();
+        serviceLogger.addAppender(logs);
+    }
+
+    private long 중복_차단_로그_수() {
+        return logs.list.stream()
+                .filter(e -> e.getFormattedMessage().contains("[COUPON_DUPLICATE_BLOCKED_BY_DB]")).count();
     }
 
     @AfterEach
     void tearDown() {
+        serviceLogger.detachAppender(logs);
+        logs.stop();
         redisTemplate.delete(List.of(CouponStockRedisRepository.stockKey(couponId),
                 CouponStockRedisRepository.issuedUsersKey(couponId)));
         events.forEach(e -> redisTemplate.delete("coupon:issue:status:" + e.requestId()));
@@ -115,7 +125,7 @@ class CouponRedeliveryIdempotencyTest {
         assertThat(stockRepository.countIssuedUsers(couponId)).isEqualTo(issuedAfterFirst);
         assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(rowsAfterFirst);
         // 재고 반납 경로가 한 번도 불리지 않아야 한다 - +1 이 곧 초과 발급의 씨앗이다
-        verify(stockRepository, never()).rollbackStockOnly(anyLong());
+        assertThat(중복_차단_로그_수()).isZero();
         events.forEach(e -> assertThat(service.getStatus(e.requestId())).isEqualTo("SUCCESS"));
     }
 
@@ -128,7 +138,7 @@ class CouponRedeliveryIdempotencyTest {
 
         service.processBatch(List.of(intruder));
 
-        verify(stockRepository, times(1)).rollbackStockOnly(couponId);
+        assertThat(중복_차단_로그_수()).isEqualTo(1L);
         assertThat(service.getStatus(intruder.requestId())).isEqualTo("FAILED:COUPON_ALREADY_ISSUED");
         assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(USERS);
         redisTemplate.delete("coupon:issue:status:" + intruder.requestId());
