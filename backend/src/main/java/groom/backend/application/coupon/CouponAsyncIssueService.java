@@ -13,9 +13,11 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -242,11 +244,16 @@ public class CouponAsyncIssueService {
             return;
         }
 
-        List<Long> userIds = confirmable.stream().map(CouponIssueRequestEvent::userId).toList();
-        Set<Long> inserted = couponIssueBatchWriter.insertAll(couponId, expiresAt, userIds);
+        // 한 사용자에 요청이 둘이면 앞의 것만 넣는다. 뒤의 것은 소유하지 못해 아래에서 진짜 중복으로 떨어진다
+        Map<Long, String> requestIdByUser = new LinkedHashMap<>();
+        for (CouponIssueRequestEvent event : confirmable) {
+            requestIdByUser.putIfAbsent(event.userId(), event.requestId());
+        }
+        // 소유 = 이번에 넣었거나, 앞 시도가 이미 같은 requestId 로 넣어 둔 행이 있는 요청
+        Set<String> owned = couponIssueBatchWriter.insertAll(couponId, expiresAt, requestIdByUser);
 
         for (CouponIssueRequestEvent event : confirmable) {
-            if (inserted.contains(event.userId())) {
+            if (owned.contains(event.requestId())) {
                 statuses.put(event.requestId(), STATUS_SUCCESS);
                 if (publishSuccessResults) {
                     results.add(new CouponIssueResultEvent(event.requestId(), couponId, event.userId(),
@@ -254,7 +261,8 @@ public class CouponAsyncIssueService {
                 }
                 continue;
             }
-            // 들어가지 않았다 = 이 사용자는 이미 그 쿠폰을 갖고 있다
+            // 다른 요청이 이미 그 쿠폰의 행을 갖고 있다 = 진짜 중복이다
+            // 같은 requestId 의 행이면 owned 에 들어와 여기 오지 않는다 - 재전달에서 재고를 되돌리면 +1 씩 부푼다
             // 발급자 SET 에서는 빼지 않는다 - 빼면 게이트가 그를 다시 통과시켜 같은 실패를 반복한다
             // 자리만 되돌려 뒤 요청이 쓰게 한다
             couponStockRedisRepository.rollbackStockOnly(couponId);
@@ -342,11 +350,21 @@ public class CouponAsyncIssueService {
     public void abandonBatch(List<CouponIssueRequestEvent> events, Throwable cause) {
         Map<String, String> statuses = new LinkedHashMap<>();
         List<CouponIssueResultEvent> results = new ArrayList<>();
+        // 행이 이미 커밋된 요청은 반납하지 않는다 - 되돌리면 DB 에는 행이 있는데 재고만 늘어난다
+        // 조회가 실패하면 예외를 그대로 올린다. 행의 유무를 모르는 채 반납하면 초과 발급이고,
+        // 반납하지 않는 쪽의 손해는 정산이 메우는 미달 발급이다
+        Set<String> committed = new HashSet<>(couponIssueRepository.findExistingRequestIds(
+                events.stream().map(CouponIssueRequestEvent::requestId).filter(Objects::nonNull).toList()));
         for (CouponIssueRequestEvent event : events) {
+            if (committed.contains(event.requestId())) {
+                statuses.put(event.requestId(), STATUS_SUCCESS);
+                continue;
+            }
             couponStockRedisRepository.rollbackIssue(event.couponId(), event.userId());
             fail(event, ErrorCode.SERVER_ERROR.name(), statuses, results);
         }
-        log.error("[COUPON_BATCH_ABANDONED] size={}, error={}", events.size(), String.valueOf(cause));
+        log.error("[COUPON_BATCH_ABANDONED] size={}, committed={}, error={}",
+                events.size(), committed.size(), String.valueOf(cause));
         writeStatuses(statuses);
         for (CouponIssueResultEvent result : results) {
             send(RESULT_TOPIC, String.valueOf(result.userId()), result);

@@ -3,7 +3,7 @@ package groom.backend.application.coupon;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -197,14 +197,14 @@ class CouponAsyncIssueServiceTest {
     @DisplayName("확정은 배치 한 문장으로 넣고 쿠폰 수량을 건드리지 않는다")
     void processBatch_배치로_넣고_수량은_건드리지_않는다() {
         given(couponRepository.findById(1L)).willReturn(Optional.of(유효한_쿠폰()));
-        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyList())).willReturn(Set.of(100L, 200L));
+        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyMap())).willReturn(Set.of("req-1", "req-2"));
 
         service.processBatch(List.of(
                 new CouponIssueRequestEvent("req-1", 1L, 100L, true),
                 new CouponIssueRequestEvent("req-2", 1L, 200L, true)));
 
         // 두 건이 두 문장이 아니라 한 문장으로 간다. 배치가 줄이는 것은 커넥션·트랜잭션·왕복이다
-        verify(couponIssueBatchWriter, times(1)).insertAll(eq(1L), any(), anyList());
+        verify(couponIssueBatchWriter, times(1)).insertAll(eq(1L), any(), anyMap());
         // UPDATE coupon SET quantity = quantity - 1 이 되살아나면 이 단언이 깨진다
         verify(couponRepository, never()).decreaseQuantityAtomically(anyLong());
 
@@ -217,7 +217,7 @@ class CouponAsyncIssueServiceTest {
     @DisplayName("확정은 재고를 다시 검사하지 않는다")
     void processBatch_게이트예약분은_재판정하지_않는다() {
         given(couponRepository.findById(1L)).willReturn(Optional.of(유효한_쿠폰()));
-        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyList())).willReturn(Set.of(100L));
+        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyMap())).willReturn(Set.of("req-1"));
 
         service.processBatch(List.of(new CouponIssueRequestEvent("req-1", 1L, 100L, true)));
 
@@ -229,7 +229,7 @@ class CouponAsyncIssueServiceTest {
     @DisplayName("들어가지 않은 건은 자리만 되돌리고 발급자 명단에는 남긴다")
     void processBatch_중복은_재고만_되돌린다() {
         given(couponRepository.findById(1L)).willReturn(Optional.of(유효한_쿠폰()));
-        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyList())).willReturn(Set.of());
+        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyMap())).willReturn(Set.of());
 
         service.processBatch(List.of(new CouponIssueRequestEvent("req-1", 1L, 100L, true)));
 
