@@ -13,10 +13,10 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
-import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
@@ -24,6 +24,7 @@ import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -146,8 +147,8 @@ class PaymentFailurePathOrderTest {
                 .hasMessageContaining("commit failed");
         assertThat(fixture.statusOf(payment.getId())).as("롤백 뒤 결제 상태").isNotEqualTo("DONE");
 
-        verify(paymentNotificationService, never()).clearCartItems(any(Order.class));
-        verify(paymentNotificationService, never()).sendStockReducedNotifications(any(), any(Order.class));
+        verify(paymentNotificationService, never()).clearCartItems(any(), any(), any());
+        verify(paymentNotificationService, never()).sendStockReducedNotifications(any(), any());
     }
 
     @Test
@@ -159,11 +160,11 @@ class PaymentFailurePathOrderTest {
         doAnswer(invocation -> {
             statusAtCartClear.set(fixture.statusOf(payment.getId()));
             return null;
-        }).when(paymentNotificationService).clearCartItems(any(Order.class));
+        }).when(paymentNotificationService).clearCartItems(any(), any(), any());
         doAnswer(invocation -> {
             statusAtNotification.set(fixture.statusOf(payment.getId()));
             return null;
-        }).when(paymentNotificationService).sendStockReducedNotifications(any(), any(Order.class));
+        }).when(paymentNotificationService).sendStockReducedNotifications(any(), any());
 
         paymentApplicationService.applyApprovedPaymentInTx(
                 payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
@@ -213,5 +214,40 @@ class PaymentFailurePathOrderTest {
         order.verify(compensationService).compensate(eq(payment.getId()), eq(paymentKey), eq(1000), anyString());
         order.verify(productStockRedisRepository).release(eq(productId), eq(1));
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
+    }
+
+    @Test
+    @DisplayName("커밋 뒤 호출에는 엔티티가 아니라 트랜잭션 안에서 만든 평범한 값(사용자 id · 주문 id · 항목)이 전달된다")
+    void 후처리커밋_커밋뒤_호출은_엔티티가_아닌_평범한_값을_받는다() {
+        // 커밋 뒤에는 트랜잭션이 없다(open-in-view 도 꺼져 있다) - 받은 값만으로 읽을 수 있어야 한다
+        AtomicReference<Long> cartUserId = new AtomicReference<>();
+        AtomicReference<UUID> cartOrderId = new AtomicReference<>();
+        AtomicReference<List<CartApplicationService.CartItemToRemove>> cartItems = new AtomicReference<>();
+        AtomicReference<Long> notifyUserId = new AtomicReference<>();
+        AtomicReference<Integer> stockAfter = new AtomicReference<>();
+        doAnswer(invocation -> {
+            cartUserId.set(invocation.getArgument(0));
+            cartOrderId.set(invocation.getArgument(1));
+            cartItems.set(invocation.getArgument(2));
+            return null;
+        }).when(paymentNotificationService).clearCartItems(any(), any(), any());
+        doAnswer(invocation -> {
+            List<PaymentNotificationService.StockReductionResult> reductions = invocation.getArgument(0);
+            stockAfter.set(reductions.get(0).getStockAfter());
+            notifyUserId.set(invocation.getArgument(1));
+            return null;
+        }).when(paymentNotificationService).sendStockReducedNotifications(any(), any());
+
+        paymentApplicationService.applyApprovedPaymentInTx(
+                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
+
+        assertThat(cartUserId.get()).isEqualTo(1L);
+        assertThat(cartOrderId.get()).isEqualTo(payment.getOrderId());
+        assertThat(cartItems.get()).singleElement().satisfies(item -> {
+            assertThat(item.getProductId()).isEqualTo(productId);
+            assertThat(item.getQuantity()).isEqualTo(1);
+        });
+        assertThat(notifyUserId.get()).isEqualTo(1L);
+        assertThat(stockAfter.get()).as("알림에 실리는 차감 후 재고").isEqualTo(9);
     }
 }
