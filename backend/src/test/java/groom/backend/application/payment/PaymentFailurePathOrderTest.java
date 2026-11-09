@@ -14,19 +14,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.cart.CartApplicationService;
+import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
+import groom.backend.application.product.StockDecrementer;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
-import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +53,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 // 실행 중인 앱과 Kafka Streams 상태 디렉토리 락 충돌 방지(이 테스트는 Streams 불필요)
 @TestPropertySource(properties = {
         "spring.kafka.streams.auto-startup=false",
+        "payment.consumer.auto-startup=false",
+        "payment.confirm.wait-timeout-ms=1000",
+        "payment.confirm.poll-interval-ms=50",
         // 배경 보상 배치가 이 시험의 보상 행을 가져가지 않게 늦춘다
         "payment.compensation.retry-delay-ms=600000"})
 @DisplayName("결제 실패 경로 순서와 커밋 뒤 부수효과(T3-5)")
@@ -60,8 +67,8 @@ class PaymentFailurePathOrderTest {
     private ProductStockRedisRepository productStockRedisRepository; // 선점 성공 · 해제 실패를 주입하는 지점
     @MockBean
     private TossPaymentClient tossPaymentClient; // 승인 성공 응답을 주입하는 지점
-    @MockBean
-    private PaymentOutboxRepository outboxRepository; // 재고 차감 뒤 후처리를 실패시키는 지점
+    @SpyBean
+    private StockDecrementer stockDecrementer; // 실제 차감 뒤에 후처리를 실패시키는 지점(Outbox 적재는 확정 쪽으로 옮겨져 후처리에 없다)
     @MockBean
     private PaymentNotificationService paymentNotificationService; // 커밋 뒤 호출 여부를 확인하는 지점
     @SpyBean
@@ -77,6 +84,8 @@ class PaymentFailurePathOrderTest {
     private SpringDataPaymentRepository paymentRepository;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     private PaymentFixture fixture;
     private UUID productId;
@@ -99,18 +108,34 @@ class PaymentFailurePathOrderTest {
         fixture.cleanup(payment, productId);
     }
 
+    // 실제 차감을 한 뒤 던져 후처리 트랜잭션이 재고 차감까지 롤백하게 한다
+    private void failPostProcessAfterDecrease(RuntimeException failure) {
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw failure;
+        }).when(stockDecrementer).decrease(any(), anyInt());
+    }
+
     private void failPostProcessAndRedisRelease() {
-        doThrow(new IllegalStateException("outbox down")).when(outboxRepository).save(any());
+        failPostProcessAfterDecrease(new IllegalStateException("post-process down"));
         doThrow(new IllegalStateException("redis down")).when(productStockRedisRepository).release(any(), anyInt());
+    }
+
+    // Outbox 에 적재된 PaymentApproved 이벤트를 컨슈머 대신 서비스 진입점에 먹인다
+    private void driveConsumer() throws Exception {
+        String payload = jdbc.queryForObject(
+                "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
+        paymentApplicationService.applyApprovedEvent(objectMapper.readValue(payload, PaymentApprovedEvent.class));
     }
 
     @Test
     @DisplayName("후처리 실패 뒤 Redis 선점 해제가 예외여도 보상 의도가 기록되고 결제는 FAILED 가 된다")
-    void 실패경로_Redis해제가_예외여도_보상의도가_기록된다() {
+    void 실패경로_Redis해제가_예외여도_보상의도가_기록된다() throws Exception {
         failPostProcessAndRedisRelease();
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
-                .hasMessageContaining("outbox down");
+        // 확정은 READY 로 돌아오고(컨슈머는 꺼 둠) 후처리는 이벤트를 받은 서비스 진입점이 한다
+        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000);
+        driveConsumer();
 
         assertThat(jdbc.queryForList("SELECT status FROM payment_compensation WHERE payment_id = ?",
                 String.class, payment.getId())).as("보상 의도 행").hasSize(1);
@@ -119,11 +144,11 @@ class PaymentFailurePathOrderTest {
 
     @Test
     @DisplayName("후처리 실패 뒤 보상 의도 기록이 Redis 선점 해제보다 먼저 일어난다")
-    void 실패경로_보상의도가_Redis해제보다_먼저_기록된다() {
+    void 실패경로_보상의도가_Redis해제보다_먼저_기록된다() throws Exception {
         failPostProcessAndRedisRelease();
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
-                .isInstanceOf(RuntimeException.class);
+        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000);
+        driveConsumer();
 
         InOrder order = inOrder(compensationService, productStockRedisRepository);
         order.verify(compensationService).compensate(eq(payment.getId()), eq(paymentKey), eq(1000), anyString());
@@ -135,14 +160,15 @@ class PaymentFailurePathOrderTest {
     void 후처리롤백_장바구니비우기와_알림이_호출되지_않는다() {
         // 메서드 본문은 끝까지 성공하고 커밋 직전에 실패한다 - 본문 안에서 부른 부수효과는 이미 나간 뒤라 롤백을 못 따른다
         doAnswer(invocation -> {
+            Object decreased = invocation.callRealMethod();
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void beforeCommit(boolean readOnly) {
                     throw new IllegalStateException("commit failed");
                 }
             });
-            return null;
-        }).when(outboxRepository).save(any());
+            return decreased;
+        }).when(stockDecrementer).decrease(any(), anyInt());
 
         assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
                 payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE)))
@@ -254,17 +280,25 @@ class PaymentFailurePathOrderTest {
     }
 
     @Test
-    @DisplayName("후처리가 매 시도마다 version 충돌이면 409(PRODUCT_STOCK_CONFLICT)로 답하고 보상 의도가 기록되며 재고는 그대로다")
-    void 후처리_매시도_version충돌_409로_답하고_보상의도를_기록한다() {
-        // 재고 차감 뒤 Outbox 적재에서 매번 낙관적 락 충돌이 난다 - 시도마다 롤백되므로 재고는 그대로여야 한다
-        doThrow(new ObjectOptimisticLockingFailureException(Payment.class, payment.getId()))
-                .when(outboxRepository).save(any());
+    @DisplayName("후처리가 매 시도마다 version 충돌이면 대기 중인 확정 요청이 409(PRODUCT_STOCK_CONFLICT)로 답하고 보상 의도가 기록되며 재고는 그대로다")
+    void 후처리_매시도_version충돌_409로_답하고_보상의도를_기록한다() throws Exception {
+        // 재고 차감 뒤 매번 낙관적 락 충돌이 난다 - 시도마다 롤백되므로 재고는 그대로여야 한다
+        failPostProcessAfterDecrease(new ObjectOptimisticLockingFailureException(Payment.class, payment.getId()));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
-                .isInstanceOfSatisfying(BusinessException.class,
+        // 확정 요청은 READY 가 된 뒤 컨슈머의 결과를 기다린다. 그 사이 후처리를 돌려 FAILED 를 만든다
+        CompletableFuture<Payment> confirm = CompletableFuture.supplyAsync(() ->
+                paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000));
+        for (int i = 0; i < 100 && !"READY".equals(fixture.statusOf(payment.getId())); i++) {
+            Thread.sleep(20);
+        }
+        driveConsumer();
+
+        assertThatThrownBy(() -> confirm.get(10, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(BusinessException.class)
+                .cause().isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT));
 
-        verify(outboxRepository, times(3)).save(any());
+        verify(stockDecrementer, times(3)).decrease(any(), anyInt());
         assertThat(jdbc.queryForList("SELECT payment_key FROM payment_compensation WHERE payment_id = ?",
                 String.class, payment.getId())).as("이미 승인된 결제의 환불 의도").containsExactly(paymentKey);
         assertThat(fixture.stockOf(productId)).isEqualTo(10);
