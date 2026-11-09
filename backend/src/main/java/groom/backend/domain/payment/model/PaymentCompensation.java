@@ -104,10 +104,11 @@ public class PaymentCompensation {
                     CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
                     CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.SUPERSEDED,
                     CompensationStatus.NOT_APPROVED),
-            CompensationStatus.SUCCEEDED, EnumSet.noneOf(CompensationStatus.class),
-            CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class),
-            CompensationStatus.SUPERSEDED, EnumSet.noneOf(CompensationStatus.class),
-            CompensationStatus.NOT_APPROVED, EnumSet.noneOf(CompensationStatus.class));
+            CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.SUPERSEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.NOT_APPROVED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.RECONCILE_NEEDED, EnumSet.noneOf(CompensationStatus.class));
 
     private void transitionTo(CompensationStatus next) {
         Set<CompensationStatus> allowed = ALLOWED_TRANSITIONS
@@ -175,6 +176,18 @@ public class PaymentCompensation {
     /** Toss 에 승인된 결제가 없음이 확인돼 보상이 필요 없는 행 - 재시도하지 않는다 */
     public void markNotApproved(String reason) {
         transitionTo(CompensationStatus.NOT_APPROVED);
+        this.lastError = reason;
+        this.nextRetryAt = null;
+    }
+
+    /**
+     * 수동 취소에서 Toss 는 취소됐는데 DB 갱신이 실패한 결제에 이미 보상 행이 있을 때, 그 행을 사람이 대사할 상태로 바꾼다
+     * 어떤 상태에서도 올 수 있고(종단 상태 포함) 이미 RECONCILE_NEEDED 면 사유만 갱신한다 - 같은 건의 재호출이 실패하면 안 된다
+     */
+    public void markReconcileNeeded(String reason) {
+        if (this.status != CompensationStatus.RECONCILE_NEEDED) {
+            transitionTo(CompensationStatus.RECONCILE_NEEDED);
+        }
         this.lastError = reason;
         this.nextRetryAt = null;
     }

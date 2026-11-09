@@ -146,13 +146,25 @@ public class PaymentCompensationService {
     public void recordReconcileNeeded(UUID paymentId, String paymentKey, Integer amount, String reason) {
         try {
             selfProvider.getObject().recordGivenUpIntent(paymentId, paymentKey, amount, reason);
-        } catch (DataIntegrityViolationException duplicate) {
-            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - PaymentId: {}", paymentId);
+        } catch (DataIntegrityViolationException raced) {
+            // 조회와 삽입 사이에 같은 결제의 행이 먼저 생겼다 - 이번에는 조회가 그 행을 찾아 갱신 경로를 탄다.
+            // 두 번째 실패는 삼키지 않고 호출부로 전파한다(대사 행도 DLQ 이벤트도 없는 불일치를 조용히 두지 않는다)
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 삽입 경합 - 기존 행을 갱신으로 재시도 PaymentId: {}", paymentId);
+            selfProvider.getObject().recordGivenUpIntent(paymentId, paymentKey, amount, reason);
         }
     }
 
+    // 결제에 보상 행이 이미 있으면(SUPERSEDED · NOT_APPROVED 등) 그 행을 RECONCILE_NEEDED 로 갱신하고, 없으면 GIVEN_UP 행을 만든다.
+    // 어느 쪽이든 같은 트랜잭션에서 DLQ Outbox 이벤트를 남긴다
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordGivenUpIntent(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        PaymentCompensation existing = compensationRepository.findByPaymentId(paymentId).orElse(null);
+        if (existing != null) {
+            existing.markReconcileNeeded(reason);
+            compensationRepository.save(existing);
+            appendGivenUpOutbox(existing, reason);
+            return;
+        }
         PaymentCompensation compensation = PaymentCompensation.builder()
                 .paymentId(paymentId).paymentKey(paymentKey).amount(amount).reason(reason).maxRetryCount(5).build();
         compensation.markGivenUp(reason);

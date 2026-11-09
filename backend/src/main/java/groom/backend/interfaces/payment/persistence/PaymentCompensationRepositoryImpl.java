@@ -48,6 +48,11 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
     }
 
     @Override
+    public Optional<PaymentCompensation> findByPaymentId(UUID paymentId) {
+        return jpa.findByPaymentId(paymentId);
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public List<PaymentCompensation> findRetryable(LocalDateTime now, LocalDateTime staleThreshold, int limit) {
         return entityManager.createNativeQuery(ACQUIRE_RETRYABLE_SQL, PaymentCompensation.class)
