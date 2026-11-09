@@ -2,6 +2,7 @@ package groom.backend.infrastructure.config;
 
 import groom.backend.infrastructure.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -60,13 +61,15 @@ public class SecurityConfig {
     // 측정 전용 우회 필터도 같은 이중 등록 함정에 걸린다
     // 서블릿 쪽이 먼저 돌면서 요청을 '처리됨' 으로 표시하면, 시큐리티 체인 안의 같은 필터가 건너뛴다
     // 그 사이 SecurityContextHolderFilter 가 컨텍스트를 비우므로 인증이 통째로 사라져 401 이 된다 (실제로 겪었다)
+    // 필터와 같은 조건(loadtest.auth-bypass.enabled)에서만 등록 빈을 만든다
+    // 필터가 없는데 등록 빈만 남으면 톰캣이 기동 중 등록을 시작하는 순간 'filter must not be null' 로 실패한다
     @Bean
+    @ConditionalOnProperty(name = "loadtest.auth-bypass.enabled", havingValue = "true")
     public FilterRegistrationBean<groom.backend.infrastructure.security.LoadTestAuthBypassFilter>
             loadTestAuthBypassFilterRegistration(
-            java.util.Optional<groom.backend.infrastructure.security.LoadTestAuthBypassFilter> filter) {
+            groom.backend.infrastructure.security.LoadTestAuthBypassFilter filter) {
         FilterRegistrationBean<groom.backend.infrastructure.security.LoadTestAuthBypassFilter> registration =
-                new FilterRegistrationBean<>();
-        filter.ifPresent(registration::setFilter);
+                new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }
