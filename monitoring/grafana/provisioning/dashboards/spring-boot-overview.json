@@ -241,8 +241,7 @@
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 15 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 10000 } ] } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kafka_consumer_fetch_manager_records_lag{job=\"spring-boot\"})", "legendFormat": "lag (sum)" },
-        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kafka_consumer_fetch_manager_records_lag_max{job=\"spring-boot\"})", "legendFormat": "lag max" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kafka_consumer_fetch_manager_records_lag_max{job=\"spring-boot\"})", "legendFormat": "lag max" }
       ]
     },
     {
@@ -285,6 +284,36 @@
         { "refId": "D", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "jvm_threads_live_threads{job=\"spring-boot\"}", "legendFormat": "live" },
         { "refId": "E", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "jvm_threads_peak_threads{job=\"spring-boot\"}", "legendFormat": "peak" }
       ]
+    },
+
+    {
+      "id": 29, "type": "row", "title": "[PAYMENT] 보상 배치",
+      "collapsed": false, "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 84 }
+    },
+    {
+      "id": 30, "type": "stat", "title": "[PAYMENT] 보상 대기 건수 (due)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 85 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "payment_compensation_due{job=\"spring-boot\"}", "legendFormat": "due" } ]
+    },
+    {
+      "id": 31, "type": "stat", "title": "[PAYMENT] 이월 건수 (carried)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 85 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "payment_compensation_carried{job=\"spring-boot\"}", "legendFormat": "carried" } ]
+    },
+    {
+      "id": 32, "type": "stat", "title": "[PAYMENT] 포기 누적 (given_up)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 85 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "payment_compensation_given_up{job=\"spring-boot\"}", "legendFormat": "given up" } ]
     }
   ]
 }

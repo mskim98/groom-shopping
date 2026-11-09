@@ -1,5 +1,6 @@
 package groom.backend.application.coupon;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -31,6 +32,11 @@ public class CouponStockRedisRepository {
     // 중괄호 안(couponId)만 슬롯 계산에 쓰이므로 두 키가 반드시 같은 노드에 놓인다
     private static final String KEY_PREFIX = "coupon:{";
 
+    // 발행 결과를 끝내 모르는 요청 표시. 값은 requestId:couponId:userId
+    // 브로커가 기록했는지 알 수 없어 재고를 되돌리지 못한 건이다. 대조(종료 쿠폰의 고아 예약 회수)가 이 목록으로 조사한다
+    private static final String PUBLISH_UNCERTAIN_KEY = "coupon:issue:publish-uncertain";
+    private static final Duration PUBLISH_UNCERTAIN_TTL = Duration.ofDays(1);
+
     public static String stockKey(Long couponId) {
         return KEY_PREFIX + couponId + "}:stock";
     }
@@ -61,6 +67,40 @@ public class CouponStockRedisRepository {
                     redis.call('DECR', KEYS[1])
                     redis.call('SADD', KEYS[2], ARGV[1])
                     return 1
+                    """,
+            Long.class
+    );
+
+    /**
+     * 반납 Lua - 재고 키가 있을 때만 올린다. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키, ARGV[1]=userId
+     *
+     * <p>INCR 은 없는 키를 1 로 만든다. Redis 가 비워진 직후 반납이 들어오면 재고 키가 1 로 생겨
+     * 판정 근거가 없다는 신호(-2 → 503)가 사라진다. 키가 없으면 -2 를 돌려주고 아무것도 쓰지 않는다 -
+     * 명단만 줄이면 복구가 DB 로 다시 세울 때 두 값이 어긋난다
+     *
+     * <p>명단에서 실제로 빠진 경우에만 올린다(-3 은 이미 풀린 예약). 예약 = 재고 차감 + 명단 등록이므로
+     * 명단에 없으면 돌려줄 차감이 없고, 재전달된 배치가 같은 정리를 다시 불러도 재고가 한 번만 오른다
+     */
+    private static final RedisScript<Long> ROLLBACK_ISSUE_SCRIPT = new DefaultRedisScript<>(
+            """
+                    if redis.call('EXISTS', KEYS[1]) == 0 then
+                        return -2
+                    end
+                    if redis.call('SREM', KEYS[2], ARGV[1]) == 1 then
+                        return redis.call('INCRBY', KEYS[1], 1)
+                    end
+                    return -3
+                    """,
+            Long.class
+    );
+
+    private static final RedisScript<Long> ROLLBACK_STOCK_ONLY_SCRIPT = new DefaultRedisScript<>(
+            """
+                    if redis.call('EXISTS', KEYS[1]) == 1 then
+                        return redis.call('INCRBY', KEYS[1], 1)
+                    else
+                        return -2
+                    end
                     """,
             Long.class
     );
@@ -120,8 +160,19 @@ public class CouponStockRedisRepository {
      * Lua 결과를 DB 커밋 실패 등으로 롤백해야 할 때 사용
      */
     public void rollbackIssue(Long couponId, Long userId) {
-        redisTemplate.opsForValue().increment(stockKey(couponId));
-        redisTemplate.opsForSet().remove(issuedUsersKey(couponId), userId.toString());
+        Long result = redisTemplate.execute(ROLLBACK_ISSUE_SCRIPT,
+                List.of(stockKey(couponId), issuedUsersKey(couponId)), userId.toString());
+        warnIfKeyMissing(result, couponId);
+    }
+
+    /**
+     * 발행 결과를 모르는 요청을 대조 대상으로 표시한다. 재고는 건드리지 않는다
+     *
+     * <p>TTL 은 키 전체에 걸린다. 표시가 들어올 때마다 갱신되므로 마지막 표시 하루 뒤에 사라진다
+     */
+    public void markPublishUncertain(String requestId, Long couponId, Long userId) {
+        redisTemplate.opsForSet().add(PUBLISH_UNCERTAIN_KEY, requestId + ":" + couponId + ":" + userId);
+        redisTemplate.expire(PUBLISH_UNCERTAIN_KEY, PUBLISH_UNCERTAIN_TTL);
     }
 
     /**
@@ -131,7 +182,15 @@ public class CouponStockRedisRepository {
      * 게이트가 그를 다시 통과시켜 같은 실패를 무한 반복한다
      */
     public void rollbackStockOnly(Long couponId) {
-        redisTemplate.opsForValue().increment(stockKey(couponId));
+        Long result = redisTemplate.execute(ROLLBACK_STOCK_ONLY_SCRIPT, List.of(stockKey(couponId)));
+        warnIfKeyMissing(result, couponId);
+    }
+
+    // 키가 없어 반납하지 못한 경우다. 복구가 quantity − DB 발급 수로 다시 세우므로 이 반납분은 그 값에 이미 반영된다
+    private void warnIfKeyMissing(Long result, Long couponId) {
+        if (result != null && result == -2L) {
+            log.warn("[COUPON_ROLLBACK_SKIPPED_KEY_MISSING] couponId={}", couponId);
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.coupon;
 
+import groom.backend.application.coupon.CouponStockRecoveryService;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
@@ -22,8 +23,10 @@ import org.springframework.stereotype.Component;
 //
 // 상품 쪽 StockWarmUpRunner 와 의도적으로 다른 점: 덮어쓰지 않는다(SETNX).
 // 상품은 DB 가 원천이고 Redis 는 선점 게이트라 부팅 시 Redis=DB 로 맞추는 것이 옳지만,
-// 쿠폰은 이벤트 진행 중 Redis 가 살아 있는 카운터다. DB 수량은 커밋이 끝난 발급까지만 반영하므로,
-// 재기동 시 SET 으로 덮으면 Lua 차감은 끝났으나 DB 커밋 전이던 요청 수만큼 재고가 되살아난다.
+// 쿠폰은 이벤트 진행 중 Redis 가 살아 있는 카운터다. 재기동 시 SET 으로 덮으면
+// Lua 차감은 끝났으나 DB 커밋 전이던 요청 수만큼 재고가 되살아난다.
+// 키가 없을 때 심는 값은 quantity − DB 발급 수다. V15 이후 quantity 는 고정된 총 발행량이라
+// 그대로 심으면 Redis 가 사라진 뒤 이미 나간 수만큼 재고가 되살아난다.
 // 워밍업의 목적은 동기화가 아니라 "첫 요청이 폴백을 타지 않게 하는 것"이다.
 // 상품 워밍업(StockWarmUpRunner)과는 다루는 Redis 키가 달라 실행 순서에 의존하지 않는다.
 //
@@ -38,6 +41,7 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
     private final CouponRepository couponRepository;
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
+    private final CouponStockRecoveryService couponStockRecoveryService;
 
     // 한 번에 읽어올 페이지 크기(메모리/쿼리 횟수 트레이드오프)
     @Value("${coupon.warmup.batch-size:1000}")
@@ -45,6 +49,10 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // 재고 키가 없는 쿠폰이 있으면 Redis 가 사라진 것이다. 랙을 빼서 심는 복구가 먼저 돈다(복구 중 접수는 503)
+        // 아래 SETNX 는 복구가 심은 키를 덮지 않고, 복구가 심지 못한 쿠폰(랙을 못 읽은 경우)만 채운다
+        couponStockRecoveryService.recoverIfStockMissing();
+
         int planted = 0;
         int skipped = 0;
         long restored = 0;
@@ -53,19 +61,25 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
         do {
             page = couponRepository.findActiveByIdGreaterThan(lastId, PageRequest.of(0, batchSize));
             for (Coupon coupon : page) {
+                // 발급자 SET 복원이 재고 키보다 앞선다. 재고 키가 먼저 생기면 SET 이 비어 있는 동안
+                // 이미 받은 사용자가 게이트를 다시 통과한다. 재고 키가 없는 동안 접수는 503 으로 돌려보낸다
+                // 재고와 달리 항상 수행한다 -
+                // 재고 키가 살아 있어도(skipped) 발급자 SET 만 유실됐을 수 있고,
+                // 그 상태에서는 이미 받은 사용자가 게이트를 다시 통과한다
+                restored += couponStockRedisRepository.addIssuedUsers(
+                        coupon.getId(), couponIssueRepository.findUserIdsByCouponId(coupon.getId()));
                 Long quantity = coupon.getQuantity();
                 if (quantity != null && quantity > 0) {
-                    if (couponStockRedisRepository.initStockIfAbsent(coupon.getId(), quantity)) {
+                    // V15 이후 quantity 는 고정된 총 발행량이다. 그대로 심으면 Redis 가 사라진 뒤
+                    // 이미 나간 수만큼 재고가 되살아난다
+                    long remaining = Math.max(0L,
+                            quantity - couponIssueRepository.countByCoupon_Id(coupon.getId()));
+                    if (couponStockRedisRepository.initStockIfAbsent(coupon.getId(), remaining)) {
                         planted++;
                     } else {
                         skipped++; // 이미 살아 있는 카운터가 있다 - 덮지 않는다
                     }
                 }
-                // 발급자 SET 복원. 재고와 달리 항상 수행한다 -
-                // 재고 키가 살아 있어도(skipped) 발급자 SET 만 유실됐을 수 있고,
-                // 그 상태에서는 이미 받은 사용자가 게이트를 다시 통과한다
-                restored += couponStockRedisRepository.addIssuedUsers(
-                        coupon.getId(), couponIssueRepository.findUserIdsByCouponId(coupon.getId()));
                 lastId = coupon.getId(); // 수량이 없거나 0 이어도 커서는 전진
             }
         } while (page.size() == batchSize); // 마지막(부족) 페이지면 종료

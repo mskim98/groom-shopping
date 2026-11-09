@@ -47,6 +47,48 @@ public class CouponStockRecoveryService {
         return recovering.get();
     }
 
+    // 마지막 검사에서 재고 키가 없는 활성 쿠폰이 있었는가. 헬스 체크가 읽기만 한다 - 키를 읽는 일은 복구 스레드가 한다
+    private final AtomicBoolean stockMissing = new AtomicBoolean(false);
+
+    public boolean isStockMissing() {
+        return stockMissing.get();
+    }
+
+    /**
+     * 재고 키가 없는 활성 쿠폰이 하나라도 있으면 {@link #recoverAll()} 을 돌린다
+     *
+     * <p>호출처는 부팅 워밍업과 헬스 체크다. Redis 가 비워진 뒤 재기동 없이도 복구가 돌게 하려는 것이다
+     * 키가 모두 있으면 랙도 읽지 않는다 - 헬스 체크마다 Kafka 관리 클라이언트를 만들 이유가 없다
+     *
+     * @return 복구를 돌렸으면 true
+     */
+    public boolean recoverIfStockMissing() {
+        boolean missing = hasActiveCouponWithoutStock();
+        stockMissing.set(missing);
+        if (!missing) {
+            return false;
+        }
+        recoverAll();
+        // 랙을 읽지 못해 복원이 멈췄다면 키는 여전히 없다 - 다음 검사가 다시 시도할 때까지 그 사실을 남긴다
+        stockMissing.set(hasActiveCouponWithoutStock());
+        return true;
+    }
+
+    private boolean hasActiveCouponWithoutStock() {
+        long lastId = 0L;
+        List<Coupon> page;
+        do {
+            page = couponRepository.findActiveByIdGreaterThan(lastId, PageRequest.of(0, PAGE_SIZE));
+            for (Coupon coupon : page) {
+                if (couponStockRedisRepository.getStock(coupon.getId()) == null) {
+                    return true;
+                }
+                lastId = coupon.getId();
+            }
+        } while (page.size() == PAGE_SIZE);
+        return false;
+    }
+
     /**
      * 재고 키가 사라진 활성 쿠폰을 전부 되세운다
      *
@@ -104,12 +146,12 @@ public class CouponStockRecoveryService {
                     couponId, quantity, confirmed, lag);
             remaining = 0;
         }
+        // 명단이 먼저다. 재고 키가 먼저 생기면 명단이 비어 있는 동안 이미 받은 사용자가 게이트를 다시 통과한다
+        // 키가 없는 동안 접수는 NOT_INITIALIZED 로 503 을 받으므로 이 순서로 열어도 닫힌 채 복원된다
+        couponStockRedisRepository.addIssuedUsers(couponId,
+                couponIssueRepository.findUserIdsByCouponId(couponId));
         boolean planted = couponStockRedisRepository.initStockIfAbsent(couponId, remaining);
         if (planted) {
-            // 명단 복원은 재고 다음이다. 이 사이에 들어온 요청은 명단이 비어 있어 게이트를 통과하지만,
-            // 확정 단계의 유니크 제약이 중복을 막고 그 건은 자리를 반납한다
-            couponStockRedisRepository.addIssuedUsers(couponId,
-                    couponIssueRepository.findUserIdsByCouponId(couponId));
             log.warn("[COUPON_STOCK_RECOVERED] couponId={}, remaining={}, confirmed={}, lag={}",
                     couponId, remaining, confirmed, lag);
         }

@@ -9,22 +9,33 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.infrastructure.config.RedisConfig;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.RetriableException;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
@@ -84,6 +95,20 @@ public class CouponAsyncIssueService {
     @Value("${coupon.issue.publish-success-results:false}")
     private boolean publishSuccessResults;
 
+    // 내 쿠폰 목록 캐시(userId 키). searchMyCoupon 이 @Cacheable 로 읽는 목록이라 확정 경로가 비우지 않으면
+    // 방금 발급한 쿠폰이 캐시 TTL 동안 목록에 보이지 않는다. 대조 서비스를 끈 구성처럼 없을 수도 있어 선택 주입이다
+    @Autowired(required = false)
+    @Qualifier("couponCacheManager")
+    private CacheManager couponCacheManager;
+
+    // 발행 타임아웃(브로커 기록 여부 불명) 뒤 같은 requestId 로 다시 보내는 횟수
+    // 한 번에 delivery.timeout.ms 가 걸리므로 늘리면 표시까지 걸리는 시간이 그만큼 길어진다
+    @Value("${coupon.issue.publish-resend-attempts:2}")
+    private int publishResendAttempts = 2;
+
+    // 재전송 전용. 접수 스레드와 프로듀서 I/O 스레드 어느 쪽도 재전송의 대기에 붙들리지 않게 가상 스레드로 보낸다
+    private final Executor resendExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
     /**
      * 접수 - 판정하고 큐에 싣는다. 여기서 기다리는 일이 없어야 한다
      *
@@ -98,8 +123,15 @@ public class CouponAsyncIssueService {
             // 재고를 세우는 중이다. 지금 판정하면 아직 없는 근거로 통과 여부를 정하게 된다
             return CouponIssueResult.unavailable();
         }
-        CouponStockRedisRepository.IssueResult gate =
-                couponStockRedisRepository.tryIssue(couponId, userId);
+        CouponStockRedisRepository.IssueResult gate;
+        try {
+            gate = couponStockRedisRepository.tryIssue(couponId, userId);
+        } catch (DataAccessException e) {
+            // 판정을 Redis 한 곳에서 하므로 끊기면 통과시킬 수도 없다. 500 은 재시도하지 말라는 뜻으로 읽히고
+            // 503 은 잠시 뒤 다시 시도하라는 뜻이다. 게이트 앞의 실패라 되돌릴 예약이 없다
+            log.error("[COUPON_GATE_REDIS_UNAVAILABLE] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+            throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
+        }
         switch (gate) {
             case OUT_OF_STOCK -> {
                 return CouponIssueResult.soldOut();
@@ -124,7 +156,14 @@ public class CouponAsyncIssueService {
         }
 
         String requestId = UUID.randomUUID().toString();
-        redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
+        try {
+            redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
+        } catch (DataAccessException e) {
+            // 게이트가 이미 재고를 깎았다. 상태 키를 못 남긴 요청은 브로커에 싣지 않으므로 자리를 돌려놓는다
+            log.error("[COUPON_STATUS_REDIS_UNAVAILABLE] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+            releaseReservationQuietly(couponId, userId);
+            throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
+        }
 
         // gateReserved=true - 접수가 이미 자리를 배정했다. 컨슈머는 다시 판정하지 않는다
         // 키는 userId 다. 같은 쿠폰의 이벤트가 파티션 전체에 흩어져야 컨슈머가 늘어난 만큼 일한다
@@ -133,19 +172,21 @@ public class CouponAsyncIssueService {
     }
 
     /**
-     * 요청 이벤트를 발행한다. 발행에 실패하면 배정한 자리를 되돌린다
+     * 요청 이벤트를 발행한다. 브로커에 없다고 확실한 실패에서만 배정한 자리를 되돌린다
      *
-     * <p>실패는 두 갈래로 나타나고 <b>되돌림이 양쪽 모두에 걸려 있어야 한다</b>
+     * <p>실패는 세 갈래로 나타난다
      * <ul>
-     *   <li>비동기 - 브로커가 받지 못한 경우. 콜백으로 오며 상한은 {@code delivery.timeout.ms} 가 정한다</li>
      *   <li>동기 - 토픽 메타데이터를 못 받거나 프로듀서 버퍼가 차서 {@code max.block.ms} 를 넘긴 경우.
-     *       {@code send} 자체가 던지므로 <b>콜백이 등록되지 않는다</b></li>
+     *       {@code send} 자체가 던지므로 <b>콜백이 등록되지 않고</b>, 레코드는 어디에도 실리지 않았다 -
+     *       되돌림이 이 갈래에도 걸려 있어야 한다. 2026-09-02 초당 5,000 도착 측정에서 새로 만든 토픽의
+     *       메타데이터 대기가 1초를 넘겨 132건이 동기로 던졌고, 되돌림 로그는 0건인데 재고 132개가 잠겼다
+     *       (발급 9,868 / 재고 10,000)</li>
+     *   <li>비동기 확정 실패 - 브로커가 거절한 경우(레코드 크기 초과 등). 브로커에 없으므로 되돌린다</li>
+     *   <li>비동기 타임아웃 - {@code delivery.timeout.ms} 가 지났다. <b>브로커가 기록하고 응답만 유실됐을 수 있다.</b>
+     *       이때 되돌리면 컨슈머가 그 요청을 INSERT 한 뒤 같은 자리가 한 번 더 팔린다.
+     *       같은 requestId 로 다시 보내고(컨슈머는 같은 requestId 의 행을 이미 처리한 요청으로 본다),
+     *       끝내 모르면 대조 대상으로 표시만 한다</li>
      * </ul>
-     *
-     * <p>동기 갈래를 콜백에만 맡겨 두면 자리를 배정한 채 아무도 되돌리지 않아 그 수량이 잠긴다.
-     * 2026-09-02 초당 5,000 도착 측정에서 실제로 발생 - 새로 만든 토픽의 메타데이터 대기가
-     * 1초를 넘겨 132건이 동기로 던졌고, 되돌림 로그는 0건인데 재고 132개가 잠겼다
-     * (발급 9,868 / 재고 10,000)
      */
     private void publishRequest(String requestId, Long couponId, Long userId) {
         CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId, true);
@@ -157,16 +198,67 @@ public class CouponAsyncIssueService {
             throw new BusinessException(ErrorCode.SERVER_ERROR);
         }
         try {
-            couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
-                    .whenComplete((sent, error) -> {
-                        if (error == null) {
-                            return;
-                        }
-                        recoverFailedPublish(requestId, couponId, userId, error);
-                    });
+            sendWatched(requestId, couponId, userId, payload, 0);
         } catch (Exception e) {
+            // 첫 전송이 동기로 던졌다 - 아무것도 실리지 않았으므로 되돌려도 안전하다
             recoverFailedPublish(requestId, couponId, userId, e);
             throw new BusinessException(ErrorCode.SERVER_ERROR);
+        }
+    }
+
+    private void sendWatched(String requestId, Long couponId, Long userId, String payload, int resent) {
+        couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
+                .whenComplete((sent, error) -> {
+                    if (error == null) {
+                        return;
+                    }
+                    // 콜백은 프로듀서 I/O 스레드에서 돈다. 재전송의 send 가 거기서 막히지 않게 넘긴다
+                    resendExecutor.execute(() -> onPublishFailure(requestId, couponId, userId, payload, error, resent));
+                });
+    }
+
+    private void onPublishFailure(String requestId, Long couponId, Long userId, String payload,
+                                  Throwable error, int resent) {
+        if (!isPublishOutcomeUnknown(error)) {
+            recoverFailedPublish(requestId, couponId, userId, error);
+            return;
+        }
+        log.warn("[COUPON_PUBLISH_OUTCOME_UNKNOWN] requestId={}, couponId={}, userId={}, resent={}, error={}",
+                requestId, couponId, userId, resent, error.toString());
+        if (resent < publishResendAttempts) {
+            try {
+                sendWatched(requestId, couponId, userId, payload, resent + 1);
+                return;
+            } catch (Exception e) {
+                // 앞 전송이 브로커에 있을 수 있으므로 여기서 던져도 되돌리지 않는다
+                log.error("[COUPON_PUBLISH_RESEND_FAILED] requestId={}, error={}", requestId, e.toString());
+            }
+        }
+        markPublishUncertain(requestId, couponId, userId);
+    }
+
+    // 브로커가 기록했는지 알 수 없는 실패: 재시도 가능한 오류(타임아웃 · 네트워크 · 복제 부족 후 기록)
+    // 알 수 없으면 되돌리지 않는 쪽이다 - 되돌린 재고는 초과 발급이 되고, 되돌리지 않은 재고는 정산이 메우는 미달 발급이다
+    private static boolean isPublishOutcomeUnknown(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (t instanceof RetriableException || t instanceof java.util.concurrent.TimeoutException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    private void markPublishUncertain(String requestId, Long couponId, Long userId) {
+        log.error("[COUPON_PUBLISH_UNCERTAIN] requestId={}, couponId={}, userId={} - 재고를 되돌리지 않고 대조 대상으로 표시한다",
+                requestId, couponId, userId);
+        try {
+            couponStockRedisRepository.markPublishUncertain(requestId, couponId, userId);
+        } catch (Exception e) {
+            // 표시마저 못 남겼다. 상태 키는 WAITING 으로 남아 TTL 로 사라지고, 종료 쿠폰의 고아 예약 회수가 마지막 안전망이다
+            log.error("[COUPON_PUBLISH_UNCERTAIN_MARK_FAILED] requestId={}, error={}", requestId, e.toString());
         }
     }
 
@@ -175,9 +267,23 @@ public class CouponAsyncIssueService {
     private void recoverFailedPublish(String requestId, Long couponId, Long userId, Throwable cause) {
         log.error("[COUPON_ENQUEUE_PUBLISH_FAILED] couponId={}, userId={}, error={}",
                 couponId, userId, cause.toString());
-        couponStockRedisRepository.rollbackIssue(couponId, userId);
-        redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
-                STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
+        releaseReservationQuietly(couponId, userId);
+        try {
+            redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
+                    STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
+        } catch (DataAccessException e) {
+            log.error("[COUPON_FAILED_STATUS_WRITE_FAILED] requestId={}, error={}", requestId, e.toString());
+        }
+    }
+
+    // Redis 가 끊긴 상태에서 반납마저 실패할 수 있다. 반납 실패가 요청의 응답 코드를 500 으로 바꾸면 안 되고,
+    // 못 돌려놓은 자리는 복구가 quantity − DB 발급 수로 다시 세울 때 반영된다
+    private void releaseReservationQuietly(Long couponId, Long userId) {
+        try {
+            couponStockRedisRepository.rollbackIssue(couponId, userId);
+        } catch (DataAccessException e) {
+            log.error("[COUPON_RELEASE_FAILED] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+        }
     }
 
     /**
@@ -242,19 +348,26 @@ public class CouponAsyncIssueService {
             return;
         }
 
-        List<Long> userIds = confirmable.stream().map(CouponIssueRequestEvent::userId).toList();
-        Set<Long> inserted = couponIssueBatchWriter.insertAll(couponId, expiresAt, userIds);
+        // 한 사용자에 요청이 둘이면 앞의 것만 넣는다. 뒤의 것은 소유하지 못해 아래에서 진짜 중복으로 떨어진다
+        Map<Long, String> requestIdByUser = new LinkedHashMap<>();
+        for (CouponIssueRequestEvent event : confirmable) {
+            requestIdByUser.putIfAbsent(event.userId(), event.requestId());
+        }
+        // 소유 = 이번에 넣었거나, 앞 시도가 이미 같은 requestId 로 넣어 둔 행이 있는 요청
+        Set<String> owned = couponIssueBatchWriter.insertAll(couponId, expiresAt, requestIdByUser);
 
         for (CouponIssueRequestEvent event : confirmable) {
-            if (inserted.contains(event.userId())) {
+            if (owned.contains(event.requestId())) {
                 statuses.put(event.requestId(), STATUS_SUCCESS);
+                evictMyCouponCache(event.userId());
                 if (publishSuccessResults) {
                     results.add(new CouponIssueResultEvent(event.requestId(), couponId, event.userId(),
                             STATUS_SUCCESS, null));
                 }
                 continue;
             }
-            // 들어가지 않았다 = 이 사용자는 이미 그 쿠폰을 갖고 있다
+            // 다른 요청이 이미 그 쿠폰의 행을 갖고 있다 = 진짜 중복이다
+            // 같은 requestId 의 행이면 owned 에 들어와 여기 오지 않는다 - 재전달에서 재고를 되돌리면 +1 씩 부푼다
             // 발급자 SET 에서는 빼지 않는다 - 빼면 게이트가 그를 다시 통과시켜 같은 실패를 반복한다
             // 자리만 되돌려 뒤 요청이 쓰게 한다
             couponStockRedisRepository.rollbackStockOnly(couponId);
@@ -342,14 +455,76 @@ public class CouponAsyncIssueService {
     public void abandonBatch(List<CouponIssueRequestEvent> events, Throwable cause) {
         Map<String, String> statuses = new LinkedHashMap<>();
         List<CouponIssueResultEvent> results = new ArrayList<>();
+        // 행이 이미 커밋된 요청은 반납하지 않는다 - 되돌리면 DB 에는 행이 있는데 재고만 늘어난다
+        // 조회가 실패하면 예외를 그대로 올린다. 행의 유무를 모르는 채 반납하면 초과 발급이고,
+        // 반납하지 않는 쪽의 손해는 정산이 메우는 미달 발급이다
+        Set<String> committed = new HashSet<>(couponIssueRepository.findExistingRequestIds(
+                events.stream().map(CouponIssueRequestEvent::requestId).filter(Objects::nonNull).toList()));
         for (CouponIssueRequestEvent event : events) {
+            if (committed.contains(event.requestId())) {
+                statuses.put(event.requestId(), STATUS_SUCCESS);
+                evictMyCouponCache(event.userId());
+                continue;
+            }
             couponStockRedisRepository.rollbackIssue(event.couponId(), event.userId());
             fail(event, ErrorCode.SERVER_ERROR.name(), statuses, results);
         }
-        log.error("[COUPON_BATCH_ABANDONED] size={}, error={}", events.size(), String.valueOf(cause));
+        log.error("[COUPON_BATCH_ABANDONED] size={}, committed={}, error={}",
+                events.size(), committed.size(), String.valueOf(cause));
         writeStatuses(statuses);
         for (CouponIssueResultEvent result : results) {
             send(RESULT_TOPIC, String.valueOf(result.userId()), result);
+        }
+    }
+
+    /**
+     * 읽을 수 없는 요청 메시지가 잡아 둔 예약을 반납한다
+     *
+     * <p>이벤트 전체는 못 읽어도 couponId · userId 가 읽히면 어느 자리를 되돌릴지 알 수 있다
+     * 읽히지 않으면 되돌릴 대상을 모르므로 건드리지 않는다 - 그 몫은 종료 쿠폰의 고아 예약 회수가 정리한다
+     *
+     * <p>requestId 가 읽히지 않으면 어느 요청의 예약인지 특정할 수 없다. 상태 키(coupon:issue:status:null)도
+     * 결과 이벤트(requestId=null)도 만들지 않고 아무것도 반납하지 않는다 - 호출한 컨슈머가 DLQ 에 원문을 남겼고
+     * 여기서는 기록만 한다. 두 요청이 같은 쿠폰 · 사용자를 가리킬 수 있어 couponId · userId 만으로 반납하면 남의 예약을 푼다
+     *
+     * @return 예약을 반납했으면 true
+     */
+    public boolean abandonUnreadable(String rawPayload, Throwable cause) {
+        if (rawPayload == null) {
+            return false;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(rawPayload);
+            if (node == null || !node.path("couponId").canConvertToLong() || !node.path("userId").canConvertToLong()) {
+                return false;
+            }
+            String requestId = node.path("requestId").isTextual() ? node.path("requestId").asText() : null;
+            if (requestId == null || requestId.isBlank()) {
+                log.error("[COUPON_UNREADABLE_WITHOUT_REQUEST_ID] couponId={}, userId={}, payload={}",
+                        node.path("couponId").asLong(), node.path("userId").asLong(), rawPayload);
+                return false;
+            }
+            abandonBatch(List.of(new CouponIssueRequestEvent(requestId, node.path("couponId").asLong(),
+                    node.path("userId").asLong(), true)), cause);
+            return true;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return false;
+        }
+    }
+
+    // 행이 커밋된 사용자의 목록 캐시를 비운다. 캐시 저장소(Redis) 장애로 확정 배치를 재전달시킬 이유는 없다 -
+    // 비우지 못하면 TTL 이 지날 때까지 목록이 낡을 뿐이다
+    private void evictMyCouponCache(Long userId) {
+        if (couponCacheManager == null) {
+            return;
+        }
+        try {
+            Cache cache = couponCacheManager.getCache(RedisConfig.COUPON_LIST_CACHE_NAME);
+            if (cache != null) {
+                cache.evict(userId);
+            }
+        } catch (Exception e) {
+            log.warn("[COUPON_MY_LIST_CACHE_EVICT_FAILED] userId={}, error={}", userId, e.toString());
         }
     }
 

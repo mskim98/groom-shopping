@@ -34,6 +34,9 @@ public class CouponIssue {
 //  private User user;
   private Long userId;
 
+  // 접수 요청 UUID. 재전달된 배치가 이미 처리한 요청인지 가리는 근거다. 구 행은 null
+  private String requestId;
+
 
   // coupon 1 : coupon issue N
   @ManyToOne(fetch = FetchType.LAZY)

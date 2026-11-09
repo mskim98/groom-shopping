@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +26,10 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
   // 이 저장소는 "한 사용자가 같은 쿠폰을 다시 받을 수 없다"를 전제하고, uq_coupon_issue_user 도 같은 범위다
   @Query("SELECT ci.userId FROM CouponIssue ci WHERE ci.coupon.id = :couponId")
   List<Long> findUserIdsByCouponId(@Param("couponId") Long couponId);
+
+  // 정리 단계가 "이 요청의 행이 이미 커밋됐는가" 를 묻는다. 있는 요청은 재고를 되돌리면 안 된다
+  @Query("SELECT ci.requestId FROM CouponIssue ci WHERE ci.requestId IN :requestIds")
+  List<String> findExistingRequestIds(@Param("requestIds") Collection<String> requestIds);
 
   // 보정 배치의 대조식에 쓰는 확정 발급 수
   long countByCoupon_Id(Long couponId);

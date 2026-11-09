@@ -28,6 +28,7 @@ public class CouponIssueRequestConsumer {
 
     private final CouponAsyncIssueService couponAsyncIssueService;
     private final ObjectMapper objectMapper;
+    private final CouponIssueDlqProducer dlqProducer;
 
     @KafkaListener(
             topics = CouponAsyncIssueService.REQUEST_TOPIC,
@@ -39,10 +40,13 @@ public class CouponIssueRequestConsumer {
             try {
                 events.add(objectMapper.readValue(record.value(), CouponIssueRequestEvent.class));
             } catch (Exception e) {
-                // 읽을 수 없는 메시지 하나 때문에 배치 전체를 재처리하면 그 배치가 영원히 진행하지 못한다
-                // 되돌릴 대상(userId)조차 못 읽은 상태라 여기서 할 수 있는 것은 기록뿐이다
+                // 건너뛰면 그 메시지가 잡은 Redis 재고와 명단 항목이 영원히 풀리지 않고 원문도 사라진다
+                // 읽을 수 없는 메시지 하나 때문에 배치 전체를 재처리하면 그 배치가 영원히 진행하지 못하므로
+                // 원문은 DLQ 에 남기고(실패하면 예외로 올라가 배치를 다시 받는다) 예약은 읽히는 만큼 반납한다
                 log.error("[COUPON_ASYNC_DESERIALIZE_FAILED] offset={}, payload={}, error={}",
                         record.offset(), record.value(), e.getMessage());
+                dlqProducer.send(record.key(), record.value(), e);
+                couponAsyncIssueService.abandonUnreadable(record.value(), e);
             }
         }
         // 예외를 삼키지 않는다. 던져야 오프셋이 커밋되지 않고 배치가 다시 온다
