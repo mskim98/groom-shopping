@@ -14,6 +14,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import groom.backend.application.product.ProductStockRedisRepository;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
@@ -168,5 +170,33 @@ class PaymentFailurePathOrderTest {
 
         assertThat(statusAtCartClear.get()).as("장바구니 비우기 호출 시점의 DB 결제 상태").isEqualTo("DONE");
         assertThat(statusAtNotification.get()).as("재고 알림 호출 시점의 DB 결제 상태").isEqualTo("DONE");
+    }
+
+    @Test
+    @DisplayName("Toss 확정이 시간 초과로 끝나면 승인 여부를 알 수 없어 보상 의도를 기록하고 결제는 FAILED 가 된다")
+    void 확정시간초과_승인여부불명_보상의도를_기록한다() {
+        given(tossPaymentClient.confirmPayment(any(), anyString()))
+                .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT));
+
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(jdbc.queryForList("SELECT payment_key FROM payment_compensation WHERE payment_id = ?",
+                String.class, payment.getId())).as("시간 초과 보상 행의 paymentKey").containsExactly(paymentKey);
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
+    }
+
+    @Test
+    @DisplayName("Toss 가 4xx 로 거절한 확정은 승인된 적이 없으므로 보상 의도를 기록하지 않는다")
+    void 확정카드거절_승인된적없음_보상의도를_기록하지_않는다() {
+        given(tossPaymentClient.confirmPayment(any(), anyString()))
+                .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_REJECTED));
+
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
+                Long.class, payment.getId())).isZero();
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
     }
 }
