@@ -58,7 +58,7 @@ public class RedisConfig {
     private Duration commandTimeout;
 
     // @Bean : Redis 연결 팩토리를 빈으로 등록(Lettuce는 비동기/논블로킹 Redis 클라이언트).
-    // new LettuceConnectionFactory(host, port) 는 spring.data.redis.timeout 을 읽지 않고
+    // 호스트와 포트만 받는 생성자로 만들면 spring.data.redis.timeout 을 읽지 않고
     // Boot 가 만든 ClientResources(Micrometer 명령 지연 기록기 포함)도 버린다
     @Bean
     public RedisConnectionFactory redisConnectionFactory(ClientResources clientResources) {
