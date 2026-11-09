@@ -119,7 +119,7 @@ final class PaymentFixture {
     }
 
     String orderStatusOf(UUID orderId) {
-        return jdbc.queryForObject("SELECT status FROM \"Order\" WHERE id = ?", String.class, orderId);
+        return jdbc.queryForObject("SELECT status FROM orders WHERE id = ?", String.class, orderId);
     }
 
     String failureCodeOf(UUID paymentId) {
