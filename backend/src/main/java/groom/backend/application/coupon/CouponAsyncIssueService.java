@@ -35,8 +35,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.dao.QueryTimeoutException;
-import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
@@ -127,9 +126,9 @@ public class CouponAsyncIssueService {
         CouponStockRedisRepository.IssueResult gate;
         try {
             gate = couponStockRedisRepository.tryIssue(couponId, userId);
-        } catch (RedisConnectionFailureException | QueryTimeoutException e) {
+        } catch (DataAccessException e) {
             // 판정을 Redis 한 곳에서 하므로 끊기면 통과시킬 수도 없다. 500 은 재시도하지 말라는 뜻으로 읽히고
-            // 503 은 잠시 뒤 다시 시도하라는 뜻이다
+            // 503 은 잠시 뒤 다시 시도하라는 뜻이다. 게이트 앞의 실패라 되돌릴 예약이 없다
             log.error("[COUPON_GATE_REDIS_UNAVAILABLE] couponId={}, userId={}, error={}", couponId, userId, e.toString());
             throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
         }
@@ -157,7 +156,14 @@ public class CouponAsyncIssueService {
         }
 
         String requestId = UUID.randomUUID().toString();
-        redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
+        try {
+            redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId, STATUS_WAITING, STATUS_TTL);
+        } catch (DataAccessException e) {
+            // 게이트가 이미 재고를 깎았다. 상태 키를 못 남긴 요청은 브로커에 싣지 않으므로 자리를 돌려놓는다
+            log.error("[COUPON_STATUS_REDIS_UNAVAILABLE] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+            releaseReservationQuietly(couponId, userId);
+            throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
+        }
 
         // gateReserved=true - 접수가 이미 자리를 배정했다. 컨슈머는 다시 판정하지 않는다
         // 키는 userId 다. 같은 쿠폰의 이벤트가 파티션 전체에 흩어져야 컨슈머가 늘어난 만큼 일한다
@@ -261,9 +267,23 @@ public class CouponAsyncIssueService {
     private void recoverFailedPublish(String requestId, Long couponId, Long userId, Throwable cause) {
         log.error("[COUPON_ENQUEUE_PUBLISH_FAILED] couponId={}, userId={}, error={}",
                 couponId, userId, cause.toString());
-        couponStockRedisRepository.rollbackIssue(couponId, userId);
-        redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
-                STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
+        releaseReservationQuietly(couponId, userId);
+        try {
+            redisTemplate.opsForValue().set(STATUS_KEY_PREFIX + requestId,
+                    STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name(), STATUS_TTL);
+        } catch (DataAccessException e) {
+            log.error("[COUPON_FAILED_STATUS_WRITE_FAILED] requestId={}, error={}", requestId, e.toString());
+        }
+    }
+
+    // Redis 가 끊긴 상태에서 반납마저 실패할 수 있다. 반납 실패가 요청의 응답 코드를 500 으로 바꾸면 안 되고,
+    // 못 돌려놓은 자리는 복구가 quantity − DB 발급 수로 다시 세울 때 반영된다
+    private void releaseReservationQuietly(Long couponId, Long userId) {
+        try {
+            couponStockRedisRepository.rollbackIssue(couponId, userId);
+        } catch (DataAccessException e) {
+            log.error("[COUPON_RELEASE_FAILED] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+        }
     }
 
     /**

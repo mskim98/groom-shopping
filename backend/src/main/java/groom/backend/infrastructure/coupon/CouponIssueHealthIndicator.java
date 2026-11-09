@@ -1,6 +1,10 @@
 package groom.backend.infrastructure.coupon;
 
 import groom.backend.application.coupon.CouponStockRecoveryService;
+import jakarta.annotation.PreDestroy;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,21 +33,46 @@ public class CouponIssueHealthIndicator implements HealthIndicator {
 
     private final AtomicLong lastCheckAt = new AtomicLong(0L);
 
+    // 복구는 활성 쿠폰 전체의 Redis 읽기와 Kafka 랙 읽기를 포함한다. 프로브 스레드에서 돌리면 헬스 요청이 그만큼 걸려
+    // 로드밸런서의 제한 시간을 넘기므로 전용 스레드 하나로 넘기고, 돌고 있는 동안은 다시 예약하지 않는다
+    private final AtomicBoolean recoveryScheduled = new AtomicBoolean(false);
+    private final ExecutorService recoveryExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "coupon-stock-recovery");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     @Override
     public Health health() {
-        if (couponStockRecoveryService.isRecovering()) {
-            return Health.outOfService().withDetail("reason", "쿠폰 재고 복구 중").build();
+        // 읽기만 한다. 복구 중이거나 재고 키가 없다고 판정된 동안은 접수가 503 으로 돌려보내므로 트래픽을 받지 않는다
+        if (couponStockRecoveryService.isRecovering() || couponStockRecoveryService.isStockMissing()) {
+            scheduleRecoveryIfDue();
+            return Health.outOfService().withDetail("reason", "쿠폰 재고 복구 중 또는 재고 키 부재").build();
         }
-        if (dueForStockCheck()) {
-            // Redis 가 비워졌다면 여기서 복구가 돈다. 돌고 있는 동안의 호출은 위에서 OUT_OF_SERVICE 로 걸러진다
-            // 헬스 체크가 예외로 실패하면 안 된다 - Redis 장애는 접수가 503 으로, Redis 헬스가 따로 알린다
+        scheduleRecoveryIfDue();
+        return Health.up().build();
+    }
+
+    // Redis 가 비워졌다면 전용 스레드에서 복구가 돈다
+    // 복구가 예외로 끝나도 다음 검사가 다시 예약한다 - Redis 장애는 접수가 503 으로, Redis 헬스가 따로 알린다
+    private void scheduleRecoveryIfDue() {
+        if (!dueForStockCheck() || !recoveryScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        recoveryExecutor.execute(() -> {
             try {
                 couponStockRecoveryService.recoverIfStockMissing();
             } catch (Exception e) {
                 log.warn("[COUPON_HEALTH_RECOVERY_CHECK_FAILED] error={}", e.toString());
+            } finally {
+                recoveryScheduled.set(false);
             }
-        }
-        return Health.up().build();
+        });
+    }
+
+    @PreDestroy
+    void shutdownRecoveryExecutor() {
+        recoveryExecutor.shutdownNow();
     }
 
     private boolean dueForStockCheck() {

@@ -3,6 +3,7 @@ package groom.backend.application.coupon;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.infrastructure.kafka.KafkaLagReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
@@ -56,6 +57,8 @@ public class CouponStockReconciliationService {
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
     private final RedissonClient redissonClient;
+    // 고아 판정의 전제 - 요청 토픽에 소비되지 않은 요청이 없어야 "명단에만 있는 예약" 이 정말 고아다
+    private final KafkaLagReader kafkaLagReader;
     private final Counter correctedCounter;
     private final Counter loosenedCounter;
     private final Counter orphanCounter;
@@ -68,11 +71,13 @@ public class CouponStockReconciliationService {
                                             CouponIssueRepository couponIssueRepository,
                                             CouponStockRedisRepository couponStockRedisRepository,
                                             RedissonClient redissonClient,
+                                            KafkaLagReader kafkaLagReader,
                                             MeterRegistry meterRegistry) {
         this.couponRepository = couponRepository;
         this.couponIssueRepository = couponIssueRepository;
         this.couponStockRedisRepository = couponStockRedisRepository;
         this.redissonClient = redissonClient;
+        this.kafkaLagReader = kafkaLagReader;
         this.correctedCounter = Counter.builder("coupon.stock.reconcile.corrected")
                 .description("게이트가 좁아져 재고를 되돌린 횟수").register(meterRegistry);
         this.loosenedCounter = Counter.builder("coupon.stock.reconcile.loosened")
@@ -85,10 +90,11 @@ public class CouponStockReconciliationService {
     }
 
     /**
-     * 주기 실행 진입점. 종료된 쿠폰만 대조하므로 진행 중 요청의 자리를 건드리지 않는다
-     * 진행 중 쿠폰은 {@link #reconcileCoupon} 이 처음에 걸러 낸다
+     * 주기 실행 진입점. 기본 10분마다({@code coupon.reconcile.fixed-delay}, ISO-8601 기간) 돈다
+     * 종료된 쿠폰만 대조하므로 진행 중 요청의 자리를 건드리지 않는다 - 진행 중 쿠폰은 {@link #reconcileCoupon} 이
+     * 처음에 걸러 내고, 종료된 쿠폰의 고아 예약 회수는 요청 토픽의 컨슈머 랙이 0 일 때만 한다
      */
-    @Scheduled(fixedDelayString = "${coupon.reconcile.interval-ms:600000}",
+    @Scheduled(fixedDelayString = "${coupon.reconcile.fixed-delay:PT10M}",
             initialDelayString = "${coupon.reconcile.initial-delay-ms:60000}")
     public void scheduledReconcile() {
         reconcileWithLock();
@@ -247,6 +253,14 @@ public class CouponStockReconciliationService {
             }
         }
         if (orphans.isEmpty()) {
+            return 0;
+        }
+        // 종료 시각이 지나도 요청 토픽에 아직 소비되지 않은 요청이 있을 수 있다. 그 사용자의 행은 곧 들어오므로
+        // 명단에서 지우면 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받는다
+        // 랙을 읽지 못한 경우(-1)도 같다. 건너뛴 회수는 다음 주기 대조가 랙이 0 일 때 한다
+        long lag = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC, CouponAsyncIssueService.CONSUMER_GROUP);
+        if (lag != 0) {
+            log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] couponId={}, orphans={}, lag={}", couponId, orphans.size(), lag);
             return 0;
         }
         couponStockRedisRepository.removeIssuedUsers(couponId, orphans);

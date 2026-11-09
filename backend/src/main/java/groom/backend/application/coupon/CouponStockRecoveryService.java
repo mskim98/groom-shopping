@@ -47,6 +47,13 @@ public class CouponStockRecoveryService {
         return recovering.get();
     }
 
+    // 마지막 검사에서 재고 키가 없는 활성 쿠폰이 있었는가. 헬스 체크가 읽기만 한다 - 키를 읽는 일은 복구 스레드가 한다
+    private final AtomicBoolean stockMissing = new AtomicBoolean(false);
+
+    public boolean isStockMissing() {
+        return stockMissing.get();
+    }
+
     /**
      * 재고 키가 없는 활성 쿠폰이 하나라도 있으면 {@link #recoverAll()} 을 돌린다
      *
@@ -56,10 +63,14 @@ public class CouponStockRecoveryService {
      * @return 복구를 돌렸으면 true
      */
     public boolean recoverIfStockMissing() {
-        if (!hasActiveCouponWithoutStock()) {
+        boolean missing = hasActiveCouponWithoutStock();
+        stockMissing.set(missing);
+        if (!missing) {
             return false;
         }
         recoverAll();
+        // 랙을 읽지 못해 복원이 멈췄다면 키는 여전히 없다 - 다음 검사가 다시 시도할 때까지 그 사실을 남긴다
+        stockMissing.set(hasActiveCouponWithoutStock());
         return true;
     }
 
