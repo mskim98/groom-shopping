@@ -3,12 +3,13 @@ package groom.backend.application.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 
+import groom.backend.application.product.StockDecrementer;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
-import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 
@@ -35,9 +37,9 @@ class PaymentPostProcessRollbackTest {
 
     @MockBean
     private StockWarmUpRunner stockWarmUpRunner; // 1M 시드 워밍업 무력화
-    // 재고 차감 뒤에 실행되는 Outbox 적재를 실패시키는 주입 지점. 폴러(PaymentEventPublisher)도 이 목을 읽는다
-    @MockBean
-    private PaymentOutboxRepository outboxRepository;
+    // 실제 차감은 그대로 하고 그 뒤에 후처리를 실패시키는 주입 지점(Outbox 적재는 확정 쪽 트랜잭션으로 옮겨져 후처리에 없다)
+    @SpyBean
+    private StockDecrementer stockDecrementer;
     // 비동기 알림·장바구니 호출이 시험 DB 에 부수효과를 남기지 않게 막는다
     @MockBean
     private PaymentNotificationService paymentNotificationService;
@@ -72,12 +74,15 @@ class PaymentPostProcessRollbackTest {
     @Test
     @DisplayName("재고 차감 뒤 후처리가 예외로 끝나면 DB 재고가 차감 전 값으로 돌아오고 결제는 DONE 이 아니다")
     void 후처리실패_재고차감뒤_예외_DB재고가_차감전값이다() {
-        doThrow(new IllegalStateException("outbox down")).when(outboxRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw new IllegalStateException("post-process down");
+        }).when(stockDecrementer).decrease(any(), anyInt());
 
         assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
                 payment.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("outbox down");
+                .hasMessageContaining("post-process down");
 
         assertThat(fixture.stockOf(productId)).as("롤백 뒤 DB 재고").isEqualTo(INITIAL_STOCK);
         assertThat(fixture.statusOf(payment.getId())).as("결제 상태").isNotEqualTo("DONE");
