@@ -20,6 +20,7 @@ import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.util.backoff.ExponentialBackOff;
@@ -46,6 +47,10 @@ public class KafkaConfig {
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
+
+    // 결제 승인 후처리 컨슈머를 시험에서 끌 수 있게 한다. 끄지 않으면 시험이 만든 outbox 행을 캐시된 다른 컨텍스트의 리스너가 소비한다
+    @Value("${payment.consumer.auto-startup:true}")
+    private boolean paymentConsumerAutoStartup;
 
     // 공통 템플릿 주석
 //    /**
@@ -286,6 +291,55 @@ public class KafkaConfig {
         factory.setConsumerFactory(paymentEventConsumerFactory());
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
         return factory;
+    }
+
+    // 결제 승인 후처리(PaymentEventConsumer) 전용 컨슈머 팩토리. 공용 paymentEventConsumerFactory 는 그대로 둔다
+    // max.poll.records 50 : 한 번에 받는 레코드가 많을수록 앞 레코드의 후처리가 poll 간격(5분) 안에 끝나야 한다
+    @Bean
+    public ConsumerFactory<String, String> paymentApprovedConsumerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "payment-event-group");
+        configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        configProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 50);
+        return monitoredConsumerFactory(configProps);
+    }
+
+    // concurrency 4 : payment-events 파티션 수와 같다. 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
+    // 비즈니스 실패는 서비스가 처리하고 정상 반환하므로 여기 오류 처리기는 DB 장애·파싱 실패만 본다:
+    // 1s · 2s · 4s · 8s · 16s 로 5회 재시도한 뒤 payment-events-dlq 로 보낸다
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> paymentApprovedKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(paymentApprovedConsumerFactory());
+        factory.setConcurrency(4);
+        factory.setAutoStartup(paymentConsumerAutoStartup);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
+
+        ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(5);
+        backOff.setInitialInterval(1000L);
+        backOff.setMultiplier(2.0);
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                paymentEventKafkaTemplate(),
+                // partition -1 → 브로커가 파티션을 배정
+                (record, ex) -> new TopicPartition("payment-events-dlq", -1));
+        factory.setCommonErrorHandler(new DefaultErrorHandler(recoverer, backOff));
+        return factory;
+    }
+
+    // 파티션 4개 : 컨슈머 concurrency 4 가 각자 한 파티션을 맡는다
+    @Bean
+    public NewTopic paymentEventsTopic() {
+        return TopicBuilder.name("payment-events").partitions(4).replicas(1).build();
+    }
+
+    // 후처리 컨슈머가 재시도 끝에 포기한 레코드의 보관 토픽. 소비자는 두지 않는다(수동 조회용)
+    @Bean
+    public NewTopic paymentEventsDlqTopic() {
+        return TopicBuilder.name("payment-events-dlq").partitions(1).replicas(1).build();
     }
 
     @Bean
