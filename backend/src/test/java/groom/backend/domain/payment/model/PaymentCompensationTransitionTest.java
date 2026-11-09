@@ -9,6 +9,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -210,7 +211,7 @@ class PaymentCompensationTransitionTest {
         assertThat(compensation.getRetryCount()).isZero();
         assertThat(compensation.getLastError()).isNull();
         assertThat(compensation.getNextRetryAt()).isNotNull();
-        assertThat(compensation.isTerminal()).isFalse();
+        assertThat(compensation.isReopenable()).isFalse();
     }
 
     @Test
@@ -222,5 +223,44 @@ class PaymentCompensationTransitionTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+    }
+
+    @Test
+    @DisplayName("reopen 은 SUCCEEDED · GIVEN_UP · RECONCILE_NEEDED 행에는 쓸 수 없다 - 사람 표식이나 끝난 환불을 지우지 않는다")
+    void reopenRejectsNonReopenableTerminalRows() {
+        PaymentCompensation succeeded = newCompensation(5);
+        succeeded.markProcessing();
+        succeeded.markSucceeded();
+        PaymentCompensation givenUp = newCompensation(1);
+        givenUp.markProcessing();
+        givenUp.markFailed("x");
+        PaymentCompensation reconcile = newCompensation(5);
+        reconcile.markReconcileNeeded("대사 필요");
+
+        for (PaymentCompensation row : List.of(succeeded, givenUp, reconcile)) {
+            CompensationStatus before = row.getStatus();
+            assertThatThrownBy(() -> row.reopen("pk-new", 1000, "새 사유"))
+                    .as("%s 에서 reopen", before)
+                    .isInstanceOf(BusinessException.class)
+                    .extracting(e -> ((BusinessException) e).getErrorCode())
+                    .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+            assertThat(row.getStatus()).isEqualTo(before);
+        }
+    }
+
+    @Test
+    @DisplayName("reopenable 은 NOT_APPROVED 와 SUPERSEDED 뿐이다")
+    void onlyNotApprovedAndSupersededAreReopenable() {
+        PaymentCompensation notApproved = newCompensation(5);
+        notApproved.markProcessing();
+        notApproved.markNotApproved("r");
+        PaymentCompensation superseded = newCompensation(5);
+        superseded.markProcessing();
+        superseded.markSuperseded("r");
+        PaymentCompensation pending = newCompensation(5);
+
+        assertThat(notApproved.isReopenable()).isTrue();
+        assertThat(superseded.isReopenable()).isTrue();
+        assertThat(pending.isReopenable()).isFalse();
     }
 }
