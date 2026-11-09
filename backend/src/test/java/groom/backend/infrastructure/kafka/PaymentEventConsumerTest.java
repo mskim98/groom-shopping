@@ -1,55 +1,87 @@
 package groom.backend.infrastructure.kafka;
 
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.times;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.PaymentApplicationService;
+import groom.backend.application.payment.event.PaymentApprovedEvent;
+import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.SetOperations;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentEventConsumerTest {
 
     @Mock
-    private RedisTemplate<String, String> redisTemplate;
-    @Mock
-    private SetOperations<String, String> setOps;
-    @InjectMocks
+    private PaymentApplicationService paymentApplicationService;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private PaymentEventConsumer consumer;
 
-    private ConsumerRecord<String, String> recordWithOutboxId(String outboxId) {
+    @BeforeEach
+    void setUp() {
+        consumer = new PaymentEventConsumer(paymentApplicationService, objectMapper);
+    }
+
+    @Test
+    void consume_PaymentApproved_레코드면_서비스_후처리를_이벤트_그대로_호출한다() throws Exception {
+        // 중복 처리 판정은 서비스가 Payment 상태로 하므로 컨슈머는 파싱한 이벤트를 그대로 넘긴다
+        UUID paymentId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        PaymentApprovedEvent event = new PaymentApprovedEvent(
+                paymentId, orderId, 1000, new TossPaymentResponse(),
+                List.of(new PaymentApprovedEvent.ReservedItem(productId, 2)));
+        String json = objectMapper.writeValueAsString(event);
         ConsumerRecord<String, String> record =
-                new ConsumerRecord<>("payment-events", 0, 0L, "key", "{}");
-        record.headers().add("outbox-id", outboxId.getBytes(StandardCharsets.UTF_8));
-        return record;
+                new ConsumerRecord<>("payment-events", 0, 0L, paymentId.toString(), json);
+        record.headers().add("outbox-id", "ob-1".getBytes(StandardCharsets.UTF_8));
+
+        consumer.consume(record);
+
+        ArgumentCaptor<PaymentApprovedEvent> captor = ArgumentCaptor.forClass(PaymentApprovedEvent.class);
+        verify(paymentApplicationService).applyApprovedEvent(captor.capture());
+        PaymentApprovedEvent passed = captor.getValue();
+        assertThat(passed.paymentId()).isEqualTo(paymentId);
+        assertThat(passed.orderId()).isEqualTo(orderId);
+        assertThat(passed.amount()).isEqualTo(1000);
+        assertThat(passed.reservedItems())
+                .containsExactly(new PaymentApprovedEvent.ReservedItem(productId, 2));
     }
 
     @Test
-    void consume_처음_처리하는_outboxId면_dedup_Set에_추가한다() {
-        given(redisTemplate.opsForSet()).willReturn(setOps);
-        given(setOps.add(eq("payment-event:processed"), eq("ob-1"))).willReturn(1L); // 신규
+    void consume_읽을_수_없는_JSON이면_IllegalArgumentException을_던지고_서비스를_부르지_않는다() {
+        ConsumerRecord<String, String> record =
+                new ConsumerRecord<>("payment-events", 0, 0L, "key", "not-json");
 
-        consumer.consume(recordWithOutboxId("ob-1"));
-
-        verify(setOps, times(1)).add("payment-event:processed", "ob-1");
+        assertThatThrownBy(() -> consumer.consume(record))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(paymentApplicationService, never()).applyApprovedEvent(any());
     }
 
     @Test
-    void consume_이미_처리한_outboxId면_중복으로_무시한다() {
-        given(redisTemplate.opsForSet()).willReturn(setOps);
-        given(setOps.add(eq("payment-event:processed"), eq("ob-1"))).willReturn(0L); // 중복
+    void consume_서비스가_예외를_던지면_그대로_전파한다() throws Exception {
+        // 재시도와 DLQ 전송은 Kafka 오류 처리기(DefaultErrorHandler)가 맡으므로 컨슈머는 예외를 삼키지 않는다
+        PaymentApprovedEvent event = new PaymentApprovedEvent(
+                UUID.randomUUID(), UUID.randomUUID(), 1000, new TossPaymentResponse(), List.of());
+        ConsumerRecord<String, String> record = new ConsumerRecord<>(
+                "payment-events", 0, 0L, "key", objectMapper.writeValueAsString(event));
+        doThrow(new IllegalStateException("db down")).when(paymentApplicationService).applyApprovedEvent(any());
 
-        // 중복이면 예외 없이 조용히 무시(early return)
-        consumer.consume(recordWithOutboxId("ob-1"));
-
-        verify(setOps, times(1)).add("payment-event:processed", "ob-1");
+        assertThatThrownBy(() -> consumer.consume(record))
+                .isInstanceOf(IllegalStateException.class);
     }
 }
