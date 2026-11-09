@@ -1,5 +1,6 @@
 package groom.backend.application.payment;
 
+import groom.backend.application.payment.event.PaymentCompensationConflictEvent;
 import groom.backend.application.payment.event.PaymentCompensationDlqEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -175,22 +176,49 @@ public class PaymentCompensationService {
     }
 
     /**
-     * 같은 결제의 보상 행이 이미 있을 때의 처리. 종단 상태(재시도 끝 · NOT_APPROVED · SUPERSEDED …)면 새 의도로 다시 열고,
-     * 이미 진행 중(PENDING · FAILED · PROCESSING)이면 환불이 예약돼 있으므로 그대로 둔다
+     * 같은 결제의 보상 행이 이미 있을 때의 처리.
+     * - NOT_APPROVED · SUPERSEDED: 새 의도로 다시 연다(시간 초과가 승인 안 됐다고 끝난 뒤 재시도 확정이 승인된 경우 등)
+     * - SUCCEEDED · GIVEN_UP · RECONCILE_NEEDED: 행을 건드리지 않는다. 끝난 환불을 되풀이하거나 DLQ 로 나간 건·사람의 표식을
+     *   지우면 안 된다. SUCCEEDED 에서 같은 paymentKey 가 다시 승인되는 일은 Toss 에 없으므로 이상 징후로 보고,
+     *   error 로그와 DLQ Outbox 이벤트(COMPENSATION_CONFLICT_ON_TERMINAL_ROW)를 남겨 운영자가 보게 한다
+     * - PENDING · FAILED · PROCESSING: 이미 환불이 예약돼 있으므로 그대로 둔다
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reopenCompensation(UUID paymentId, String paymentKey, Integer amount, String reason) {
         PaymentCompensation existing = compensationRepository.findByPaymentId(paymentId)
                 .orElseThrow(() -> new IllegalStateException("payment_id 유일 위반인데 보상 행이 없다: " + paymentId));
-        if (!existing.isTerminal()) {
-            log.info("[PAYMENT_COMPENSATION_ACTIVE] 이미 진행 중인 보상 행 유지 - PaymentId: {}, Status: {}",
-                    paymentId, existing.getStatus());
+        if (existing.isReopenable()) {
+            CompensationStatus before = existing.getStatus();
+            existing.reopen(paymentKey, amount, reason);
+            compensationRepository.save(existing);
+            log.warn("[PAYMENT_COMPENSATION_REOPENED] 종단 보상 행을 다시 엶 - PaymentId: {}, Before: {}", paymentId, before);
             return;
         }
-        CompensationStatus before = existing.getStatus();
-        existing.reopen(paymentKey, amount, reason);
-        compensationRepository.save(existing);
-        log.warn("[PAYMENT_COMPENSATION_REOPENED] 종단 보상 행을 다시 엶 - PaymentId: {}, Before: {}", paymentId, before);
+        if (existing.getStatus() == CompensationStatus.SUCCEEDED || existing.getStatus() == CompensationStatus.GIVEN_UP
+                || existing.getStatus() == CompensationStatus.RECONCILE_NEEDED) {
+            log.error("[PAYMENT_COMPENSATION_CONFLICT] 종단 보상 행이 있는 결제에 새 보상 의도 - 행 유지, 운영자 확인 필요 "
+                            + "- PaymentId: {}, ExistingStatus: {}, ExistingReason: {}, NewReason: {}",
+                    paymentId, existing.getStatus(), existing.getReason(), reason);
+            appendConflictOutbox(existing, paymentKey, reason);
+            return;
+        }
+        log.info("[PAYMENT_COMPENSATION_ACTIVE] 이미 진행 중인 보상 행 유지 - PaymentId: {}, Status: {}",
+                paymentId, existing.getStatus());
+    }
+
+    // 같은 트랜잭션(REQUIRES_NEW)에서 DLQ 토픽 Outbox 행으로 남긴다 - 직접 send 하지 않는다
+    private void appendConflictOutbox(PaymentCompensation existing, String newPaymentKey, String newReason) {
+        PaymentCompensationConflictEvent event = new PaymentCompensationConflictEvent(
+                existing.getPaymentId(), existing.getStatus().name(), existing.getReason(),
+                newPaymentKey, newReason, LocalDateTime.now());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("보상 충돌 이벤트 직렬화 실패: " + e.getMessage(), e);
+        }
+        outboxRepository.save(PaymentOutbox.create(existing.getPaymentId(),
+                PaymentCompensationConflictEvent.EVENT_TYPE, payload, PaymentCompensationDlqEvent.TOPIC));
     }
 
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */

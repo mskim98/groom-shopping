@@ -86,7 +86,10 @@ public class PaymentCompensation {
         this.nextRetryAt = LocalDateTime.now();
     }
 
-    // 허용 전이표. SUCCEEDED·GIVEN_UP 은 종단이라 어떤 전이도 나가지 않는다
+    // 허용 전이표. SUCCEEDED·GIVEN_UP·RECONCILE_NEEDED 는 종단이라 다시 열리지 않는다 - 끝난 환불을 다시 시도하거나(SUCCEEDED),
+    // 이미 DLQ 로 나간 건(GIVEN_UP)이나 사람이 표시한 건(RECONCILE_NEEDED)의 표식을 지우면 안 된다.
+    // 종단에서 나가는 전이는 NOT_APPROVED → PENDING · SUPERSEDED → PENDING (새 보상 의도가 오면 다시 연다) 둘뿐이고,
+    // SUCCEEDED · GIVEN_UP · SUPERSEDED · NOT_APPROVED 에서 RECONCILE_NEEDED 로 가는 길은 수동 취소의 대사 필요 표시용이다
     // 조회 쿼리(findRetryable)의 상태 조건에만 의존하면 새 호출부가 생기는 순간 뚫린다
     // PROCESSING 은 배치 인스턴스가 선점 조회로 붙이는 상태다. 선점 자체는 네이티브
     // UPDATE...RETURNING 으로 커밋되어 이 전이표를 거치지 않지만, 이 표는 이후 결과
@@ -104,11 +107,11 @@ public class PaymentCompensation {
                     CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
                     CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.SUPERSEDED,
                     CompensationStatus.NOT_APPROVED, CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.SUPERSEDED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
             CompensationStatus.NOT_APPROVED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.RECONCILE_NEEDED, EnumSet.of(CompensationStatus.PENDING));
+            CompensationStatus.RECONCILE_NEEDED, EnumSet.noneOf(CompensationStatus.class));
 
     private void transitionTo(CompensationStatus next) {
         Set<CompensationStatus> allowed = ALLOWED_TRANSITIONS
@@ -192,15 +195,13 @@ public class PaymentCompensation {
         this.nextRetryAt = null;
     }
 
-    /** 종단 상태(재시도하지 않는 끝)인지 - 다시 열 수 있는 행인지 판단한다 */
-    public boolean isTerminal() {
-        return status == CompensationStatus.SUCCEEDED || status == CompensationStatus.GIVEN_UP
-                || status == CompensationStatus.SUPERSEDED || status == CompensationStatus.NOT_APPROVED
-                || status == CompensationStatus.RECONCILE_NEEDED;
+    /** 새 보상 의도가 오면 다시 열 수 있는 종단 행인지 - NOT_APPROVED · SUPERSEDED 뿐이다 */
+    public boolean isReopenable() {
+        return status == CompensationStatus.NOT_APPROVED || status == CompensationStatus.SUPERSEDED;
     }
 
     /**
-     * 종단 상태로 끝난 보상 행을 새 보상 의도로 다시 연다. 결제당 보상 행은 하나(payment_id 유일)라, 같은 결제에 새 의도가
+     * NOT_APPROVED · SUPERSEDED 로 끝난 보상 행을 새 보상 의도로 다시 연다. 결제당 보상 행은 하나(payment_id 유일)라, 같은 결제에 새 의도가
      * 오면 새 행을 만들 수 없다 - 예: 시간 초과 → NOT_APPROVED 로 끝난 뒤 클라이언트의 재시도 확정이 승인되고 후처리가 실패한 경우.
      * 결제키·금액·사유를 새 값으로 바꾸고 재시도 횟수·오류·종단 표식을 지워 배치가 다시 집어 가게 한다
      */
