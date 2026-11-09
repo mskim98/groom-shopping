@@ -128,4 +128,34 @@ class CompensationGivenUpOutboxTest {
                 .isEqualTo("PROCESSING");
         assertThat(outboxRows()).isEmpty();
     }
+
+    private void reconcileOverExistingRow(String existingStatus) {
+        jdbc.update("UPDATE payment_compensation SET status = ? WHERE id = ?", existingStatus, compensationId);
+        String key = jdbc.queryForObject("SELECT payment_key FROM payment_compensation WHERE id = ?",
+                String.class, compensationId);
+
+        compensationService.recordReconcileNeeded(payment.getId(), key, 1000,
+                "[RECONCILE_MANUAL_CANCEL] Toss 취소 성공, DB 갱신 실패");
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
+                Long.class, payment.getId())).as("보상 행은 결제당 하나").isEqualTo(1L);
+        assertThat(jdbc.queryForMap("SELECT status, last_error FROM payment_compensation WHERE id = ?", compensationId))
+                .containsEntry("status", "RECONCILE_NEEDED");
+        assertThat(jdbc.queryForObject("SELECT last_error FROM payment_compensation WHERE id = ?",
+                String.class, compensationId)).contains("RECONCILE_MANUAL_CANCEL");
+        assertThat(outboxRows()).as("대사 필요 DLQ 이벤트").hasSize(1).first()
+                .satisfies(row -> assertThat(row.get("topic")).isEqualTo(DLQ_TOPIC));
+    }
+
+    @Test
+    @DisplayName("결제에 이미 SUPERSEDED 보상 행이 있어도 대사 필요 건은 행을 갱신하고 DLQ 이벤트를 남긴다")
+    void 대사필요_기존_SUPERSEDED행_행갱신과_DLQ이벤트를_남긴다() {
+        reconcileOverExistingRow("SUPERSEDED");
+    }
+
+    @Test
+    @DisplayName("결제에 이미 NOT_APPROVED 보상 행이 있어도 대사 필요 건은 행을 갱신하고 DLQ 이벤트를 남긴다")
+    void 대사필요_기존_NOT_APPROVED행_행갱신과_DLQ이벤트를_남긴다() {
+        reconcileOverExistingRow("NOT_APPROVED");
+    }
 }
