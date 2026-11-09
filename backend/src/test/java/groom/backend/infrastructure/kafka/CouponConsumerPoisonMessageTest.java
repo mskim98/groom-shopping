@@ -123,4 +123,33 @@ class CouponConsumerPoisonMessageTest {
         // 읽히지 않은 쪽(BROKEN_JSON)은 되돌릴 대상을 몰라 호출이 한 번뿐이다
         verify(stock, times(1)).rollbackIssue(anyLong(), anyLong());
     }
+
+    @Test
+    @DisplayName("requestId 가 없는 메시지는 DLQ 에만 남기고 상태 키 · 결과 이벤트 · 반납을 하지 않는다")
+    @SuppressWarnings("unchecked")
+    void consume_requestId_가_없으면_DLQ_와_로그뿐이다() {
+        CouponStockRedisRepository stock = mock(CouponStockRedisRepository.class);
+        RedisTemplate<String, String> redisTemplate = mock(RedisTemplate.class);
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        given(redisTemplate.opsForValue()).willReturn(valueOps);
+        KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
+        CouponAsyncIssueService service = new CouponAsyncIssueService(
+                mock(CouponRepository.class), mock(CouponIssueRepository.class), mock(CouponIssueBatchWriter.class),
+                stock, redisTemplate, kafkaTemplate, new ObjectMapper(),
+                mock(RedissonClient.class), mock(CouponStockRecoveryService.class));
+        CouponIssueRequestConsumer consumer = new CouponIssueRequestConsumer(service, new ObjectMapper(), dlqProducer);
+        // couponId · userId 는 읽히지만 requestId 가 없고, 형식 오류(gateReserved)로 읽기는 실패한다
+        String noRequestId = "{\"couponId\":1,\"userId\":100,\"gateReserved\":\"maybe\"}";
+
+        consumer.consume(List.of(record(0, "100", noRequestId)));
+
+        verify(dlqProducer).send(eq("100"), eq(noRequestId), any(Throwable.class));
+        // 어느 요청의 예약인지 알 수 없으므로 아무것도 반납하지 않는다
+        verify(stock, never()).rollbackIssue(anyLong(), anyLong());
+        // 상태 키 coupon:issue:status:null 을 쓰지 않는다
+        verify(valueOps, never()).set(any(), any(), any(java.time.Duration.class));
+        verify(redisTemplate, never()).executePipelined(any(org.springframework.data.redis.core.SessionCallback.class));
+        // requestId 가 null 인 결과 이벤트를 결과 토픽에 싣지 않는다
+        verify(kafkaTemplate, never()).send(any(String.class), any(String.class), any(String.class));
+    }
 }

@@ -27,6 +27,9 @@ import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -157,19 +160,53 @@ class CouponRecoveryWiringTest {
     }
 
     @Test
-    @DisplayName("헬스 체크가 재고 키 부재를 보면 복구를 돌리고, 복구 중이면 OUT_OF_SERVICE 를 낸다")
-    void health_재고_키_부재면_복구를_돌린다() {
+    @DisplayName("헬스 체크는 복구를 프로브 스레드에서 돌리지 않고 한 번만 예약한다")
+    void health_복구를_프로브_스레드에서_돌리지_않는다() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Thread> recoveryThread = new AtomicReference<>();
+        // 복구가 끝나지 않는 상황 - 프로브 스레드에서 돌았다면 health() 가 여기서 막혀 돌아오지 못한다
+        given(recoveryService.recoverIfStockMissing()).willAnswer(invocation -> {
+            recoveryThread.set(Thread.currentThread());
+            started.countDown();
+            release.await(10, TimeUnit.SECONDS);
+            return true;
+        });
+        CouponIssueHealthIndicator indicator = new CouponIssueHealthIndicator(recoveryService);
+        ReflectionTestUtils.setField(indicator, "checkIntervalMs", 0L);
+        Thread caller = Thread.currentThread();
+
+        long begin = System.nanoTime();
+        indicator.health();
+        indicator.health();
+        long elapsedMs = (System.nanoTime() - begin) / 1_000_000;
+
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(elapsedMs).as("health() 두 번이 복구를 기다리지 않는다").isLessThan(2_000L);
+            assertThat(recoveryThread.get()).isNotSameAs(caller);
+            // 복구가 도는 동안 다시 불려도 두 번째 복구를 예약하지 않는다
+            verify(recoveryService, times(1)).recoverIfStockMissing();
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("재고 키가 없다고 판정된 동안과 복구 중에는 OUT_OF_SERVICE 를 낸다")
+    void health_키가_없거나_복구_중이면_OUT_OF_SERVICE_이다() {
         CouponIssueHealthIndicator indicator = new CouponIssueHealthIndicator(recoveryService);
         ReflectionTestUtils.setField(indicator, "checkIntervalMs", 60_000L);
 
-        indicator.health();
-        indicator.health();
+        given(recoveryService.isStockMissing()).willReturn(true);
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.OUT_OF_SERVICE);
 
-        // 두 번 불러도 간격 안에서는 키 검사를 한 번만 한다 - 헬스 체크마다 활성 쿠폰 전체를 훑지 않는다
-        verify(recoveryService, times(1)).recoverIfStockMissing();
-
+        given(recoveryService.isStockMissing()).willReturn(false);
         given(recoveryService.isRecovering()).willReturn(true);
         assertThat(indicator.health().getStatus()).isEqualTo(Status.OUT_OF_SERVICE);
+
+        given(recoveryService.isRecovering()).willReturn(false);
+        assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
     }
 
     @Test
@@ -179,7 +216,7 @@ class CouponRecoveryWiringTest {
         RLock lock = mock(RLock.class);
         given(redisson.getLock("coupon:reconcile:lock")).willReturn(lock);
         CouponStockReconciliationService service = new CouponStockReconciliationService(
-                couponRepository, couponIssueRepository, stockRepository, redisson, new SimpleMeterRegistry());
+                couponRepository, couponIssueRepository, stockRepository, redisson, kafkaLagReader, new SimpleMeterRegistry());
 
         Method scheduled = Arrays.stream(CouponStockReconciliationService.class.getDeclaredMethods())
                 .filter(m -> m.isAnnotationPresent(Scheduled.class))
