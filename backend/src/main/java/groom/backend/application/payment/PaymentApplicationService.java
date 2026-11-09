@@ -128,10 +128,8 @@ public class PaymentApplicationService {
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
-            // Toss 승인 자체가 실패 → 외부 승인 없음. 선점한 Redis 재고를 복원하고 DB 상태만 FAILED로 기록.
-            // releaseStock 은 실패해도 던지지 않는다(복원 실패가 FAILED 기록과 원래 예외 전파를 막으면 안 된다)
-            releaseStock(reservedItems);
-            // 시간 초과는 Toss 가 승인했는지 알 수 없다 - 돈이 빠졌을 수 있으므로 보상 의도를 남긴다.
+            // 순서: ① 보상 의도 기록(기록하는 경우만 - 시간 초과) → ② Redis 복원(실패해도 계속) → ③ FAILED 기록
+            // 시간 초과는 Toss 가 승인했는지 알 수 없다 - 돈이 빠졌을 수 있으므로 보상 의도를 먼저 남긴다.
             // 배치가 취소를 호출해 승인됐다면 환불하고, 승인된 적 없으면 404 로 NOT_APPROVED 가 되어 끝난다.
             // 4xx 거절·서킷 거절은 승인된 적이 없는 확정이라 기록하지 않는다
             if (e instanceof BusinessException timeout && timeout.getErrorCode() == ErrorCode.PAYMENT_PG_TIMEOUT) {
@@ -143,6 +141,8 @@ public class PaymentApplicationService {
                             payment.getId(), paymentKey, compensationError.getMessage(), compensationError);
                 }
             }
+            // releaseStock 은 실패해도 던지지 않는다(복원 실패가 FAILED 기록과 원래 예외 전파를 막으면 안 된다)
+            releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
             selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage(), paymentKey);
             // 도메인 예외는 재포장하지 않는다 - 감싸는 순간 errorCode 가 소실돼 전역 핸들러의 catch-all(500)로 떨어진다
