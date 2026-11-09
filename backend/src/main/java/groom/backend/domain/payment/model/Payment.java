@@ -21,6 +21,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -190,6 +191,12 @@ public class Payment {
     @Column(name = "checkout", columnDefinition = "TEXT")
     private String checkout;
 
+    // 낙관적 락 버전. 같은 결제를 두 요청이 동시에 DONE 으로 바꾸면 늦게 커밋하는 쪽이 갱신 0행으로 실패한다
+    // 컬럼명을 lock_version 으로 한 이유: version 컬럼은 Toss API 버전 문자열이 이미 쓰고 있다
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion;
+
     // 결제 레코드 생성 시각 (최초 저장 시 자동 입력)
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -325,8 +332,16 @@ public class Payment {
     public void fail(String failureCode, String failureMessage) {
         PaymentStateTransition.validate(this.status, PaymentStatus.FAILED);
         this.status = PaymentStatus.FAILED;
-        this.failureCode = failureCode;
-        this.failureMessage = failureMessage;
+        // 컬럼 길이(code 100 · message 255) 초과 시 value too long 으로 FAILED 기록이 통째로 실패해 PENDING 이 남는다
+        this.failureCode = TextLimit.clip(failureCode, 100);
+        this.failureMessage = TextLimit.clip(failureMessage, 255);
+    }
+
+    // 승인 전에 실패한 결제에도 Toss paymentKey 를 남긴다 - 이미 키가 있으면(READY 이후) 바꾸지 않는다
+    public void attachPaymentKeyIfAbsent(String paymentKey) {
+        if (this.paymentKey == null && paymentKey != null && !paymentKey.isBlank()) {
+            this.paymentKey = PaymentKey.of(paymentKey);
+        }
     }
 
     // 비즈니스 로직: 결제 만료 처리

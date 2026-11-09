@@ -156,7 +156,8 @@ public class OrderApplicationService {
 
     // 주문 상세 조회
     public Order getOrderById(UUID orderId, Long userId) {
-        Order order = orderRepository.findById(orderId)
+        // 컨트롤러가 트랜잭션 밖에서 주문 항목을 읽으므로(open-in-view: false) fetch join 으로 항목까지 가져온다
+        Order order = orderRepository.findByIdWithItems(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
 
         // 본인의 주문만 조회 가능

@@ -34,6 +34,7 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 .aggregateId(o.getAggregateId())
                 .eventType(o.getEventType())
                 .payload(o.getPayload())
+                .topic(o.getTopic())
                 .status(o.getStatus().name())
                 .createdAt(o.getCreatedAt())
                 .publishedAt(o.getPublishedAt())
@@ -46,6 +47,7 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 e.getAggregateId(),
                 e.getEventType(),
                 e.getPayload(),
+                e.getTopic(),
                 PaymentOutbox.OutboxStatus.valueOf(e.getStatus()),
                 e.getCreatedAt(),
                 e.getPublishedAt());

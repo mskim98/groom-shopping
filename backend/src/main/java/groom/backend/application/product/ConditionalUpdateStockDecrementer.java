@@ -21,8 +21,9 @@ public class ConditionalUpdateStockDecrementer implements StockDecrementer {
 
     private final SpringDataProductRepository springDataProductRepository;
 
+    // REQUIRED : 결제 후처리 트랜잭션에 합류해 후처리 실패 시 차감도 함께 롤백된다
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public int decrease(UUID productId, int quantity) {
         int affected = springDataProductRepository.decreaseStockIfEnough(productId, quantity);
         if (affected == 0) {

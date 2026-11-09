@@ -1,12 +1,19 @@
 package groom.backend.application.payment;
 
+import groom.backend.application.payment.event.PaymentCompensationConflictEvent;
 import groom.backend.application.payment.event.PaymentCompensationDlqEvent;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.domain.payment.model.PaymentCompensation;
+import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
-import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
+import groom.backend.domain.payment.repository.PaymentOutboxRepository;
+import groom.backend.domain.payment.repository.PaymentRepository;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import groom.backend.infrastructure.payment.TossPaymentNotFoundException;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -22,12 +29,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -48,7 +57,11 @@ public class PaymentCompensationService {
     // private final : 스프링이 주입하는 협력 객체. 외부에서 못 바꾸게 막아 안전하게 사용.
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
-    private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
+    // 최종 실패(GIVEN_UP) 시 DLQ 이벤트를 같은 트랜잭션의 Outbox 행으로 남긴다(폴러가 발행 - 직접 send 없음)
+    private final PaymentOutboxRepository outboxRepository;
+    // 취소 직전 결제 상태 재확인용
+    private final PaymentRepository paymentRepository;
+    private final ObjectMapper objectMapper;
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
     // 배치 설정(페이지 크기 · 워커 수 · 정지 신호 회로 이름들)
@@ -61,7 +74,6 @@ public class PaymentCompensationService {
     // 회차 지표 - 게이지가 가리키는 값. 게이지는 이 AtomicLong 을 읽으므로 @PostConstruct 등록 여부와 무관하게 갱신된다
     private final AtomicLong dueGauge = new AtomicLong(0);      // 회차 시작 시점의 재시도 대기 전체 수
     private final AtomicLong carriedGauge = new AtomicLong(0);  // due - processed. 한 페이지로 못 비운 적재
-    private final AtomicLong givenUpTotal = new AtomicLong(0);  // 재시도 한도 초과로 최종 포기한 누적 수
 
     /**
      * 기동 시 배치 설정을 검증한다. 어긋나면 기동을 실패시켜 잘못된 값으로 배치가 도는 것을 막는다.
@@ -83,14 +95,20 @@ public class PaymentCompensationService {
                 .description("회차 시작 시점의 재시도 대기 전체 수").register(meterRegistry);
         Gauge.builder("payment_compensation_carried", carriedGauge, AtomicLong::get)
                 .description("carried = due - processed. 한 페이지로 못 비운 적재").register(meterRegistry);
-        Gauge.builder("payment_compensation_given_up_total", givenUpTotal, AtomicLong::get)
-                .description("재시도 한도 초과로 최종 포기(GIVEN_UP)한 누적 수").register(meterRegistry);
+        // 메모리 누적이 아니라 DB 의 GIVEN_UP 행 수를 읽는다 - 재기동·다중 인스턴스에서도 GIVEN_UP 행이 진실이다
+        Gauge.builder("payment_compensation_given_up_total", compensationRepository,
+                        repo -> repo.countByStatus(CompensationStatus.GIVEN_UP))
+                .description("최종 포기(GIVEN_UP)한 보상 행 수(DB 카운트)").register(meterRegistry);
     }
 
     // 토스가 살아 있다는 신호(429·403·409)를 받았을 때 다음 시도까지 미루는 시간
     // retry-delay-ms(스케줄러 주기, 기본 30초)보다 길게 잡아 같은 회차 안에서 바로 재충돌하지 않게 한다
     @Value("${payment.compensation.retry-later-defer-ms:45000}")
     private long retryLaterDeferMs;
+
+    // 유예(429·403·409)가 이어져도 생성 후 이 시간이 지나면 더 기다리지 않고 GIVEN_UP 으로 끝낸다
+    @Value("${payment.compensation.defer-max-age-minutes:60}")
+    private long deferMaxAgeMinutes = 60;
 
     // 배치 주기와 값을 맞춘다(@Scheduled 의 fixedDelayString 과 동일한 프로퍼티·기본값)
     // 죽은 인스턴스 회수 기준(staleThreshold)이 이 값의 3배이므로 항상 같은 값을 참조해야 한다
@@ -110,10 +128,97 @@ public class PaymentCompensationService {
     // 요청 커넥션을 취소 지연(최대 30초)만큼 물어 풀이 마른다. PENDING(nextRetryAt=now) 으로 남기면
     // retryPendingCompensations 배치가 다음 회차에 주워 트랜잭션 밖에서 취소한다. 취소 경로가 배치 하나뿐
     public void compensate(UUID paymentId, String paymentKey, Integer amount, String failureReason) {
-        selfProvider.getObject()
-                .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
+        try {
+            selfProvider.getObject()
+                    .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
+        } catch (DataIntegrityViolationException duplicate) {
+            // payment_id 유일 제약 - 같은 결제의 보상 행이 이미 있다. 로그만 남기고 넘어가면 그 행이 종단 상태(NOT_APPROVED ·
+            // SUPERSEDED …)일 때 새 승인의 환불이 영영 시도되지 않는다. 종단 행은 다시 열고, 진행 중인 행은 그대로 둔다.
+            // 다시 열기가 실패하면 삼키지 않고 호출부로 전파한다
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - 다시 열기 확인 PaymentId: {}", paymentId);
+            selfProvider.getObject().reopenCompensation(paymentId, paymentKey, amount, failureReason);
+        }
 
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
+    }
+
+    /**
+     * 재시도할 취소가 아니라 사람이 대사해야 하는 건(수동 취소에서 Toss 는 취소됐는데 DB 갱신이 실패)을 남긴다.
+     * 배치에 맡기면 DONE 결제라 SUPERSEDED 로 덮여 버리므로, 처음부터 GIVEN_UP 행 + DLQ 이벤트로 기록한다
+     */
+    public void recordReconcileNeeded(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        try {
+            selfProvider.getObject().recordGivenUpIntent(paymentId, paymentKey, amount, reason);
+        } catch (DataIntegrityViolationException raced) {
+            // 조회와 삽입 사이에 같은 결제의 행이 먼저 생겼다 - 이번에는 조회가 그 행을 찾아 갱신 경로를 탄다.
+            // 두 번째 실패는 삼키지 않고 호출부로 전파한다(대사 행도 DLQ 이벤트도 없는 불일치를 조용히 두지 않는다)
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 삽입 경합 - 기존 행을 갱신으로 재시도 PaymentId: {}", paymentId);
+            selfProvider.getObject().recordGivenUpIntent(paymentId, paymentKey, amount, reason);
+        }
+    }
+
+    // 결제에 보상 행이 이미 있으면(SUPERSEDED · NOT_APPROVED 등) 그 행을 RECONCILE_NEEDED 로 갱신하고, 없으면 GIVEN_UP 행을 만든다.
+    // 어느 쪽이든 같은 트랜잭션에서 DLQ Outbox 이벤트를 남긴다
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordGivenUpIntent(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        PaymentCompensation existing = compensationRepository.findByPaymentId(paymentId).orElse(null);
+        if (existing != null) {
+            existing.markReconcileNeeded(reason);
+            compensationRepository.save(existing);
+            appendGivenUpOutbox(existing, reason);
+            return;
+        }
+        PaymentCompensation compensation = PaymentCompensation.builder()
+                .paymentId(paymentId).paymentKey(paymentKey).amount(amount).reason(reason).maxRetryCount(5).build();
+        compensation.markGivenUp(reason);
+        compensationRepository.save(compensation);
+        appendGivenUpOutbox(compensation, reason);
+    }
+
+    /**
+     * 같은 결제의 보상 행이 이미 있을 때의 처리.
+     * - NOT_APPROVED · SUPERSEDED: 새 의도로 다시 연다(시간 초과가 승인 안 됐다고 끝난 뒤 재시도 확정이 승인된 경우 등)
+     * - SUCCEEDED · GIVEN_UP · RECONCILE_NEEDED: 행을 건드리지 않는다. 끝난 환불을 되풀이하거나 DLQ 로 나간 건·사람의 표식을
+     *   지우면 안 된다. SUCCEEDED 에서 같은 paymentKey 가 다시 승인되는 일은 Toss 에 없으므로 이상 징후로 보고,
+     *   error 로그와 DLQ Outbox 이벤트(COMPENSATION_CONFLICT_ON_TERMINAL_ROW)를 남겨 운영자가 보게 한다
+     * - PENDING · FAILED · PROCESSING: 이미 환불이 예약돼 있으므로 그대로 둔다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void reopenCompensation(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        PaymentCompensation existing = compensationRepository.findByPaymentId(paymentId)
+                .orElseThrow(() -> new IllegalStateException("payment_id 유일 위반인데 보상 행이 없다: " + paymentId));
+        if (existing.isReopenable()) {
+            CompensationStatus before = existing.getStatus();
+            existing.reopen(paymentKey, amount, reason);
+            compensationRepository.save(existing);
+            log.warn("[PAYMENT_COMPENSATION_REOPENED] 종단 보상 행을 다시 엶 - PaymentId: {}, Before: {}", paymentId, before);
+            return;
+        }
+        if (existing.getStatus() == CompensationStatus.SUCCEEDED || existing.getStatus() == CompensationStatus.GIVEN_UP
+                || existing.getStatus() == CompensationStatus.RECONCILE_NEEDED) {
+            log.error("[PAYMENT_COMPENSATION_CONFLICT] 종단 보상 행이 있는 결제에 새 보상 의도 - 행 유지, 운영자 확인 필요 "
+                            + "- PaymentId: {}, ExistingStatus: {}, ExistingReason: {}, NewReason: {}",
+                    paymentId, existing.getStatus(), existing.getReason(), reason);
+            appendConflictOutbox(existing, paymentKey, reason);
+            return;
+        }
+        log.info("[PAYMENT_COMPENSATION_ACTIVE] 이미 진행 중인 보상 행 유지 - PaymentId: {}, Status: {}",
+                paymentId, existing.getStatus());
+    }
+
+    // 같은 트랜잭션(REQUIRES_NEW)에서 DLQ 토픽 Outbox 행으로 남긴다 - 직접 send 하지 않는다
+    private void appendConflictOutbox(PaymentCompensation existing, String newPaymentKey, String newReason) {
+        PaymentCompensationConflictEvent event = new PaymentCompensationConflictEvent(
+                existing.getPaymentId(), existing.getStatus().name(), existing.getReason(),
+                newPaymentKey, newReason, LocalDateTime.now());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("보상 충돌 이벤트 직렬화 실패: " + e.getMessage(), e);
+        }
+        outboxRepository.save(PaymentOutbox.create(existing.getPaymentId(),
+                PaymentCompensationConflictEvent.EVENT_TYPE, payload, PaymentCompensationDlqEvent.TOPIC));
     }
 
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */
@@ -181,7 +286,8 @@ public class PaymentCompensationService {
             }
             for (Future<?> f : futures) {
                 try {
-                    f.get();
+                    // 상한 없는 get() 금지 - 한 건 취소는 HTTP 읽기 한도(30초)로 끝나므로 그 몇 배면 충분하다
+                    f.get(2, TimeUnit.MINUTES);
                 } catch (Exception e) {
                     log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] {}", e.getMessage());
                 }
@@ -229,6 +335,16 @@ public class PaymentCompensationService {
     // PG 응답을 기다리는 동안 DB 커넥션을 쥐면 실패 1건이 취소 타임아웃(30초)만큼 풀을 점유해
     // 풀 50 이 초당 1.7건의 실패에 마른다. 호출은 밖에서, 기록만 REQUIRES_NEW 로 짧게 한다
     public boolean executeCompensation(PaymentCompensation compensation) {
+        // 취소 직전 결제를 다시 읽는다. 동시 중복 확정에서 한쪽이 정상 승인(DONE)을 끝냈다면 이 보상은 그 정상 결제를
+        // 같은 paymentKey 로 취소하게 된다 - 호출하지 않고 SUPERSEDED 로 끝낸다
+        PaymentStatus current = paymentRepository.findById(compensation.getPaymentId())
+                .map(p -> p.getStatus()).orElse(null);
+        if (current == PaymentStatus.DONE || current == PaymentStatus.PARTIAL_CANCELED
+                || current == PaymentStatus.CANCELED) {
+            selfProvider.getObject().recordSuperseded(compensation,
+                    "결제가 이미 " + current + " - 정상 승인이거나 이미 취소돼 Toss 취소를 호출하지 않음");
+            return false;
+        }
         // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
         // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를
         // 새 요청으로 오인해 이중 환불이 난다 -> 멱등키가 목적을 잃는다
@@ -248,6 +364,20 @@ public class PaymentCompensationService {
         return selfProvider.getObject().recordResult(compensation, failure);
     }
 
+    // ±20% 지터 - 같은 순간 유예된 행들이 같은 시각에 한꺼번에 돌아와 Toss 의 429 를 다시 맞는 일을 흩는다
+    private static Duration jittered(Duration base) {
+        double factor = 0.8 + java.util.concurrent.ThreadLocalRandom.current().nextDouble() * 0.4;
+        return Duration.ofMillis((long) (base.toMillis() * factor));
+    }
+
+    /** 취소를 호출하지 않고 SUPERSEDED 로 끝낸 결과를 독립 커밋한다 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordSuperseded(PaymentCompensation compensation, String reason) {
+        compensation.markSuperseded(reason);
+        compensationRepository.save(compensation);
+        log.warn("[PAYMENT_COMPENSATION_SUPERSEDED] PaymentKey: {}, Reason: {}", compensation.getPaymentKey(), reason);
+    }
+
     /**
      * 기록 단계 - 호출 결과를 장부에 독립 커밋한다. {@code failure} 가 null 이면 성공
      */
@@ -264,6 +394,15 @@ public class PaymentCompensationService {
             return true;
         }
 
+        // 토스에 승인된 결제가 없다 - 시간 초과로 보상을 걸어 둔 확정이 실제로는 승인되지 않은 경우. 재시도·DLQ 없이 끝낸다
+        if (failure instanceof TossPaymentNotFoundException) {
+            compensation.markNotApproved(failure.getMessage());
+            compensationRepository.save(compensation);
+
+            log.info("[PAYMENT_COMPENSATION_NOT_APPROVED] PaymentKey: {}", compensation.getPaymentKey());
+            return false;
+        }
+
         // 토스가 이미 목적을 달성한 응답 - 실패가 아니라 성공으로 기록한다
         if (failure instanceof TossAlreadyCanceledException) {
             compensation.markSucceeded();
@@ -276,7 +415,18 @@ public class PaymentCompensationService {
 
         // 토스가 살아 있다는 신호 - retryCount 는 올리지 않고 다음 시각만 미룬다. 성공은 아니므로 false
         if (failure instanceof TossRetryLaterException) {
-            compensation.deferWithoutCounting(Duration.ofMillis(retryLaterDeferMs));
+            // 유예 상한 - 429 가 계속되는 행이 영원히 PENDING 에 남지 않게 생성 후 60분에서 끝낸다
+            if (compensation.getCreatedAt() != null
+                    && compensation.getCreatedAt().plusMinutes(deferMaxAgeMinutes).isBefore(LocalDateTime.now())) {
+                String reason = "유예 상한(생성 후 " + deferMaxAgeMinutes + "분) 초과: " + failure.getMessage();
+                compensation.markGivenUp(reason);
+                compensationRepository.save(compensation);
+                appendGivenUpOutbox(compensation, failure.getMessage());
+                log.error("[PAYMENT_COMPENSATION_DEFER_CAP] PaymentKey: {}, CreatedAt: {} - GIVEN_UP",
+                        compensation.getPaymentKey(), compensation.getCreatedAt());
+                return false;
+            }
+            compensation.deferWithoutCounting(jittered(Duration.ofMillis(retryLaterDeferMs)));
             compensationRepository.save(compensation);
 
             log.warn("[PAYMENT_COMPENSATION_RETRY_LATER] PaymentKey: {}, NextRetryAt: {}",
@@ -293,17 +443,33 @@ public class PaymentCompensationService {
 
         // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
         if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
-            givenUpTotal.incrementAndGet();
-            dlqProducer.publish(new PaymentCompensationDlqEvent(
-                    compensation.getId(),
-                    compensation.getPaymentId(),
-                    compensation.getPaymentKey(),
-                    compensation.getAmount(),
-                    compensation.getReason(),
-                    failure.getMessage(),
-                    compensation.getRetryCount(),
-                    LocalDateTime.now()));
+            appendGivenUpOutbox(compensation, failure.getMessage());
         }
         return false;
+    }
+
+    // GIVEN_UP 전환과 같은 트랜잭션(recordResult 의 REQUIRES_NEW)에 DLQ 이벤트를 Outbox 로 적재한다
+    // 저장이 실패하면 예외가 그대로 전파돼 GIVEN_UP 전환도 함께 롤백된다 - 행은 PROCESSING 에 남아 stale 회수 뒤 다시 시도된다
+    private void appendGivenUpOutbox(PaymentCompensation compensation, String lastError) {
+        PaymentCompensationDlqEvent event = new PaymentCompensationDlqEvent(
+                compensation.getId(),
+                compensation.getPaymentId(),
+                compensation.getPaymentKey(),
+                compensation.getAmount(),
+                compensation.getReason(),
+                lastError,
+                compensation.getRetryCount(),
+                LocalDateTime.now());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("GIVEN_UP DLQ 이벤트 직렬화 실패: " + e.getMessage(), e);
+        }
+        outboxRepository.save(PaymentOutbox.create(
+                compensation.getPaymentId(), PaymentCompensationDlqEvent.EVENT_TYPE, payload,
+                PaymentCompensationDlqEvent.TOPIC));
+        log.warn("[COMPENSATION_DLQ_OUTBOX] compensationId={}, paymentKey={}",
+                compensation.getId(), compensation.getPaymentKey());
     }
 }

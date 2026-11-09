@@ -4,9 +4,11 @@ import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,6 +22,11 @@ public class PaymentEventPublisher {
 
     private final PaymentOutboxRepository outboxRepository;
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate;
+
+    // send().get() 에 상한이 없으면 Kafka 장애 때 폴러가 영원히 멈추고 같은 스케줄러의 다른 작업도 밀린다
+    // producer 의 delivery.timeout(35초)보다 약간 길게 둔다 - 그보다 먼저 끊으면 발행은 성사됐는데 PENDING 으로 남아 중복 발행한다
+    @Value("${payment.outbox.send-timeout-ms:40000}")
+    private long sendTimeoutMs = 40000;
 
     private static final String TOPIC = "payment-events";
     private static final int BATCH_SIZE = 100;
@@ -35,13 +42,15 @@ public class PaymentEventPublisher {
         for (PaymentOutbox outbox : batch) {
             try {
                 // key = 결제 ID → 같은 결제 이벤트는 같은 파티션으로 라우팅(순서 보장)
+                // topic 이 비어 있으면 결제 완료 이벤트(payment-events), 있으면 그 토픽(예: GIVEN_UP DLQ)
+                String topic = outbox.getTopic() != null ? outbox.getTopic() : TOPIC;
                 ProducerRecord<String, String> record =
-                        new ProducerRecord<>(TOPIC, outbox.getAggregateId().toString(), outbox.getPayload());
+                        new ProducerRecord<>(topic, outbox.getAggregateId().toString(), outbox.getPayload());
                 // 멱등 식별자: outbox.id 를 헤더로 실어 컨슈머가 중복을 거른다.
                 record.headers().add("outbox-id", outbox.getId().toString().getBytes(StandardCharsets.UTF_8));
 
                 // 발행 결과를 확인(get)해 성공한 건만 PUBLISHED 로 전이
-                paymentEventKafkaTemplate.send(record).get();
+                paymentEventKafkaTemplate.send(record).get(sendTimeoutMs, TimeUnit.MILLISECONDS);
 
                 outbox.markPublished();
                 outboxRepository.save(outbox);

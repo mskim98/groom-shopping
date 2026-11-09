@@ -16,7 +16,7 @@ public class PaymentCompensationDlqConsumer {
             groupId = "payment-compensation-dlq-group",
             containerFactory = "paymentEventKafkaListenerContainerFactory")
     public void consume(ConsumerRecord<String, String> record) {
-        log.error("[COMPENSATION_DLQ_ALERT] 결제 보상 최종 실패(GIVEN_UP) 수신 - paymentKey={}, payload={}",
+        log.error("[COMPENSATION_DLQ_ALERT] 결제 보상 최종 실패(GIVEN_UP) 수신 - paymentId={}, payload={}",
                 record.key(), record.value());
         // TODO 확장: Slack Incoming Webhook 알림 + 관리자 대시보드 카운터 + 분석용 영구 보관(S3/BigQuery)
         //          + 관리자 "수동 환불" 워크플로 연동(audit log)

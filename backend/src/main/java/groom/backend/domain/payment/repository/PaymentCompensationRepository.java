@@ -1,6 +1,7 @@
 package groom.backend.domain.payment.repository;
 
 import groom.backend.domain.payment.model.PaymentCompensation;
+import groom.backend.domain.payment.model.enums.CompensationStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -12,6 +13,9 @@ public interface PaymentCompensationRepository {
 
     Optional<PaymentCompensation> findById(UUID id);
 
+    // 결제당 보상 행은 하나(payment_id 유일 제약)
+    Optional<PaymentCompensation> findByPaymentId(UUID paymentId);
+
     // 선점 조회. 아래 두 조건 중 하나를 만족하는 행을 최대 limit 개까지 골라 그 자리에서
     // PROCESSING 으로 갱신·커밋하고 갱신된 행을 반환한다(SELECT 와 UPDATE 가 분리돼 있으면
     // 그 틈에 다른 인스턴스가 같은 행을 또 고를 수 있어 원자적으로 묶는다)
@@ -21,4 +25,7 @@ public interface PaymentCompensationRepository {
 
     // 이번 회차가 조회하는 시점의 재시도 대기 전체 수(페이지 상한 없음). carried = due - processed 계측용
     long countRetryable(LocalDateTime now, LocalDateTime staleThreshold);
+
+    // 상태별 행 수. GIVEN_UP 게이지가 메모리 누적이 아니라 DB 를 진실로 읽게 한다
+    long countByStatus(CompensationStatus status);
 }

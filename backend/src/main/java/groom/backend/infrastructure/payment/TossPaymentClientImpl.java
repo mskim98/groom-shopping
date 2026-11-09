@@ -8,6 +8,7 @@ import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashMap;
@@ -22,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -82,17 +84,39 @@ public class TossPaymentClientImpl implements TossPaymentClient {
 
     // Resilience4j fallback : 회로가 OPEN 이거나 재시도까지 실패하면 이 메서드가 대신 호출된다.
     // 규칙 - 원본 메서드와 동일한 파라미터 + 마지막에 Throwable 을 받는다.
-    private TossPaymentResponse confirmPaymentFallback(
+    // 시험이 직접 호출하도록 package-private 으로 둔다(리플렉션 탐색은 가시성과 무관하다)
+    TossPaymentResponse confirmPaymentFallback(
             TossPaymentConfirmRequest request, String idempotencyKey, Throwable t) {
         if (t instanceof CallNotPermittedException) {
             // 회로 OPEN - 외부 API 를 아예 호출하지 않고 사용자에게 빠른 실패 안내
             log.warn("[CB_FALLBACK_OPEN] Circuit OPEN, fast-fail - PaymentKey: {}", request.getPaymentKey());
-            throw new BusinessException(ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE);
+            // 재시도가 무시하는 전용 타입으로 던진다 - 일반 BusinessException 이면 retry 가 200ms+400ms 를 기다린다
+            throw new TossCircuitOpenException();
         }
-        // timeout·5xx 등 실제 호출 실패 - 결제 PG 오류로 변환 (이후 보상 트랜잭션이 사후 정합성 담당)
+        // 호출부가 RuntimeException 으로 감싸 던지므로 원인 사슬을 따라 내려가며 분류한다
+        if (hasCause(t, ResourceAccessException.class) || hasCause(t, SocketTimeoutException.class)) {
+            log.error("[CB_FALLBACK_TIMEOUT] Toss confirm timed out - PaymentKey: {}, Error: {}",
+                    request.getPaymentKey(), t.getMessage());
+            throw new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT);
+        }
+        if (hasCause(t, HttpClientErrorException.class)) {
+            log.warn("[CB_FALLBACK_REJECTED] Toss rejected confirm - PaymentKey: {}, Error: {}",
+                    request.getPaymentKey(), t.getMessage());
+            throw new BusinessException(ErrorCode.PAYMENT_PG_REJECTED);
+        }
+        // 5xx 등 분류 밖의 실제 호출 실패 - 결제 PG 오류로 변환 (이후 보상 트랜잭션이 사후 정합성 담당)
         log.error("[CB_FALLBACK_FAILURE] Toss confirm failed - PaymentKey: {}, Error: {}",
                 request.getPaymentKey(), t.getMessage());
         throw new BusinessException(ErrorCode.PAYMENT_PG_FAILURE);
+    }
+
+    private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+            if (type.isInstance(cur)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // @CircuitBreaker : 취소는 승인과 별도 회로("toss-cancel")로 보호한다
@@ -149,6 +173,10 @@ public class TossPaymentClientImpl implements TossPaymentClient {
                 throw new TossRetryLaterException(
                         "Toss 취소 응답이 재시도 대기를 지시함 - status: " + status + ", code: " + tossErrorCode);
             }
+            if (status == 404) {
+                log.info("[TOSS_API_NOT_FOUND] Cancel target not approved - PaymentKey: {}, Code: {}", paymentKey, tossErrorCode);
+                throw new TossPaymentNotFoundException("Toss 에 승인된 결제가 없음 - PaymentKey: " + paymentKey);
+            }
             if (status == 400 && "ALREADY_CANCELED_PAYMENT".equals(tossErrorCode)) {
                 log.info("[TOSS_API_ALREADY_CANCELED] Cancel already applied - PaymentKey: {}", paymentKey);
                 throw new TossAlreadyCanceledException(
@@ -177,13 +205,16 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     // 취소 회로 fallback. 보상 서비스의 catch 가 이 예외를 받아 실패로 기록하고 백오프 재시도한다
     private TossPaymentResponse cancelPaymentFallback(
             String paymentKey, String cancelReason, String idempotencyKey, Throwable t) {
-        if (t instanceof TossRetryLaterException || t instanceof TossAlreadyCanceledException) {
+        if (t instanceof TossRetryLaterException || t instanceof TossAlreadyCanceledException
+                || t instanceof TossPaymentNotFoundException) {
             // 분류된 예외는 그대로 보상 서비스에 넘긴다 - PAYMENT_PG_FAILURE 로 뭉개면
             // 재시도 대기와 이미 취소된 결제를 구별할 수 없다
             throw (RuntimeException) t;
         }
         if (t instanceof CallNotPermittedException) {
             log.warn("[CB_CANCEL_FALLBACK_OPEN] 취소 회로 OPEN, fast-fail - PaymentKey: {}", paymentKey);
+            // 열린 회로는 "잠시 후 재시도" 로 알린다(승인 쪽 fallback 과 같은 오류 코드)
+            throw new TossCircuitOpenException();
         } else {
             log.error("[CB_CANCEL_FALLBACK_FAILURE] Toss cancel failed - PaymentKey: {}, Error: {}",
                     paymentKey, t.getMessage());

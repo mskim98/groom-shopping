@@ -27,7 +27,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,36 +66,31 @@ class PaymentCompensationAcquireIntegrationTest {
     @PersistenceContext
     private EntityManager entityManager;
 
-    private UUID orderId;
-    private UUID paymentId;
+    // payment_compensation.payment_id 는 FK 이면서 유일 제약(V19)이라 보상 행마다 자기 Payment 가 있어야 한다
+    private final List<UUID> orderIds = new ArrayList<>();
+    private final List<UUID> paymentIds = new ArrayList<>();
     private final List<UUID> seededIds = new ArrayList<>();
-
-    @BeforeEach
-    void setUp() {
-        // payment_compensation.payment_id 는 FK 라 유효한 Payment 가 있어야 한다.
-        // FK 는 존재만 요구하고 유일성은 요구하지 않으므로 이 한 건을 모든 시드 행이 공유한다
-        Order order = orderRepository.save(Order.builder()
-                .userId(1L).couponId(null).status(OrderStatus.PENDING).build());
-        orderId = order.getId();
-        Payment payment = paymentRepository.save(Payment.builder()
-                .order(order).userId(1L).amount(1000)
-                .orderName("T5 선점 테스트").customerName("tester").method(PaymentMethod.CARD)
-                .build());
-        paymentId = payment.getId();
-    }
 
     @AfterEach
     void tearDown() {
         if (!seededIds.isEmpty()) {
             jpaRepository.deleteAllById(seededIds);
         }
-        paymentRepository.deleteById(paymentId);
-        orderRepository.deleteById(orderId);
+        paymentIds.forEach(paymentRepository::deleteById);
+        orderIds.forEach(orderRepository::deleteById);
     }
 
     private PaymentCompensation seedCompensation() {
+        Order order = orderRepository.save(Order.builder()
+                .userId(1L).couponId(null).status(OrderStatus.PENDING).build());
+        orderIds.add(order.getId());
+        Payment payment = paymentRepository.save(Payment.builder()
+                .order(order).userId(1L).amount(1000)
+                .orderName("T5 선점 테스트").customerName("tester").method(PaymentMethod.CARD)
+                .build());
+        paymentIds.add(payment.getId());
         PaymentCompensation compensation = jpaRepository.save(PaymentCompensation.builder()
-                .paymentId(paymentId)
+                .paymentId(payment.getId())
                 .paymentKey("pk-" + UUID.randomUUID())
                 .amount(1000)
                 .reason("DB 후처리 실패")

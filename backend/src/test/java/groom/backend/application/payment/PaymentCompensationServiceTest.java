@@ -13,31 +13,38 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import groom.backend.application.payment.event.PaymentCompensationDlqEvent;
+import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentCompensation;
+import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
-import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
+import groom.backend.domain.payment.repository.PaymentOutboxRepository;
+import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,7 +56,11 @@ class PaymentCompensationServiceTest {
     @Mock
     private TossPaymentClient tossPaymentClient;
     @Mock
-    private PaymentCompensationDlqProducer dlqProducer;
+    private PaymentOutboxRepository outboxRepository;
+    @Mock
+    private PaymentRepository paymentRepository;
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     @Mock
     private ObjectProvider<PaymentCompensationService> selfProvider;
     @Mock
@@ -63,7 +74,7 @@ class PaymentCompensationServiceTest {
 
     @BeforeEach
     void resetSkipCircuits() {
-        // 대부분의 테스트는 스킵 판정을 거치지 않으므로 정지 신호 회로를 비워 회로 조회를 막는다.
+        // 대부분의 테스트는 스킵 판정을 거치지 않으므로 정지 신호 회로를 비워 회로 조회를 막는다
         // 스킵 테스트만 이 목록을 채운다
         batchProperties.setSkipWhenOpen(List.of());
     }
@@ -84,6 +95,13 @@ class PaymentCompensationServiceTest {
         return proxy;
     }
 
+    // 취소 직전 결제 상태 조회를 지정 상태로 고정한다. FAILED 면 취소를 진행한다
+    private void stubPaymentStatus(PaymentStatus status) {
+        Payment payment = mock(Payment.class);
+        given(payment.getStatus()).willReturn(status);
+        given(paymentRepository.findById(any())).willReturn(Optional.of(payment));
+    }
+
     // ── 실행 단계: PG 호출은 트랜잭션 밖, 결과 기록만 프록시(REQUIRES_NEW) ──
 
     @Test
@@ -91,6 +109,7 @@ class PaymentCompensationServiceTest {
     void executeCompensation_callsPgThenRecordsResultViaProxy() {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation compensation = newCompensation(5);
+        stubPaymentStatus(PaymentStatus.FAILED);
 
         service.executeCompensation(compensation);
 
@@ -106,12 +125,26 @@ class PaymentCompensationServiceTest {
     void executeCompensation_passesFailureAsValue() {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation compensation = newCompensation(5);
+        stubPaymentStatus(PaymentStatus.FAILED);
         RuntimeException failure = new RuntimeException("toss down");
         given(tossPaymentClient.cancelPaymentUncounted(anyString(), anyString(), anyString())).willThrow(failure);
 
         service.executeCompensation(compensation);
 
         verify(proxy).recordResult(compensation, failure);
+    }
+
+    @Test
+    @DisplayName("결제가 DONE 이면 취소를 호출하지 않고 SUPERSEDED 로 기록한다")
+    void executeCompensation_결제가_DONE이면_취소를_호출하지_않고_SUPERSEDED로_기록한다() {
+        PaymentCompensationService proxy = proxy();
+        PaymentCompensation compensation = newCompensation(5);
+        stubPaymentStatus(PaymentStatus.DONE);
+
+        service.executeCompensation(compensation);
+
+        verify(tossPaymentClient, never()).cancelPaymentUncounted(anyString(), anyString(), anyString());
+        verify(proxy).recordSuperseded(eq(compensation), anyString());
     }
 
     @Test
@@ -132,7 +165,7 @@ class PaymentCompensationServiceTest {
     // ── 기록 단계 ──
 
     @Test
-    void recordResult_재시도_한도_초과로_GIVEN_UP되면_DLQ로_발행한다() {
+    void recordResult_재시도_한도_초과로_GIVEN_UP되면_DLQ_아웃박스를_적재한다() {
         PaymentCompensation compensation = newCompensation(3);
         given(compensationRepository.save(any())).willReturn(compensation);
 
@@ -142,7 +175,10 @@ class PaymentCompensationServiceTest {
         }
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.GIVEN_UP);
-        verify(dlqProducer, times(1)).publish(any(PaymentCompensationDlqEvent.class));
+        ArgumentCaptor<PaymentOutbox> captor = ArgumentCaptor.forClass(PaymentOutbox.class);
+        verify(outboxRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getTopic()).isEqualTo("payment-compensation-dlq");
+        assertThat(captor.getValue().getEventType()).isEqualTo("COMPENSATION_GIVEN_UP");
     }
 
     @Test
@@ -153,19 +189,27 @@ class PaymentCompensationServiceTest {
         service.recordResult(compensation, null);
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
-        verify(dlqProducer, never()).publish(any());
+        verify(outboxRepository, never()).save(any());
     }
 
     @Test
     @DisplayName("429 계열(TossRetryLaterException)은 retryCount 를 올리지 않고 다음 시각만 미룬다")
     void recordResult_재시도대기_예외면_retryCount_유지한다() {
+        // @InjectMocks 는 @Value 필드를 채우지 않으므로 운영 기본값(45초)을 직접 넣는다
+        ReflectionTestUtils.setField(service, "retryLaterDeferMs", 45000L);
         PaymentCompensation compensation = newCompensation(3);
+        compensation.markProcessing();
         given(compensationRepository.save(any())).willReturn(compensation);
 
+        LocalDateTime before = LocalDateTime.now();
         service.recordResult(compensation, new TossRetryLaterException("429 too many requests"));
+        LocalDateTime after = LocalDateTime.now();
 
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.PENDING);
         assertThat(compensation.getRetryCount()).isEqualTo(0);
-        verify(dlqProducer, never()).publish(any());
+        // 45초 ±20% 지터 - 36~54초 뒤
+        assertThat(compensation.getNextRetryAt()).isBetween(before.plusSeconds(35), after.plusSeconds(55));
+        verify(outboxRepository, never()).save(any());
     }
 
     @Test
@@ -177,7 +221,7 @@ class PaymentCompensationServiceTest {
         service.recordResult(compensation, new TossAlreadyCanceledException("이미 취소된 결제"));
 
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
-        verify(dlqProducer, never()).publish(any());
+        verify(outboxRepository, never()).save(any());
     }
 
     // ── 진입점 ──
@@ -204,6 +248,7 @@ class PaymentCompensationServiceTest {
         PaymentCompensationService proxy = proxy();
         PaymentCompensation pending = newCompensation(5);
         given(proxy.acquireRetryableBatch()).willReturn(List.of(pending));
+        stubPaymentStatus(PaymentStatus.FAILED);
 
         service.retryPendingCompensations();
 

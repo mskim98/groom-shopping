@@ -2,6 +2,7 @@ package groom.backend.application.payment;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.payment.event.PaymentCompletedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
@@ -17,6 +18,7 @@ import groom.backend.domain.order.model.enums.OrderStatus;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentOutbox;
+import groom.backend.domain.payment.model.enums.PaymentStateTransition;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.domain.payment.repository.PaymentRepository;
@@ -36,9 +38,12 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 // @Slf4j : log 객체 생성.
 @Slf4j
@@ -88,11 +93,13 @@ public class PaymentApplicationService {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
         // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
-        var existing = paymentRepository.findByPaymentKey(paymentKey);
-        if (existing.isPresent() && existing.get().isAlreadyApproved()) {
+        Payment approved = paymentRepository.findByPaymentKey(paymentKey)
+                .filter(Payment::isAlreadyApproved)
+                .orElse(null);
+        if (approved != null) {
             log.info("[PAYMENT_IDEMPOTENT_HIT] Already approved - PaymentKey: {}, Status: {}",
-                    paymentKey, existing.get().getStatus());
-            return existing.get();
+                    paymentKey, approved.getStatus());
+            return approved;
         }
 
         // 결제 조회
@@ -123,10 +130,23 @@ public class PaymentApplicationService {
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
-            // Toss 승인 자체가 실패 → 외부 승인 없음. 선점한 Redis 재고를 복원하고 DB 상태만 FAILED로 기록.
+            // 순서: ① 보상 의도 기록(기록하는 경우만 - 시간 초과) → ② Redis 복원(실패해도 계속) → ③ FAILED 기록
+            // 시간 초과는 Toss 가 승인했는지 알 수 없다 - 돈이 빠졌을 수 있으므로 보상 의도를 먼저 남긴다.
+            // 배치가 취소를 호출해 승인됐다면 환불하고, 승인된 적 없으면 404 로 NOT_APPROVED 가 되어 끝난다.
+            // 4xx 거절·서킷 거절은 승인된 적이 없는 확정이라 기록하지 않는다
+            if (e instanceof BusinessException timeout && timeout.getErrorCode() == ErrorCode.PAYMENT_PG_TIMEOUT) {
+                try {
+                    paymentCompensationService.compensate(payment.getId(), paymentKey, amount,
+                            "Toss 승인 응답 시간 초과(승인 여부 불명)");
+                } catch (Exception compensationError) {
+                    log.error("[PAYMENT_COMPENSATION_ENTRY_FAILED] 시간 초과 보상 진입 실패(수동 대사 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
+                            payment.getId(), paymentKey, compensationError.getMessage(), compensationError);
+                }
+            }
+            // releaseStock 은 실패해도 던지지 않는다(복원 실패가 FAILED 기록과 원래 예외 전파를 막으면 안 된다)
             releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
-            selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
+            selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage(), paymentKey);
             // 도메인 예외는 재포장하지 않는다 - 감싸는 순간 errorCode 가 소실돼 전역 핸들러의 catch-all(500)로 떨어진다
             if (e instanceof BusinessException businessException) {
                 throw businessException;
@@ -137,13 +157,22 @@ public class PaymentApplicationService {
         // [3] DB 후처리 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
         // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
-            return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
+            return applyWithRetry(orderId, response);
         } catch (Exception dbError) {
-            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 선점 복원 + 자동 환불(보상 트랜잭션)
-            releaseStock(reservedItems);
+            // 같은 주문의 중복 확정 - 먼저 끝난 요청이 이미 승인했다면(낙관적 락 · 상태 전이 거부 · 유일 제약 어느 쪽으로 졌든)
+            // 이 요청은 실패가 아니라 멱등 응답이다. 여기서 보상을 기록하면 정상 결제를 취소하는 경로가 열린다
+            Payment current = paymentRepository.findById(payment.getId()).orElse(null);
+            if (current != null && current.isAlreadyApproved()) {
+                log.info("[PAYMENT_IDEMPOTENT_HIT] Concurrent confirm lost - PaymentKey: {}, Status: {}, Cause: {}",
+                        paymentKey, current.getStatus(), dbError.getClass().getSimpleName());
+                releaseStock(reservedItems);
+                return current;
+            }
+            // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션) 의도 기록 + 선점 복원
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
                     orderId, paymentKey, dbError.getMessage(), dbError);
-            // 보상 기록·실행이 실패해도 아래 markPaymentFailed 와 재던지기가 스킵되면 안 된다
+            // 순서: ① 보상 의도 기록(돈이 걸린 일) → ② Redis 복원(실패해도 계속) → ③ FAILED 기록
+            // 앞 단계가 실패해도 뒤 단계와 원래 예외 재던지기가 스킵되면 안 되므로 단계마다 따로 보호한다
             try {
                 paymentCompensationService.compensate(
                         payment.getId(),
@@ -155,12 +184,49 @@ public class PaymentApplicationService {
                 log.error("[PAYMENT_COMPENSATION_ENTRY_FAILED] 보상 진입 실패(수동 처리 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
                         payment.getId(), response.getPaymentKey(), compensationError.getMessage(), compensationError);
             }
-            selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            releaseStock(reservedItems);
+            try {
+                selfProvider.getObject().markPaymentFailed(payment.getId(), "DB_POST_PROCESS_FAILED", dbError.getMessage());
+            } catch (Exception markError) {
+                log.error("[PAYMENT_MARK_FAILED_ERROR] FAILED 기록 실패(결제가 PENDING 으로 남음) - PaymentId: {}, Error: {}",
+                        payment.getId(), markError.getMessage(), markError);
+            }
             // 도메인 예외는 재포장하지 않는다 - 409(PRODUCT_STOCK_CONFLICT) 가 500 으로 나가면 죽은 카운터가 된다
             if (dbError instanceof BusinessException businessException) {
                 throw businessException;
             }
+            // 후처리 재시도를 모두 소진한 version 충돌 - 보상 의도는 위에서 이미 기록했다(승인은 끝난 뒤라 환불 경로가 돈다).
+            // 일반 RuntimeException 으로 나가면 HTTP 500 이 되므로, 예전 재시도 경로처럼 409 로 답한다
+            if (dbError instanceof ObjectOptimisticLockingFailureException) {
+                throw new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT);
+            }
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    // 후처리 트랜잭션을 version 충돌(ObjectOptimisticLockingFailureException) 시 통째로 다시 돈다. 낙관적 락 재고 전략이
+    // 후처리 트랜잭션에 합류하므로 충돌 재시도는 트랜잭션 안이 아니라 이 바깥에서만 가능하다. 다른 전략에서는 Payment 의
+    // lock_version 충돌(동시 중복 확정)이 여기로 오는데, 다시 돌면 이미 DONE 이라 아래 멱등 응답 경로가 받는다
+    private static final int POST_PROCESS_MAX_ATTEMPTS = 3;
+
+    private Payment applyWithRetry(UUID orderId, TossPaymentResponse response) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                // 프록시 경유 호출이라야 @Transactional 경계가 매 시도마다 새로 열린다
+                return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
+            } catch (ObjectOptimisticLockingFailureException conflict) {
+                if (attempt >= POST_PROCESS_MAX_ATTEMPTS) {
+                    throw conflict;
+                }
+                log.warn("[POST_PROCESS_RETRY] version 충돌로 후처리 재시도 - OrderId: {}, Attempt: {}", orderId, attempt);
+                try {
+                    // 같은 행을 두고 다투는 요청이 같은 시점에 재진입해 재충돌하지 않게 흩는다
+                    Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextLong(10, 60));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw conflict;
+                }
+            }
         }
     }
 
@@ -190,17 +256,56 @@ public class PaymentApplicationService {
     }
 
     // 선점한 Redis 재고를 복원한다 (결제 실패·보상 시 Redis-DB 정합 유지).
+    // 항목마다 실패를 삼키고 로그만 남긴다 - Redis 장애가 보상 의도 기록·FAILED 기록·원래 예외 전파를 막으면 안 된다.
+    // 복원 못 한 선점분은 StockReconciliationJob 이 DB 재고 기준으로 되맞춘다
     private void releaseStock(List<OrderItem> items) {
         for (OrderItem item : items) {
-            productStockRedisRepository.release(item.getProductId(), item.getQuantity());
+            try {
+                productStockRedisRepository.release(item.getProductId(), item.getQuantity());
+            } catch (Exception e) {
+                log.error("[STOCK_RELEASE_FAILED] Redis 선점 복원 실패 - ProductId: {}, Quantity: {}, Error: {}",
+                        item.getProductId(), item.getQuantity(), e.getMessage());
+            }
+        }
+    }
+
+    // 주문 항목을 장바구니에서 뺄 평범한 값으로 바꾼다. 트랜잭션 안에서 불러야 한다(order 의 지연 로딩 컬렉션을 읽는다)
+    private List<CartApplicationService.CartItemToRemove> cartItemsOf(Order order) {
+        return order.getOrderItems().stream()
+                .map(item -> new CartApplicationService.CartItemToRemove(item.getProductId(), item.getQuantity()))
+                .toList();
+    }
+
+    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림·장바구니 비우기를 남기지 않게 한다.
+    // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
+    private void runAfterCommit(String name, Runnable task) {
+        Runnable safe = () -> {
+            try {
+                task.run();
+            } catch (Exception e) {
+                log.error("[AFTER_COMMIT_FAILED] {} - Error: {}", name, e.getMessage(), e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safe.run();
+                }
+            });
+        } else {
+            safe.run();
         }
     }
 
     /**
-     * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급이 모두 하나의 커밋 단위에서 실행
+     * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급, Outbox 적재가 모두 하나의
+     * 커밋 단위에서 실행된다. 재고 차감({@link StockDecrementer#decrease})이 이 트랜잭션에 합류하므로 후처리가 실패하면
+     * DB 재고도 같은 롤백으로 되돌아온다(Redis 선점분 복원은 호출자 confirmPayment 의 releaseStock 이 맡는다)
      */
     // propagation = REQUIRES_NEW : 결제 상태 변경 + 주문 확정 + 재고 차감 + 티켓 발급을 항상
     // '독립된 새 트랜잭션'으로 묶어, 중간에 하나라도 실패하면 전부 롤백한다(All-or-Nothing).
+    // 재고 차감 전략은 REQUIRED 라 이 트랜잭션에 합류한다(PessimisticLock · ConditionalUpdate 전략).
     // ✅ 자기호출 함정 해결: confirmPayment() 가 selfProvider.getObject() 로 프록시를 거쳐 호출.
     // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 항상 read-write 새 트랜잭션 생성.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -248,15 +353,22 @@ public class PaymentApplicationService {
         List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order);
         processTicketProducts(order);
 
-        log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}",
-                payment.getId(), orderId);
-
         // [Outbox] 결제 완료 이벤트를 '같은 트랜잭션'으로 적재 → 커밋 = 이벤트 영구 보존(at-least-once)
-        // 별도 publisher 가 Kafka 로 발행. 알림은 아직 아래 직접 호출도 유지(Strangler 점진 전환).
+        // 별도 publisher 가 Kafka 로 발행. 알림은 아래 직접 호출도 유지(Strangler 점진 전환).
         appendPaymentCompletedOutbox(payment);
 
-        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
-        paymentNotificationService.clearCartItems(order);
+        // 성공 로그 · 알림 · 장바구니 비우기는 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한
+        // 200건에도 성공 로그와 장바구니 비우기가 나가 사용자 장바구니만 비워진다
+        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 비울 항목)을 지금 평범한 값으로 만들어 넘긴다.
+        // order 엔티티를 넘기면 지연 로딩 필드를 읽는 순간 LazyInitializationException 이다
+        UUID paymentId = payment.getId();
+        Long orderUserId = order.getUserId();
+        List<CartApplicationService.CartItemToRemove> cartItems = cartItemsOf(order);
+        runAfterCommit("PAYMENT_CONFIRM_SUCCESS", () -> {
+            log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}", paymentId, orderId);
+            paymentNotificationService.sendStockReducedNotifications(stockReductions, orderUserId);
+            paymentNotificationService.clearCartItems(orderUserId, orderId, cartItems);
+        });
 
         return payment;
     }
@@ -287,10 +399,18 @@ public class PaymentApplicationService {
     //    호출하므로 REQUIRES_NEW 가 정상 적용된다(독립 커밋 보장).
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPaymentFailed(UUID paymentId, String code, String message) {
+        markPaymentFailed(paymentId, code, message, null);
+    }
+
+    // paymentKey : Toss 승인 실패 행에도 키를 남겨 PG 콘솔·보상 행과 대조할 수 있게 한다(PENDING 행은 키가 비어 있다)
+    // 같은 클래스 안 호출이라 프록시를 안 거치지만 이미 REQUIRES_NEW 트랜잭션 안이라 상관없다
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markPaymentFailed(UUID paymentId, String code, String message, String paymentKey) {
         paymentRepository.findById(paymentId).ifPresent(p -> {
             if (p.getStatus() != PaymentStatus.DONE) {
                 try {
                     p.fail(code, message);
+                    p.attachPaymentKeyIfAbsent(paymentKey);
                     paymentRepository.save(p);
                 } catch (IllegalStateException ignored) {
                     // 이미 종료 상태면 더 이상 전이하지 않음 (State Machine이 차단).
@@ -337,51 +457,79 @@ public class PaymentApplicationService {
         // 비동기로 알림 처리 (응답 시간에 영향 없음)
         // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
         // 주문한 사용자는 알림에서 제외
-        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
+        paymentNotificationService.sendStockReducedNotifications(stockReductions, order.getUserId());
 
         // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
-        paymentNotificationService.clearCartItems(order);
+        paymentNotificationService.clearCartItems(order.getUserId(), orderId, cartItemsOf(order));
 
         return payment;
     }
 
     /**
-     * 결제 취소
+     * 결제 취소(사용자 수동). Toss 호출은 트랜잭션 밖에서, DB 반영만 별도 트랜잭션으로 수행한다
      */
-    @Transactional
+    // NOT_SUPPORTED : Toss 취소 응답을 기다리는 동안(최대 30초) DB 커넥션을 쥐지 않는다. 승인(confirmPayment)과 같은 구조
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment cancelPayment(UUID paymentId, String cancelReason) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+        // Toss 를 부르기 전에 취소 가능 상태인지 본다 - 부른 뒤에 상태 전이가 거부되면 Toss 만 취소된 불일치가 남는다
+        PaymentStateTransition.validate(payment.getStatus(), PaymentStatus.CANCELED);
 
+        String paymentKey = payment.getPaymentKeyValue();
         try {
-            // Toss Payments API 결제 취소 요청
-            TossPaymentResponse response = tossPaymentClient.cancelPayment(
-                    payment.getPaymentKeyValue(),
-                    cancelReason
-            );
-
-            // Payment 취소 처리
-            payment.cancel();
-            paymentRepository.save(payment);
-
-            // Order 상태 변경 (CONFIRMED -> CANCELLED)
-            Order order = payment.getOrder();
-            order.changeStatus(OrderStatus.CANCELLED);
-            orderRepository.save(order);
-
-            // 재고 복구
-            restoreProductStock(order);
-
-            log.info("[PAYMENT_CANCEL_SUCCESS] Payment cancelled - PaymentId: {}, Reason: {}",
-                    paymentId, cancelReason);
-
-            return payment;
-
+            // 3인자 메서드를 직접 불러야 프록시의 @CircuitBreaker(toss-cancel) 가 적용된다.
+            // 2인자 default 메서드는 같은 객체 안에서 3인자를 부르는 자기 호출이라 서킷을 우회한다
+            tossPaymentClient.cancelPayment(paymentKey, cancelReason, paymentKey + ":cancel");
+        } catch (BusinessException e) {
+            // 서킷 OPEN 같은 도메인 예외는 재포장하지 않는다 - errorCode(503)를 잃으면 500 으로 나간다
+            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}", paymentId, e.getMessage());
+            throw e;
         } catch (Exception e) {
-            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}",
-                    paymentId, e.getMessage());
+            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}", paymentId, e.getMessage());
             throw new RuntimeException("결제 취소에 실패했습니다: " + e.getMessage(), e);
         }
+
+        try {
+            // 프록시 경유라야 REQUIRES_NEW 가 적용된다
+            return selfProvider.getObject().applyCancelInTx(paymentId);
+        } catch (Exception dbError) {
+            // Toss 는 취소됐는데 DB 는 DONE 인 상태 - 조용히 남지 않도록 보상 장부에 대사 행을 남긴다
+            log.error("[PAYMENT_CANCEL_DB_UPDATE_FAILED] Toss 취소 성공 뒤 DB 갱신 실패(대사 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
+                    paymentId, paymentKey, dbError.getMessage(), dbError);
+            try {
+                paymentCompensationService.recordReconcileNeeded(paymentId, paymentKey, payment.getAmountValue(),
+                        "[RECONCILE_MANUAL_CANCEL] Toss 취소 성공, DB 갱신 실패: " + dbError.getMessage());
+            } catch (Exception recordError) {
+                log.error("[PAYMENT_CANCEL_RECONCILE_ENTRY_FAILED] 대사 행 기록 실패(수동 처리 필요) - PaymentId: {}, Error: {}",
+                        paymentId, recordError.getMessage(), recordError);
+            }
+            throw new RuntimeException("결제 취소에 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    /**
+     * Toss 취소 성공 뒤의 DB 반영 - 결제 취소, 주문 취소, 재고 복구를 한 트랜잭션으로 묶는다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Payment applyCancelInTx(UUID paymentId) {
+        Payment payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+
+        // Payment 취소 처리
+        payment.cancel();
+        paymentRepository.save(payment);
+
+        // Order 상태 변경 (CONFIRMED -> CANCELLED)
+        Order order = payment.getOrder();
+        order.changeStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+
+        // 재고 복구
+        restoreProductStock(order);
+
+        log.info("[PAYMENT_CANCEL_SUCCESS] Payment cancelled - PaymentId: {}", paymentId);
+        return payment;
     }
 
     /**
@@ -480,41 +628,24 @@ public class PaymentApplicationService {
     private List<PaymentNotificationService.StockReductionResult> reduceProductStock(Order order) {
         List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
 
-        // 부분 차감 보상용: 상품별 차감은 REQUIRES_NEW 로 즉시 독립 커밋되므로, 다중상품 주문 중간에
-        // 한 건이라도 실패하면 '이미 커밋된 앞선 차감'이 그대로 남는 edge case 가 있다.
-        // → 성공한 차감 항목을 추적해 두고, 실패 시 같은 낙관적 락 경로로 DB 재고를 복원한 뒤 예외를 전파해
-        //   재고 누락(차감됐는데 주문은 롤백되는 유실)을 보상한다.
-        List<OrderItem> decremented = new java.util.ArrayList<>();
-        try {
-            for (OrderItem orderItem : order.getOrderItems()) {
-                // 선택된 전략으로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
-                int stockAfter = stockDecrementer.decrease(
-                        orderItem.getProductId(), orderItem.getQuantity());
-                decremented.add(orderItem);
+        // 차감은 호출한 트랜잭션(후처리 REQUIRES_NEW 또는 테스트용 @Transactional)에 합류한다. 중간에 한 건이 실패하면
+        // 앞선 차감까지 같은 롤백으로 되돌아오므로 별도 복원 코드를 두지 않는다(복원을 REQUIRES_NEW 로 하면 바깥 트랜잭션이
+        // 쥔 행 락을 기다려 교착한다)
+        // 상품 id 오름차순으로 잠가, 서로 다른 순서로 여러 상품을 담은 두 주문이 서로의 행 락을 기다리는 교착을 막는다
+        List<OrderItem> items = order.getOrderItems().stream()
+                .sorted(java.util.Comparator.comparing(OrderItem::getProductId))
+                .toList();
+        for (OrderItem orderItem : items) {
+            // 선택된 전략으로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
+            int stockAfter = stockDecrementer.decrease(orderItem.getProductId(), orderItem.getQuantity());
 
-                // 차감된 상품 ID와 차감 후 재고량 저장
-                results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
+            // 차감된 상품 ID와 차감 후 재고량 저장
+            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
 
-                log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
-                        orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
-            }
-            return results;
-        } catch (RuntimeException e) {
-            // 보상: 이미 독립 커밋된 차감 항목을 복원(증가)한다. 복원 자체 실패는 운영 인지를 위해 로깅만(best-effort).
-            log.error("[STOCK_REDUCE_PARTIAL_FAIL] 다중상품 차감 중 실패 - 복원 시도 {}건, error={}",
-                    decremented.size(), e.getMessage());
-            for (OrderItem done : decremented) {
-                try {
-                    productStockService.increaseWithOptimisticLock(done.getProductId(), done.getQuantity());
-                    log.info("[STOCK_REDUCE_COMPENSATED] 부분 차감 복원 - ProductId: {}, Quantity: {}",
-                            done.getProductId(), done.getQuantity());
-                } catch (RuntimeException restoreEx) {
-                    log.error("[STOCK_REDUCE_COMPENSATE_FAIL] 부분 차감 복원 실패(수동 처리 필요) - ProductId: {}, Quantity: {}, error={}",
-                            done.getProductId(), done.getQuantity(), restoreEx.getMessage());
-                }
-            }
-            throw e;
+            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
+                    orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
         }
+        return results;
     }
 
     private void restoreProductStock(Order order) {

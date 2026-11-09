@@ -115,4 +115,16 @@ class TossPaymentResponseClassificationTest {
         assertThatThrownBy(() -> tossPaymentClient.cancelPayment("pk-classify", "테스트", "idem-400"))
                 .isInstanceOf(TossAlreadyCanceledException.class);
     }
+
+    @Test
+    @DisplayName("404 NOT_FOUND_PAYMENT 는 TossPaymentNotFoundException (승인된 적 없는 결제)")
+    void cancel_404_결제없음은_결제없음_예외() {
+        WIRE_MOCK.stubFor(post(urlPathEqualTo(CANCEL_PATH))
+                .willReturn(aResponse().withStatus(404)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"code\":\"NOT_FOUND_PAYMENT\",\"message\":\"존재하지 않는 결제 정보\"}")));
+
+        assertThatThrownBy(() -> tossPaymentClient.cancelPayment("pk-classify", "테스트", "idem-404"))
+                .isInstanceOf(TossPaymentNotFoundException.class);
+    }
 }

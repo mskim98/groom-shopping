@@ -5,3 +5,7 @@ spring:
     user:
       name: admin
       password: admin123
+  jpa:
+    # 요청이 끝날 때까지 EntityManager(= DB 커넥션)를 쥐는 OSIV 를 끈다. 컨트롤러에서 지연 로딩이 필요하면
+    # 서비스에서 fetch join 으로 미리 읽어 온다(예: OrderRepository.findByIdWithItems)
+    open-in-view: false

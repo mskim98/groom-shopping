@@ -3,6 +3,7 @@ package groom.backend.interfaces.payment.persistence;
 import groom.backend.domain.payment.model.PaymentCompensation;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import jakarta.persistence.EntityManager;
+import groom.backend.domain.payment.model.enums.CompensationStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -24,7 +25,8 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
                 SELECT id
                 FROM payment_compensation
                 WHERE (status IN ('PENDING', 'FAILED') AND next_retry_at <= :now)
-                   OR (status = 'PROCESSING' AND updated_at <= :staleThreshold)
+                   OR (status = 'PROCESSING' AND updated_at <= :staleThreshold
+                       AND COALESCE(next_retry_at, :now) <= :now)
                 ORDER BY next_retry_at ASC NULLS LAST
                 LIMIT :limit
                 FOR UPDATE SKIP LOCKED
@@ -46,6 +48,11 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
     }
 
     @Override
+    public Optional<PaymentCompensation> findByPaymentId(UUID paymentId) {
+        return jpa.findByPaymentId(paymentId);
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public List<PaymentCompensation> findRetryable(LocalDateTime now, LocalDateTime staleThreshold, int limit) {
         return entityManager.createNativeQuery(ACQUIRE_RETRYABLE_SQL, PaymentCompensation.class)
@@ -59,7 +66,8 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
     private static final String COUNT_RETRYABLE_SQL = """
             SELECT count(*) FROM payment_compensation
             WHERE (status IN ('PENDING', 'FAILED') AND next_retry_at <= :now)
-               OR (status = 'PROCESSING' AND updated_at <= :staleThreshold)
+               OR (status = 'PROCESSING' AND updated_at <= :staleThreshold
+                   AND COALESCE(next_retry_at, :now) <= :now)
             """;
 
     @Override
@@ -69,5 +77,10 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
                 .setParameter("staleThreshold", staleThreshold)
                 .getSingleResult();
         return ((Number) result).longValue();
+    }
+
+    @Override
+    public long countByStatus(CompensationStatus status) {
+        return jpa.countByStatus(status);
     }
 }

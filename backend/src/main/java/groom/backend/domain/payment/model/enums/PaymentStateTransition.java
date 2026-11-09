@@ -75,9 +75,7 @@ public final class PaymentStateTransition {
         if (from == null || to == null) {
             return false;
         }
-        if (from == to) {
-            return true;
-        }
+        // 자기 전이는 표에 적힌 것만 허용한다(PARTIAL_CANCELED 의 반복 부분 취소) - FAILED→FAILED 가 통과하면 종료 상태가 덮어써진다
         Set<PaymentStatus> allowed = ALLOWED_TRANSITIONS.getOrDefault(from, EnumSet.noneOf(PaymentStatus.class));
         return allowed.contains(to);
     }

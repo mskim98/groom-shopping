@@ -14,4 +14,8 @@ public record PaymentCompensationDlqEvent(
         String lastError,
         Integer retryCount,
         LocalDateTime occurredAt
-) {}
+) {
+    public static final String EVENT_TYPE = "COMPENSATION_GIVEN_UP";
+    // 발행 토픽 - Outbox 행의 topic 으로 실려 폴러가 이 토픽으로 보낸다
+    public static final String TOPIC = "payment-compensation-dlq";
+}
