@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 
+import groom.backend.common.exception.BusinessException;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
@@ -90,5 +91,35 @@ class PaymentPostProcessRollbackTest {
 
         assertThat(fixture.stockOf(productId)).as("커밋 뒤 DB 재고").isEqualTo(INITIAL_STOCK - 1);
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
+    }
+
+    @Test
+    @DisplayName("다중 상품 주문에서 두 번째 상품의 차감이 실패하면 첫 번째 상품의 차감도 되돌아온다")
+    void 후처리실패_둘째상품_재고부족_첫째상품_재고가_복원된다() {
+        // 차감은 상품 id 오름차순으로 잠그므로, id 가 작은 쪽이 첫 번째 · 큰 쪽(재고 0)이 두 번째로 실패한다
+        UUID a = fixture.product(INITIAL_STOCK);
+        UUID b = fixture.product(0);
+        UUID first = a.compareTo(b) < 0 ? a : b;
+        UUID second = first.equals(a) ? b : a;
+        // first 는 재고 10, second 는 재고 0 이어야 하므로 필요하면 서로 바꿔 채운다
+        jdbcSetStock(first, INITIAL_STOCK);
+        jdbcSetStock(second, 0);
+        Payment twoItems = fixture.payment(first, 1, second, 1);
+        try {
+            assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
+                    twoItems.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE * 2)))
+                    .isInstanceOf(BusinessException.class);
+
+            assertThat(fixture.stockOf(first)).as("먼저 차감된 상품의 재고").isEqualTo(INITIAL_STOCK);
+            assertThat(fixture.stockOf(second)).isZero();
+            assertThat(fixture.statusOf(twoItems.getId())).isNotEqualTo("DONE");
+        } finally {
+            fixture.cleanup(twoItems, first);
+            fixture.deleteProduct(second);
+        }
+    }
+
+    private void jdbcSetStock(UUID productId, int stock) {
+        jdbc.update("UPDATE product SET stock = ? WHERE id = ?", stock, productId);
     }
 }

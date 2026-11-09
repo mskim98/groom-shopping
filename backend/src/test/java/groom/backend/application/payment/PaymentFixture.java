@@ -55,6 +55,24 @@ final class PaymentFixture {
                 .orderName("fixture-order").customerName("tester").method(PaymentMethod.CARD).build());
     }
 
+    /** 상품 두 개를 한 주문(항목 2개)에 담은 PENDING 결제를 만든다 */
+    Payment payment(UUID firstProductId, int firstQuantity, UUID secondProductId, int secondQuantity) {
+        Order order = Order.builder().userId(1L).couponId(null).status(OrderStatus.PENDING).build();
+        order.addOrderItem(OrderItem.builder().productId(firstProductId).productName("fixture-product")
+                .price(PRICE).quantity(firstQuantity).build());
+        order.addOrderItem(OrderItem.builder().productId(secondProductId).productName("fixture-product")
+                .price(PRICE).quantity(secondQuantity).build());
+        order.calculateAmounts();
+        order = orderRepository.save(order);
+        return paymentRepository.save(Payment.builder()
+                .order(order).userId(1L).amount(PRICE * (firstQuantity + secondQuantity))
+                .orderName("fixture-order").customerName("tester").method(PaymentMethod.CARD).build());
+    }
+
+    void deleteProduct(UUID productId) {
+        productRepository.deleteById(productId);
+    }
+
     /** Toss 승인 응답(최소 필드)을 JSON 으로 만들어 역직렬화한다. 클래스에 setter 가 없어 필드로 채워진다 */
     static TossPaymentResponse tossResponse(String paymentKey, int amount) {
         try {
