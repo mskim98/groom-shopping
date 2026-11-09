@@ -104,11 +104,11 @@ public class PaymentCompensation {
                     CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
                     CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.SUPERSEDED,
                     CompensationStatus.NOT_APPROVED, CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.SUPERSEDED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.NOT_APPROVED, EnumSet.of(CompensationStatus.RECONCILE_NEEDED),
-            CompensationStatus.RECONCILE_NEEDED, EnumSet.noneOf(CompensationStatus.class));
+            CompensationStatus.SUCCEEDED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.GIVEN_UP, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.SUPERSEDED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.NOT_APPROVED, EnumSet.of(CompensationStatus.PENDING, CompensationStatus.RECONCILE_NEEDED),
+            CompensationStatus.RECONCILE_NEEDED, EnumSet.of(CompensationStatus.PENDING));
 
     private void transitionTo(CompensationStatus next) {
         Set<CompensationStatus> allowed = ALLOWED_TRANSITIONS
@@ -190,5 +190,27 @@ public class PaymentCompensation {
         }
         this.lastError = reason;
         this.nextRetryAt = null;
+    }
+
+    /** 종단 상태(재시도하지 않는 끝)인지 - 다시 열 수 있는 행인지 판단한다 */
+    public boolean isTerminal() {
+        return status == CompensationStatus.SUCCEEDED || status == CompensationStatus.GIVEN_UP
+                || status == CompensationStatus.SUPERSEDED || status == CompensationStatus.NOT_APPROVED
+                || status == CompensationStatus.RECONCILE_NEEDED;
+    }
+
+    /**
+     * 종단 상태로 끝난 보상 행을 새 보상 의도로 다시 연다. 결제당 보상 행은 하나(payment_id 유일)라, 같은 결제에 새 의도가
+     * 오면 새 행을 만들 수 없다 - 예: 시간 초과 → NOT_APPROVED 로 끝난 뒤 클라이언트의 재시도 확정이 승인되고 후처리가 실패한 경우.
+     * 결제키·금액·사유를 새 값으로 바꾸고 재시도 횟수·오류·종단 표식을 지워 배치가 다시 집어 가게 한다
+     */
+    public void reopen(String paymentKey, Integer amount, String reason) {
+        transitionTo(CompensationStatus.PENDING);
+        this.paymentKey = paymentKey;
+        this.amount = amount;
+        this.reason = TextLimit.clip(reason, 500);
+        this.retryCount = 0;
+        this.lastError = null;
+        this.nextRetryAt = LocalDateTime.now();
     }
 }

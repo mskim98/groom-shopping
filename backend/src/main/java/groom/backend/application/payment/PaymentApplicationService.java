@@ -195,6 +195,11 @@ public class PaymentApplicationService {
             if (dbError instanceof BusinessException businessException) {
                 throw businessException;
             }
+            // 후처리 재시도를 모두 소진한 version 충돌 - 보상 의도는 위에서 이미 기록했다(승인은 끝난 뒤라 환불 경로가 돈다).
+            // 일반 RuntimeException 으로 나가면 HTTP 500 이 되므로, 예전 재시도 경로처럼 409 로 답한다
+            if (dbError instanceof ObjectOptimisticLockingFailureException) {
+                throw new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT);
+            }
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
         }
     }

@@ -131,9 +131,11 @@ public class PaymentCompensationService {
             selfProvider.getObject()
                     .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
         } catch (DataIntegrityViolationException duplicate) {
-            // payment_id 유일 제약 - 같은 결제의 보상 행이 이미 있다. 같은 의도를 두 번 적는 것은 무해하므로 넘어간다
-            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - PaymentId: {}", paymentId);
-            return;
+            // payment_id 유일 제약 - 같은 결제의 보상 행이 이미 있다. 로그만 남기고 넘어가면 그 행이 종단 상태(NOT_APPROVED ·
+            // SUPERSEDED …)일 때 새 승인의 환불이 영영 시도되지 않는다. 종단 행은 다시 열고, 진행 중인 행은 그대로 둔다.
+            // 다시 열기가 실패하면 삼키지 않고 호출부로 전파한다
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - 다시 열기 확인 PaymentId: {}", paymentId);
+            selfProvider.getObject().reopenCompensation(paymentId, paymentKey, amount, failureReason);
         }
 
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
@@ -170,6 +172,25 @@ public class PaymentCompensationService {
         compensation.markGivenUp(reason);
         compensationRepository.save(compensation);
         appendGivenUpOutbox(compensation, reason);
+    }
+
+    /**
+     * 같은 결제의 보상 행이 이미 있을 때의 처리. 종단 상태(재시도 끝 · NOT_APPROVED · SUPERSEDED …)면 새 의도로 다시 열고,
+     * 이미 진행 중(PENDING · FAILED · PROCESSING)이면 환불이 예약돼 있으므로 그대로 둔다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void reopenCompensation(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        PaymentCompensation existing = compensationRepository.findByPaymentId(paymentId)
+                .orElseThrow(() -> new IllegalStateException("payment_id 유일 위반인데 보상 행이 없다: " + paymentId));
+        if (!existing.isTerminal()) {
+            log.info("[PAYMENT_COMPENSATION_ACTIVE] 이미 진행 중인 보상 행 유지 - PaymentId: {}, Status: {}",
+                    paymentId, existing.getStatus());
+            return;
+        }
+        CompensationStatus before = existing.getStatus();
+        existing.reopen(paymentKey, amount, reason);
+        compensationRepository.save(existing);
+        log.warn("[PAYMENT_COMPENSATION_REOPENED] 종단 보상 행을 다시 엶 - PaymentId: {}, Before: {}", paymentId, before);
     }
 
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */
