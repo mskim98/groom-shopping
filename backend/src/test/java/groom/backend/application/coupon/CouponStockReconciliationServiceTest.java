@@ -1,7 +1,10 @@
 package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,6 +13,7 @@ import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.infrastructure.kafka.KafkaLagReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDate;
 import java.util.List;
@@ -42,13 +46,15 @@ class CouponStockReconciliationServiceTest {
     private CouponStockRedisRepository couponStockRedisRepository;
     @Mock
     private RedissonClient redissonClient;
+    @Mock
+    private KafkaLagReader kafkaLagReader;
 
     private CouponStockReconciliationService service;
 
     @BeforeEach
     void setUp() {
         service = new CouponStockReconciliationService(couponRepository, couponIssueRepository,
-                couponStockRedisRepository, redissonClient, new SimpleMeterRegistry());
+                couponStockRedisRepository, redissonClient, kafkaLagReader, new SimpleMeterRegistry());
     }
 
     private Coupon coupon(long id, long quantity, boolean active, LocalDate expire) {
@@ -95,6 +101,65 @@ class CouponStockReconciliationServiceTest {
 
         assertThat(report.orphansRemoved()).isEqualTo(1);
         verify(couponStockRedisRepository).removeIssuedUsers(1L, List.of(3L));
+    }
+
+    @Test
+    @DisplayName("컨슈머 랙이 0 이면 고아 예약을 회수한다")
+    void reconcileCoupon_랙이_0이면_고아예약을_회수한다() {
+        고아_예약이_하나_있는_종료_쿠폰();
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
+
+        assertThat(service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10))).orphansRemoved())
+                .isEqualTo(1);
+
+        verify(couponStockRedisRepository).removeIssuedUsers(1L, List.of(3L));
+    }
+
+    @Test
+    @DisplayName("컨슈머 랙이 남아 있으면 명단에만 있는 예약도 회수하지 않는다")
+    void reconcileCoupon_랙이_남아있으면_회수하지_않는다() {
+        고아_예약이_하나_있는_종료_쿠폰();
+        // 종료 시각이 지나도 요청 토픽에 아직 소비되지 않은 요청이 있다 - 그 사용자의 행은 곧 들어온다
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(7L);
+
+        assertThat(service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10))).orphansRemoved())
+                .isZero();
+
+        // 지우면 곧 확정될 사용자가 게이트를 다시 통과해 같은 쿠폰을 한 번 더 받는다
+        verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
+    }
+
+    @Test
+    @DisplayName("컨슈머 랙을 읽지 못하면 회수하지 않는다")
+    void reconcileCoupon_랙을_못_읽으면_회수하지_않는다() {
+        고아_예약이_하나_있는_종료_쿠폰();
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(-1L);
+
+        service.reconcileCoupon(coupon(1L, 40L, false, LocalDate.now().plusDays(10)));
+
+        verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
+    }
+
+    @Test
+    @DisplayName("마감도 랙이 남아 있으면 고아 예약을 회수하지 않고 발급 수는 굳힌다")
+    void closeCoupon_랙이_남아있으면_회수를_미루고_굳힌다() {
+        고아_예약이_하나_있는_종료_쿠폰();
+        given(couponRepository.findById(1L)).willReturn(Optional.of(coupon(1L, 40L, false, LocalDate.now().plusDays(10))));
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(3L);
+
+        service.closeCoupon(1L);
+
+        verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
+        verify(couponRepository).freezeIssuedCount(eq(1L), anyLong());
+    }
+
+    // 명단에 1, 2, 3 이 있고 확정 행은 1, 2 뿐이다 - 3 은 아직 저장되지 않았거나 영영 저장되지 않을 예약이다
+    private void 고아_예약이_하나_있는_종료_쿠폰() {
+        given(couponStockRedisRepository.getStock(1L)).willReturn(35L);
+        given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(2L);
+        given(couponStockRedisRepository.countIssuedUsers(1L)).willReturn(3L);
+        given(couponStockRedisRepository.getIssuedUsers(1L)).willReturn(Set.of("1", "2", "3"));
+        given(couponIssueRepository.findUserIdsByCouponId(1L)).willReturn(List.of(1L, 2L));
     }
 
     @Test
