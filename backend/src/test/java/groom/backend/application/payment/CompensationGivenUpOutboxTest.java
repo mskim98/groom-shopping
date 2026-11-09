@@ -158,4 +158,16 @@ class CompensationGivenUpOutboxTest {
     void 대사필요_기존_NOT_APPROVED행_행갱신과_DLQ이벤트를_남긴다() {
         reconcileOverExistingRow("NOT_APPROVED");
     }
+
+    @Test
+    @DisplayName("결제에 아직 처리 중(PROCESSING)인 보상 행이 있어도 대사 필요 건은 행을 갱신하고 DLQ 이벤트를 남긴다")
+    void 대사필요_기존_PROCESSING행_행갱신과_DLQ이벤트를_남긴다() {
+        reconcileOverExistingRow("PROCESSING");
+    }
+
+    @Test
+    @DisplayName("결제에 재시도 대기(PENDING)인 보상 행이 있어도 대사 필요 건은 행을 갱신하고 DLQ 이벤트를 남긴다")
+    void 대사필요_기존_PENDING행_행갱신과_DLQ이벤트를_남긴다() {
+        reconcileOverExistingRow("PENDING");
+    }
 }
