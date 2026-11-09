@@ -276,7 +276,10 @@ resilience4j:
         exponential-backoff-multiplier: 2
         ignore-exceptions:
           # 회로가 OPEN 이면 재시도해도 즉시 막히므로 재시도 대상에서 제외
+          # @Retry 가 @CircuitBreaker 바깥이라 retry 가 보는 예외는 fallback 이 바꾼 TossCircuitOpenException 이다
+          # CallNotPermittedException 만 적으면 이 목록은 한 번도 일치하지 않는다(2026-11 R115 로 확인)
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - groom.backend.infrastructure.payment.TossCircuitOpenException
 
   jackson:
     serialization:

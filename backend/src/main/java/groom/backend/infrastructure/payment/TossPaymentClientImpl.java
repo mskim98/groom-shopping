@@ -87,7 +87,8 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         if (t instanceof CallNotPermittedException) {
             // 회로 OPEN - 외부 API 를 아예 호출하지 않고 사용자에게 빠른 실패 안내
             log.warn("[CB_FALLBACK_OPEN] Circuit OPEN, fast-fail - PaymentKey: {}", request.getPaymentKey());
-            throw new BusinessException(ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE);
+            // 재시도가 무시하는 전용 타입으로 던진다 - 일반 BusinessException 이면 retry 가 200ms+400ms 를 기다린다
+            throw new TossCircuitOpenException();
         }
         // timeout·5xx 등 실제 호출 실패 - 결제 PG 오류로 변환 (이후 보상 트랜잭션이 사후 정합성 담당)
         log.error("[CB_FALLBACK_FAILURE] Toss confirm failed - PaymentKey: {}, Error: {}",
