@@ -103,6 +103,28 @@ class ConfirmFallbackClassificationTest {
     }
 
     @Test
+    @DisplayName("409 IDEMPOTENT_REQUEST_PROCESSING 은 앞선 같은 키 요청이 처리 중이라 결과 불명이므로 PAYMENT_PG_TIMEOUT 으로 분류한다")
+    void fallback_멱등키처리중409_PAYMENT_PG_TIMEOUT으로_분류한다() {
+        HttpClientErrorException processing = HttpClientErrorException.create(HttpStatus.CONFLICT, "Conflict",
+                new HttpHeaders(),
+                "{\"code\":\"IDEMPOTENT_REQUEST_PROCESSING\",\"message\":\"처리 중\"}".getBytes(StandardCharsets.UTF_8), null);
+
+        assertThat(classify(new RuntimeException("Toss Payments API 호출 실패", processing)))
+                .isEqualTo(ErrorCode.PAYMENT_PG_TIMEOUT);
+    }
+
+    @Test
+    @DisplayName("다른 코드의 409 는 확정 거절이라 PAYMENT_PG_REJECTED 로 분류한다")
+    void fallback_다른코드409_PAYMENT_PG_REJECTED로_분류한다() {
+        HttpClientErrorException conflict = HttpClientErrorException.create(HttpStatus.CONFLICT, "Conflict",
+                new HttpHeaders(),
+                "{\"code\":\"DUPLICATED_ORDER_ID\"}".getBytes(StandardCharsets.UTF_8), null);
+
+        assertThat(classify(new RuntimeException("Toss Payments API 호출 실패", conflict)))
+                .isEqualTo(ErrorCode.PAYMENT_PG_REJECTED);
+    }
+
+    @Test
     @DisplayName("분류 밖의 실패(5xx 등)는 PAYMENT_PG_FAILURE 로 남긴다")
     void fallback_그외실패_PAYMENT_PG_FAILURE로_분류한다() {
         assertThat(classify(new IllegalStateException("5xx"))).isEqualTo(ErrorCode.PAYMENT_PG_FAILURE);
