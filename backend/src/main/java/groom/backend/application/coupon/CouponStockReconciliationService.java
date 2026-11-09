@@ -92,7 +92,7 @@ public class CouponStockReconciliationService {
     /**
      * 주기 실행 진입점. 기본 10분마다({@code coupon.reconcile.fixed-delay}, ISO-8601 기간) 돈다
      * 종료된 쿠폰만 대조하므로 진행 중 요청의 자리를 건드리지 않는다 - 진행 중 쿠폰은 {@link #reconcileCoupon} 이
-     * 처음에 걸러 내고, 종료된 쿠폰의 고아 예약 회수는 요청 토픽의 컨슈머 랙이 0 일 때만 한다
+     * 처음에 걸러 내고, 종료된 쿠폰의 고아 예약 회수는 요청 토픽의 컨슈머 랙을 가장 먼저 읽어 0 일 때만 한다
      */
     @Scheduled(fixedDelayString = "${coupon.reconcile.fixed-delay:PT10M}",
             initialDelayString = "${coupon.reconcile.initial-delay-ms:60000}")
@@ -236,6 +236,16 @@ public class CouponStockReconciliationService {
     }
 
     private int removeOrphanReservations(Long couponId) {
+        // 랙을 가장 먼저 읽는다. 명단과 확정 행을 읽은 뒤에 읽으면, 첫 읽기 때 랙에 있던 요청이 그 사이 커밋되고
+        // 랙이 0 으로 읽혀 "확정 행 목록에 없는 사용자" 가 방금 확정된 사용자인 채 명단에서 지워진다
+        // 그러면 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받고 DB 유니크가 막으면서 재고가 +1 된다
+        // 랙이 0 이 된 뒤에 읽은 확정 행에는 그 시점까지 커밋된 요청이 모두 들어 있다
+        // 랙을 읽지 못한 경우(-1)도 같다. 건너뛴 회수는 다음 주기 대조가 랙이 0 일 때 한다
+        long lag = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC, CouponAsyncIssueService.CONSUMER_GROUP);
+        if (lag != 0) {
+            log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] couponId={}, lag={}", couponId, lag);
+            return 0;
+        }
         Set<String> reservedUsers = couponStockRedisRepository.getIssuedUsers(couponId);
         if (reservedUsers.isEmpty()) {
             return 0;
@@ -253,14 +263,6 @@ public class CouponStockReconciliationService {
             }
         }
         if (orphans.isEmpty()) {
-            return 0;
-        }
-        // 종료 시각이 지나도 요청 토픽에 아직 소비되지 않은 요청이 있을 수 있다. 그 사용자의 행은 곧 들어오므로
-        // 명단에서 지우면 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받는다
-        // 랙을 읽지 못한 경우(-1)도 같다. 건너뛴 회수는 다음 주기 대조가 랙이 0 일 때 한다
-        long lag = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC, CouponAsyncIssueService.CONSUMER_GROUP);
-        if (lag != 0) {
-            log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] couponId={}, orphans={}, lag={}", couponId, orphans.size(), lag);
             return 0;
         }
         couponStockRedisRepository.removeIssuedUsers(couponId, orphans);
