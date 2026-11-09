@@ -99,6 +99,14 @@ public class TossPaymentClientImpl implements TossPaymentClient {
                     request.getPaymentKey(), t.getMessage());
             throw new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT);
         }
+        // 409 IDEMPOTENT_REQUEST_PROCESSING : 같은 Idempotency-Key 의 앞선 요청이 아직 처리 중이다 - 승인 여부를 알 수 없어
+        // 거절이 아니라 결과 불명이다. 시간 초과와 같은 경로로 보내 보상 의도를 기록한다
+        // https://docs.tosspayments.com/reference/using-api/idempotency-key
+        if (isIdempotentRequestProcessing(t)) {
+            log.error("[CB_FALLBACK_TIMEOUT] Toss confirm idempotent request still processing - PaymentKey: {}",
+                    request.getPaymentKey());
+            throw new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT);
+        }
         if (hasCause(t, HttpClientErrorException.class)) {
             log.warn("[CB_FALLBACK_REJECTED] Toss rejected confirm - PaymentKey: {}, Error: {}",
                     request.getPaymentKey(), t.getMessage());
@@ -108,6 +116,17 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         log.error("[CB_FALLBACK_FAILURE] Toss confirm failed - PaymentKey: {}, Error: {}",
                 request.getPaymentKey(), t.getMessage());
         throw new BusinessException(ErrorCode.PAYMENT_PG_FAILURE);
+    }
+
+    private static boolean isIdempotentRequestProcessing(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+            if (cur instanceof HttpClientErrorException http
+                    && http.getStatusCode().value() == 409
+                    && http.getResponseBodyAsString().contains("IDEMPOTENT_REQUEST_PROCESSING")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
