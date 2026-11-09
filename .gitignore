@@ -45,3 +45,6 @@ k6/
 
 # tokensave 코드 인덱스 DB (로컬 전용)
 .tokensave/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

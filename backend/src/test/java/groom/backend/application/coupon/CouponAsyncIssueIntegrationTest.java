@@ -15,15 +15,28 @@ import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import groom.backend.interfaces.auth.persistence.UserJpaEntity;
 import groom.backend.interfaces.coupon.dto.request.CouponCreateRequest;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -84,9 +97,14 @@ class CouponAsyncIssueIntegrationTest {
         }
     }
 
+    // 폴백 실측이 만든 사용자. 발급 행이 이들을 참조하므로 쿠폰 정리 뒤에 지운다
+    private final List<Long> extraUserIds = new ArrayList<>();
+
     private void deleteFixtureUsers() {
         FIXTURE_EMAILS.forEach(email ->
                 userRepository.findByEmail(email).ifPresent(userRepository::delete));
+        userRepository.deleteAllById(extraUserIds);
+        extraUserIds.clear();
     }
 
     @BeforeEach
@@ -166,6 +184,77 @@ class CouponAsyncIssueIntegrationTest {
         assertThat(couponStockRedisRepository.getStock(couponId)).isEqualTo(DB_QUANTITY - 1);
         // 확정 경로는 coupon 테이블을 만지지 않는다. 감산이 되살아나면 이 단언이 깨진다
         assertThat(couponRepository.findById(couponId).orElseThrow().getQuantity()).isEqualTo(DB_QUANTITY);
+    }
+
+    // 폴백 실측 - 키가 userId 라 재고 키 부재를 컨슈머 4 개가 같은 시점에 발견한다
+    // 초과 발급은 SET NX 가 막고, 초기화 잠금은 DB 집계를 컨슈머 수만큼에서 1 회로 줄인다
+    // 집계 횟수는 재초기화 로그로 센다 - 그 로그는 COUNT 직후 조건 없이 한 번 찍힌다
+    // 대조군 : ensureStockInitialized 의 tryLock 을 걷어내고 돌리면 reinit 이 컨슈머 수만큼 나와야 한다
+    @Test
+    @DisplayName("재고 키 부재에서 컨슈머 4개가 동시에 재판정해도 DB 집계는 1회, 발급 수는 발행 수량과 같다")
+    void process_컨슈머4개가_동시에_키부재를_만나도_집계는_한번이다() throws Exception {
+        int consumers = 4;
+        // 합이 발행 수량의 2 배 - 품절까지 가야 초과 발급 여부가 드러난다
+        int perConsumer = (int) (DB_QUANTITY * 2 / consumers);
+        String runTag = UUID.randomUUID().toString().substring(0, 8);
+        List<Long> userIds = userRepository.saveAll(IntStream.range(0, consumers * perConsumer)
+                        .mapToObj(i -> UserJpaEntity.builder()
+                                .email("fallback-" + runTag + "-" + i + "@test.com").password("pw").name("폴백측정")
+                                .role(Role.ROLE_USER).grade(Grade.BRONZE).build())
+                        .toList())
+                .stream().map(UserJpaEntity::getId).toList();
+        extraUserIds.addAll(userIds);
+
+        List<List<CouponIssueRequestEvent>> batches = new ArrayList<>();
+        for (int c = 0; c < consumers; c++) {
+            batches.add(userIds.subList(c * perConsumer, (c + 1) * perConsumer).stream()
+                    .map(uid -> new CouponIssueRequestEvent(newRequestId(), couponId, uid, false))
+                    .toList());
+        }
+
+        Logger logger = (Logger) LoggerFactory.getLogger(CouponAsyncIssueService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        // when - 네 스레드가 같은 순간에 각자의 배치를 처리한다
+        ExecutorService pool = Executors.newFixedThreadPool(consumers);
+        CountDownLatch start = new CountDownLatch(1);
+        long elapsedMs;
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (List<CouponIssueRequestEvent> batch : batches) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    couponAsyncIssueService.processBatch(batch);
+                    return null;
+                }));
+            }
+            long t0 = System.nanoTime();
+            start.countDown();
+            for (Future<?> f : futures) {
+                f.get(30, TimeUnit.SECONDS);
+            }
+            elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+        } finally {
+            pool.shutdownNow();
+            logger.detachAppender(appender);
+        }
+
+        long reinit = appender.list.stream()
+                .filter(e -> e.getFormattedMessage().startsWith("[COUPON_STOCK_REINITIALIZED]")).count();
+        long issued = couponIssueRepository.findByCoupon_Id(couponId).size();
+        Map<String, Long> statuses = batches.stream().flatMap(List::stream)
+                .collect(Collectors.groupingBy(e -> String.valueOf(couponAsyncIssueService.getStatus(e.requestId())),
+                        TreeMap::new, Collectors.counting()));
+        System.out.printf("[FALLBACK_MEASURE] consumers=%d events=%d quantity=%d reinit=%d issued=%d redisStock=%s elapsedMs=%d statuses=%s%n",
+                consumers, consumers * perConsumer, DB_QUANTITY, reinit, issued,
+                couponStockRedisRepository.getStock(couponId), elapsedMs, statuses);
+
+        // then
+        assertThat(reinit).isEqualTo(1);
+        assertThat(issued).isEqualTo(DB_QUANTITY);
+        assertThat(couponStockRedisRepository.getStock(couponId)).isZero();
     }
 
     // 증명: 접수 게이트가 재고를 깎고, 컨슈머는 그 예약을 DB 로 확정만 한다
