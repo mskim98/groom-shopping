@@ -10,6 +10,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
@@ -43,6 +45,9 @@ import org.springframework.test.context.TestPropertySource;
 // 실행 중인 앱과 Kafka Streams 상태 디렉토리 락 충돌 방지(이 테스트는 Streams 불필요)
 @TestPropertySource(properties = {
         "spring.kafka.streams.auto-startup=false",
+        "payment.consumer.auto-startup=false",
+        "payment.confirm.wait-timeout-ms=1000",
+        "payment.confirm.poll-interval-ms=50",
         // 배경 보상 배치(fixedDelay)가 이 시험의 보상 행을 가져가지 않게 늦춘다
         "payment.compensation.retry-delay-ms=600000"})
 @DisplayName("동시 중복 확정 방어(T3-3)")
@@ -63,6 +68,8 @@ class PaymentConcurrencyGuardTest {
     private PaymentCompensationService compensationService;
     @Autowired
     private SpringDataPaymentCompensationRepository compensationJpa;
+    @Autowired
+    private ObjectMapper objectMapper;
     @Autowired
     private SpringDataProductRepository productRepository;
     @Autowired
@@ -90,7 +97,7 @@ class PaymentConcurrencyGuardTest {
     }
 
     @Test
-    @DisplayName("같은 주문에 대한 동시 승인 요청은 하나만 DONE 이 되고 진 쪽은 멱등 응답을 받으며 재고는 한 번만 차감된다")
+    @DisplayName("같은 주문에 대한 동시 확정은 이벤트를 1건만 남기고, 같은 이벤트를 동시에 받아도 하나만 DONE 이 되며 재고는 한 번만 차감된다")
     void 동시승인_같은주문_하나만_DONE이다() throws Exception {
         String paymentKey = "pk-" + UUID.randomUUID();
         TossPaymentResponse response = PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE);
@@ -108,7 +115,30 @@ class PaymentConcurrencyGuardTest {
                     executor.submit(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000)));
             for (Future<Payment> result : results) {
                 assertThat(result.get(30, TimeUnit.SECONDS).getStatus().name())
-                        .as("두 요청 모두 오류가 아니라 DONE 결제를 돌려받는다").isEqualTo("DONE");
+                        .as("컨슈머가 멈춘 상태라 두 요청 모두 오류가 아니라 READY 결제를 돌려받는다").isEqualTo("READY");
+            }
+
+            // 이벤트는 결제당 1건 - 진 쪽은 Outbox 를 더 적재하지 않는다
+            List<String> payloads = jdbc.queryForList(
+                    "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
+            assertThat(payloads).as("outbox 행").hasSize(1);
+
+            // 같은 이벤트를 컨슈머 두 개가 동시에 받는 재전달 경합 - 하나만 후처리를 끝내고 다른 쪽은 멱등 종료한다
+            PaymentApprovedEvent event = objectMapper.readValue(payloads.get(0), PaymentApprovedEvent.class);
+            CyclicBarrier bothAtConsumer = new CyclicBarrier(2);
+            List<Future<?>> consumers = List.of(
+                    executor.submit(() -> {
+                        bothAtConsumer.await(10, TimeUnit.SECONDS);
+                        paymentApplicationService.applyApprovedEvent(event);
+                        return null;
+                    }),
+                    executor.submit(() -> {
+                        bothAtConsumer.await(10, TimeUnit.SECONDS);
+                        paymentApplicationService.applyApprovedEvent(event);
+                        return null;
+                    }));
+            for (Future<?> consumer : consumers) {
+                consumer.get(30, TimeUnit.SECONDS);
             }
         } finally {
             executor.shutdownNow();
