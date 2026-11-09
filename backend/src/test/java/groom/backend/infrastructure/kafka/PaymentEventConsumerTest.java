@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
+import groom.backend.application.payment.event.PaymentEventParseException;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -63,12 +64,12 @@ class PaymentEventConsumerTest {
     }
 
     @Test
-    void consume_읽을_수_없는_JSON이면_IllegalArgumentException을_던지고_서비스를_부르지_않는다() {
+    void consume_읽을_수_없는_JSON이면_PaymentEventParseException을_던지고_서비스를_부르지_않는다() {
         ConsumerRecord<String, String> record =
                 new ConsumerRecord<>("payment-events", 0, 0L, "key", "not-json");
 
         assertThatThrownBy(() -> consumer.consume(record))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(PaymentEventParseException.class);
         verify(paymentApplicationService, never()).applyApprovedEvent(any());
     }
 
