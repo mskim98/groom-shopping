@@ -196,7 +196,8 @@ class CouponRecoveryWiringTest {
     @DisplayName("재고 키가 없다고 판정된 동안과 복구 중에는 OUT_OF_SERVICE 를 낸다")
     void health_키가_없거나_복구_중이면_OUT_OF_SERVICE_이다() {
         CouponIssueHealthIndicator indicator = new CouponIssueHealthIndicator(recoveryService);
-        ReflectionTestUtils.setField(indicator, "checkIntervalMs", 60_000L);
+        // 이 테스트는 보고되는 상태만 본다. 복구 예약이 돌면 전용 스레드가 같은 가짜 객체를 부르는 동안 이 스레드의 재스텁이 겹쳐 가끔 실패한다
+        ReflectionTestUtils.setField(indicator, "checkIntervalMs", Long.MAX_VALUE);
 
         given(recoveryService.isStockMissing()).willReturn(true);
         assertThat(indicator.health().getStatus()).isEqualTo(Status.OUT_OF_SERVICE);
