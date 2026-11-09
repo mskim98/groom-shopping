@@ -68,6 +68,31 @@ class PaymentTimeoutPolicyTest {
     }
 
     @Test
+    @DisplayName("READY 대사 주기는 60000ms다")
+    void READY_대사_주기는_60000ms다() {
+        assertThat(number("payment", "reconcile", "delay-ms")).isEqualTo(60000L);
+    }
+
+    @Test
+    @DisplayName("READY 대사 대기 시간(stale)은 300000ms다")
+    void READY_대사_stale_기준은_300000ms다() {
+        assertThat(number("payment", "reconcile", "stale-after-ms")).isEqualTo(300000L);
+    }
+
+    @Test
+    @DisplayName("READY 대사 재발행 상한은 2회다")
+    void READY_대사_재발행_상한은_2회다() {
+        assertThat(number("payment", "reconcile", "max-republish")).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("대사 stale 기준은 확정 대기 상한(10초)보다 훨씬 길어 대기 중인 요청의 결제를 건드리지 않는다")
+    void 대사_stale_기준은_확정_대기_상한보다_길다() {
+        assertThat(number("payment", "reconcile", "stale-after-ms"))
+                .isGreaterThanOrEqualTo(number("payment", "confirm", "wait-timeout-ms") * 10);
+    }
+
+    @Test
     @DisplayName("대기 상한은 Toss 응답 한도보다 짧다")
     void 대기_상한은_Toss_응답_한도보다_짧다() {
         Duration wait = Duration.ofMillis(number("payment", "confirm", "wait-timeout-ms"));
