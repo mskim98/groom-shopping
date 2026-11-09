@@ -1,6 +1,7 @@
 package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -8,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import groom.backend.domain.coupon.model.entity.Coupon;
@@ -28,6 +30,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.redisson.api.RedissonClient;
+import org.springframework.data.domain.Pageable;
 
 /**
  * 대조는 종료된 쿠폰에만 적용하고, 재고 키는 고쳐 쓰지 않는다
@@ -174,6 +177,51 @@ class CouponStockReconciliationServiceTest {
 
         verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
         verify(couponRepository).freezeIssuedCount(eq(1L), anyLong());
+    }
+
+    @Test
+    @DisplayName("종료된 쿠폰 3 개를 훑는 한 번의 대조 실행은 컨슈머 랙을 한 번만 읽는다")
+    void reconcileAll_랙을_실행당_한_번만_읽는다() {
+        종료_쿠폰_3개와_각각의_고아_예약(3);
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
+
+        service.reconcileAll();
+
+        // lagOf 는 호출마다 AdminClient 를 새로 만들고 5 초 제한을 건다. 랙은 쿠폰이 아니라 토픽 · 그룹 단위라
+        // 쿠폰마다 읽을 이유가 없고, 종료된 쿠폰은 새 게이트 통과가 없어 실행 시작 시점의 0 이 실행 내내 유효하다
+        verify(kafkaLagReader, times(1)).lagOf(anyString(), anyString());
+        verify(couponStockRedisRepository, times(3)).removeIssuedUsers(anyLong(), anyCollection());
+    }
+
+    @Test
+    @DisplayName("랙이 남아 있으면 쿠폰 3 개 모두 회수를 건너뛰고 랙은 한 번만 읽는다")
+    void reconcileAll_랙이_남아있으면_전부_건너뛰고_한_번만_읽는다() {
+        종료_쿠폰_3개와_각각의_고아_예약(3);
+        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(4L);
+
+        service.reconcileAll();
+
+        verify(kafkaLagReader, times(1)).lagOf(anyString(), anyString());
+        verify(couponStockRedisRepository, never()).getIssuedUsers(anyLong());
+        verify(couponStockRedisRepository, never()).removeIssuedUsers(anyLong(), anyCollection());
+    }
+
+    private void 종료_쿠폰_3개와_각각의_고아_예약(int count) {
+        // 페이지 상한은 @Value 로 주입되는 값이라 단위 테스트에서는 직접 넣는다
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "batchSize", 500);
+        List<Coupon> coupons = new java.util.ArrayList<>();
+        for (long id = 1; id <= count; id++) {
+            coupons.add(coupon(id, 40L, false, LocalDate.now().plusDays(10)));
+        }
+        given(couponRepository.findAllByIdGreaterThanOrderById(anyLong(), any(Pageable.class))).willReturn(coupons);
+        given(couponStockRedisRepository.getStock(anyLong())).willReturn(35L);
+        given(couponIssueRepository.countByCoupon_Id(anyLong())).willReturn(2L);
+        given(couponStockRedisRepository.countIssuedUsers(anyLong())).willReturn(3L);
+        // 랙이 남은 케이스에서는 아래 두 스텁이 쓰이지 않는다
+        org.mockito.Mockito.lenient().when(couponStockRedisRepository.getIssuedUsers(anyLong()))
+                .thenReturn(Set.of("1", "2", "3"));
+        org.mockito.Mockito.lenient().when(couponIssueRepository.findUserIdsByCouponId(anyLong()))
+                .thenReturn(List.of(1L, 2L));
     }
 
     // 재고 키와 개수 조회까지는 랙과 무관하게 읽는다
