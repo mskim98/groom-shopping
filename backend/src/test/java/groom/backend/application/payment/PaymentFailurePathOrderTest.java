@@ -199,4 +199,19 @@ class PaymentFailurePathOrderTest {
                 Long.class, payment.getId())).isZero();
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
     }
+
+    @Test
+    @DisplayName("Toss 확정 시간 초과 실패에서도 보상 의도 기록이 Redis 선점 해제보다 먼저 일어난다")
+    void 확정시간초과_보상의도가_Redis해제보다_먼저_기록된다() {
+        given(tossPaymentClient.confirmPayment(any(), anyString()))
+                .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT));
+
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+                .isInstanceOf(BusinessException.class);
+
+        InOrder order = inOrder(compensationService, productStockRedisRepository);
+        order.verify(compensationService).compensate(eq(payment.getId()), eq(paymentKey), eq(1000), anyString());
+        order.verify(productStockRedisRepository).release(eq(productId), eq(1));
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
+    }
 }
