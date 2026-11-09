@@ -74,20 +74,20 @@ class PaymentCompensationTransitionTest {
     }
 
     @Test
-    @DisplayName("deferWithoutCounting 은 상태·retryCount 를 그대로 두고 nextRetryAt 만 미룬다")
-    void deferWithoutCountingKeepsStatusAndRetryCount() {
+    @DisplayName("deferWithoutCounting 은 PROCESSING 에서 PENDING 으로 돌아가고 retryCount 는 그대로 두며 nextRetryAt 만 미룬다")
+    void deferWithoutCounting_PROCESSING에서_PENDING으로_돌아가고_nextRetryAt만_미룬다() {
         PaymentCompensation compensation = newCompensation(5);
-        compensation.markFailed("1회차 실패"); // FAILED, retryCount=1 인 상태에서 분류 재시도가 온 경우를 재현
+        compensation.markProcessing();
 
-        CompensationStatus statusBefore = compensation.getStatus();
         Integer retryCountBefore = compensation.getRetryCount();
         LocalDateTime deferredFrom = LocalDateTime.now();
 
         compensation.deferWithoutCounting(Duration.ofSeconds(45));
 
-        assertThat(compensation.getStatus()).isEqualTo(statusBefore);
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.PENDING);
         assertThat(compensation.getRetryCount()).isEqualTo(retryCountBefore);
         assertThat(compensation.getNextRetryAt()).isAfterOrEqualTo(deferredFrom.plusSeconds(45));
+        assertThat(compensation.getNextRetryAt()).isBeforeOrEqualTo(LocalDateTime.now().plusSeconds(45));
     }
 
     // ── T5: PROCESSING 전이 (다중 인스턴스 선점) ──
@@ -138,5 +138,57 @@ class PaymentCompensationTransitionTest {
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUCCEEDED);
+    }
+
+    // ── SUPERSEDED · NOT_APPROVED 종단 전이 ──
+
+    @Test
+    @DisplayName("PROCESSING 에서 SUPERSEDED 로 전이하면 nextRetryAt 을 비우고 사유를 남긴다")
+    void processingToSupersededClearsRetryAndKeepsReason() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        assertThatCode(() -> compensation.markSuperseded("r")).doesNotThrowAnyException();
+
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUPERSEDED);
+        assertThat(compensation.getNextRetryAt()).isNull();
+        assertThat(compensation.getLastError()).isEqualTo("r");
+    }
+
+    @Test
+    @DisplayName("PROCESSING 에서 NOT_APPROVED 로 전이할 수 있다")
+    void processingToNotApprovedIsAllowed() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        assertThatCode(() -> compensation.markNotApproved("r")).doesNotThrowAnyException();
+
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.NOT_APPROVED);
+    }
+
+    @Test
+    @DisplayName("SUPERSEDED 는 종단이라 성공으로 덮어쓸 수 없다")
+    void supersededRejectsSucceeded() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        compensation.markSuperseded("r");
+
+        assertThatThrownBy(compensation::markSucceeded)
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.SUPERSEDED);
+    }
+
+    @Test
+    @DisplayName("NOT_APPROVED 는 종단이라 성공으로 덮어쓸 수 없다")
+    void notApprovedRejectsSucceeded() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        compensation.markNotApproved("r");
+
+        assertThatThrownBy(compensation::markSucceeded)
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.NOT_APPROVED);
     }
 }
