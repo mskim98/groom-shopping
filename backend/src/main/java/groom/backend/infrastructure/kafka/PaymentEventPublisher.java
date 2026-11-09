@@ -4,9 +4,11 @@ import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,6 +22,11 @@ public class PaymentEventPublisher {
 
     private final PaymentOutboxRepository outboxRepository;
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate;
+
+    // send().get() 에 상한이 없으면 Kafka 장애 때 폴러가 영원히 멈추고 같은 스케줄러의 다른 작업도 밀린다
+    // producer 의 delivery.timeout(35초)보다 약간 길게 둔다 - 그보다 먼저 끊으면 발행은 성사됐는데 PENDING 으로 남아 중복 발행한다
+    @Value("${payment.outbox.send-timeout-ms:40000}")
+    private long sendTimeoutMs = 40000;
 
     private static final String TOPIC = "payment-events";
     private static final int BATCH_SIZE = 100;
@@ -43,7 +50,7 @@ public class PaymentEventPublisher {
                 record.headers().add("outbox-id", outbox.getId().toString().getBytes(StandardCharsets.UTF_8));
 
                 // 발행 결과를 확인(get)해 성공한 건만 PUBLISHED 로 전이
-                paymentEventKafkaTemplate.send(record).get();
+                paymentEventKafkaTemplate.send(record).get(sendTimeoutMs, TimeUnit.MILLISECONDS);
 
                 outbox.markPublished();
                 outboxRepository.save(outbox);

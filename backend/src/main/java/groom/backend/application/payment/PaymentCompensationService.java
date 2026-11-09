@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
@@ -191,7 +192,8 @@ public class PaymentCompensationService {
             }
             for (Future<?> f : futures) {
                 try {
-                    f.get();
+                    // 상한 없는 get() 금지 - 한 건 취소는 HTTP 읽기 한도(30초)로 끝나므로 그 몇 배면 충분하다
+                    f.get(2, TimeUnit.MINUTES);
                 } catch (Exception e) {
                     log.error("[PAYMENT_COMPENSATION_BATCH_ERROR] {}", e.getMessage());
                 }

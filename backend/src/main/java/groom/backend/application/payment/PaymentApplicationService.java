@@ -91,11 +91,13 @@ public class PaymentApplicationService {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
         // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
-        var existing = paymentRepository.findByPaymentKey(paymentKey);
-        if (existing.isPresent() && existing.get().isAlreadyApproved()) {
+        Payment approved = paymentRepository.findByPaymentKey(paymentKey)
+                .filter(Payment::isAlreadyApproved)
+                .orElse(null);
+        if (approved != null) {
             log.info("[PAYMENT_IDEMPOTENT_HIT] Already approved - PaymentKey: {}, Status: {}",
-                    paymentKey, existing.get().getStatus());
-            return existing.get();
+                    paymentKey, approved.getStatus());
+            return approved;
         }
 
         // 결제 조회
