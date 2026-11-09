@@ -3,10 +3,12 @@ package groom.backend.interfaces.payment.persistence;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentRepository;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 
 // @Repository : 영속성 계층 빈. 도메인의 PaymentRepository 인터페이스를 JPA로 '구현'한 어댑터.
@@ -55,9 +57,8 @@ public class PaymentRepositoryImpl implements PaymentRepository {
     }
 
     @Override
-    public List<Payment> findStaleReady(java.time.LocalDateTime cutoff, int limit) {
-        return springDataPaymentRepository.findStaleByStatus(PaymentStatus.READY, cutoff,
-                org.springframework.data.domain.PageRequest.of(0, limit));
+    public List<Payment> findStaleReady(LocalDateTime cutoff, int limit) {
+        return springDataPaymentRepository.findStaleByStatus(PaymentStatus.READY, cutoff, PageRequest.of(0, limit));
     }
 
     @Override

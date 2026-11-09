@@ -2,9 +2,11 @@ package groom.backend.interfaces.payment.persistence;
 
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,8 +21,8 @@ public interface SpringDataPaymentRepository extends JpaRepository<Payment, UUID
 
     // status 인덱스(idx_payment_status)로 READY 행만 읽고 updated_at 으로 거른다 - READY 는 평소 거의 없다
     @Query("SELECT p FROM Payment p WHERE p.status = :status AND p.updatedAt < :cutoff ORDER BY p.updatedAt ASC")
-    List<Payment> findStaleByStatus(@Param("status") PaymentStatus status, @Param("cutoff") java.time.LocalDateTime cutoff,
-            org.springframework.data.domain.Pageable pageable);
+    List<Payment> findStaleByStatus(@Param("status") PaymentStatus status, @Param("cutoff") LocalDateTime cutoff,
+            Pageable pageable);
 
     List<Payment> findByUserId(Long userId);
 
