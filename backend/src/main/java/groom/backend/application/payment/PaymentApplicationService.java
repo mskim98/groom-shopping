@@ -2,6 +2,7 @@ package groom.backend.application.payment;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.payment.event.PaymentCompletedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
@@ -263,6 +264,13 @@ public class PaymentApplicationService {
         }
     }
 
+    // 주문 항목을 장바구니에서 뺄 평범한 값으로 바꾼다. 트랜잭션 안에서 불러야 한다(order 의 지연 로딩 컬렉션을 읽는다)
+    private List<CartApplicationService.CartItemToRemove> cartItemsOf(Order order) {
+        return order.getOrderItems().stream()
+                .map(item -> new CartApplicationService.CartItemToRemove(item.getProductId(), item.getQuantity()))
+                .toList();
+    }
+
     // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림·장바구니 비우기를 남기지 않게 한다.
     // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
     private void runAfterCommit(String name, Runnable task) {
@@ -346,11 +354,15 @@ public class PaymentApplicationService {
 
         // 성공 로그 · 알림 · 장바구니 비우기는 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한
         // 200건에도 성공 로그와 장바구니 비우기가 나가 사용자 장바구니만 비워진다
+        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 비울 항목)을 지금 평범한 값으로 만들어 넘긴다.
+        // order 엔티티를 넘기면 지연 로딩 필드를 읽는 순간 LazyInitializationException 이다
         UUID paymentId = payment.getId();
+        Long orderUserId = order.getUserId();
+        List<CartApplicationService.CartItemToRemove> cartItems = cartItemsOf(order);
         runAfterCommit("PAYMENT_CONFIRM_SUCCESS", () -> {
             log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}", paymentId, orderId);
-            paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
-            paymentNotificationService.clearCartItems(order);
+            paymentNotificationService.sendStockReducedNotifications(stockReductions, orderUserId);
+            paymentNotificationService.clearCartItems(orderUserId, orderId, cartItems);
         });
 
         return payment;
@@ -440,10 +452,10 @@ public class PaymentApplicationService {
         // 비동기로 알림 처리 (응답 시간에 영향 없음)
         // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
         // 주문한 사용자는 알림에서 제외
-        paymentNotificationService.sendStockReducedNotifications(stockReductions, order);
+        paymentNotificationService.sendStockReducedNotifications(stockReductions, order.getUserId());
 
         // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
-        paymentNotificationService.clearCartItems(order);
+        paymentNotificationService.clearCartItems(order.getUserId(), orderId, cartItemsOf(order));
 
         return payment;
     }

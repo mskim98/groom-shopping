@@ -3,8 +3,6 @@ package groom.backend.application.payment;
 import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.cart.CartApplicationService.CartItemToRemove;
 import groom.backend.application.notification.NotificationApplicationService;
-import groom.backend.domain.order.model.Order;
-import groom.backend.domain.order.model.OrderItem;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,11 +48,11 @@ public class PaymentNotificationService {
      * 재고 차감된 상품에 대한 알림을 비동기로 처리 - notificationExecutor 스레드풀에서 실행 - 팀원이 만든 알림 메서드는 내부적으로 트랜잭션 처리
      *
      * @param stockReductions 재고 차감 결과 목록 (제품 ID와 차감 후 재고량 포함)
-     * @param order 주문 정보 (주문한 사용자 제외를 위해 필요)
+     * @param orderUserId 주문한 사용자 id (알림에서 제외). 엔티티 대신 값으로 받는다 - 이 메서드는 트랜잭션이 끝난 뒤 다른
+     *                    스레드에서 돌고 open-in-view 도 꺼져 있어, Order 의 지연 로딩 필드를 읽으면 LazyInitializationException 이다
      */
     @Async("notificationExecutor")
-    public void sendStockReducedNotifications(List<StockReductionResult> stockReductions, Order order) {
-        Long orderUserId = order != null ? order.getUserId() : null;
+    public void sendStockReducedNotifications(List<StockReductionResult> stockReductions, Long orderUserId) {
         log.info("[NOTIFICATION_ASYNC_START] Sending stock reduced notifications - Count: {}, orderUserId={}", 
                 stockReductions.size(), orderUserId);
 
@@ -88,40 +86,31 @@ public class PaymentNotificationService {
     }
 
     /**
-     * 결제 완료 후 장바구니를 비동기로 비우는 메서드 - notificationExecutor 스레드풀에서 실행 - 장바구니 비우기가 실패해도 결제 응답에 영향 없음 - Order의 OrderItem들을
-     * 기반으로 장바구니에서 해당 상품들을 제거
+     * 결제 완료 후 장바구니를 비동기로 비우는 메서드 - notificationExecutor 스레드풀에서 실행 - 장바구니 비우기가 실패해도 결제 응답에 영향 없음
+     * 주문 항목을 기반으로 장바구니에서 해당 상품들을 제거한다
      *
-     * @param order 결제 완료된 주문
+     * @param userId 주문한 사용자 id
+     * @param orderId 결제 완료된 주문 id (로그용)
+     * @param itemsToRemove 비울 상품·수량. 호출자가 트랜잭션 안에서 만든 값이라 이 스레드에서 엔티티를 읽지 않는다
      */
     @Async("notificationExecutor")
-    public void clearCartItems(Order order) {
-        Long userId = order.getUserId();
-        List<OrderItem> orderItems = order.getOrderItems();
-
+    public void clearCartItems(Long userId, UUID orderId, List<CartItemToRemove> itemsToRemove) {
         log.info("[CART_CLEAR_ASYNC_START] Clearing cart items - UserId: {}, OrderId: {}, ItemCount: {}",
-                userId, order.getId(), orderItems.size());
+                userId, orderId, itemsToRemove.size());
 
         try {
-            // OrderItem을 CartItemToRemove로 변환
-            List<CartItemToRemove> itemsToRemove = orderItems.stream()
-                    .map(orderItem -> new CartItemToRemove(
-                            orderItem.getProductId(),
-                            orderItem.getQuantity()
-                    ))
-                    .collect(Collectors.toList());
-
             // 장바구니에서 제거
             cartApplicationService.removeCartItems(userId, itemsToRemove);
 
             log.info(
                     "[CART_CLEAR_ASYNC_SUCCESS] Cart items cleared successfully - UserId: {}, OrderId: {}, ItemCount: {}",
-                    userId, order.getId(), itemsToRemove.size());
+                    userId, orderId, itemsToRemove.size());
 
         } catch (Exception e) {
             // 장바구니 비우기 실패는 로그만 남기고 예외를 전파하지 않음
             // 결제는 이미 성공했으므로 장바구니 비우기 실패가 영향을 주면 안됨
             log.error("[CART_CLEAR_ASYNC_FAILED] Failed to clear cart items - UserId: {}, OrderId: {}, Error: {}",
-                    userId, order.getId(), e.getMessage(), e);
+                    userId, orderId, e.getMessage(), e);
         }
     }
 }
