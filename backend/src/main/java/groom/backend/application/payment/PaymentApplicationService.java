@@ -428,7 +428,8 @@ public class PaymentApplicationService {
     // 선점한 Redis 재고를 복원한다 (결제 실패·보상 시 Redis-DB 정합 유지).
     // 항목마다 실패를 삼키고 로그만 남긴다 - Redis 장애가 보상 의도 기록·FAILED 기록·원래 예외 전파를 막으면 안 된다.
     // 복원 못 한 선점분은 StockReconciliationJob 이 DB 재고 기준으로 되맞춘다
-    private void releaseStock(List<PaymentApprovedEvent.ReservedItem> items) {
+    // 대사(PaymentReadyReconciler)도 같은 복원을 쓴다
+    void releaseStock(List<PaymentApprovedEvent.ReservedItem> items) {
         for (PaymentApprovedEvent.ReservedItem item : items) {
             try {
                 productStockRedisRepository.release(item.productId(), item.quantity());

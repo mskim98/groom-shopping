@@ -1,5 +1,6 @@
 package groom.backend.application.payment;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentOutbox;
@@ -32,6 +33,7 @@ public class PaymentReadyReconciler {
     private final PaymentCompensationRepository paymentCompensationRepository;
     private final PaymentCompensationService paymentCompensationService;
     private final PaymentApplicationService paymentApplicationService;
+    private final ObjectMapper objectMapper;
 
     // 이만큼 READY 로 머문 결제만 본다. 확정 대기 상한(10초)보다 훨씬 길어야 대기 중인 요청의 결제를 건드리지 않는다
     @Value("${payment.reconcile.stale-after-ms:300000}")
@@ -39,13 +41,14 @@ public class PaymentReadyReconciler {
     @Value("${payment.reconcile.max-republish:2}")
     private int maxRepublish = 2;
 
-    @Scheduled(fixedDelayString = "${payment.reconcile.delay-ms:60000}")
+    // initialDelay 도 주기와 같게 둔다 - 기동 직후 첫 회차가 다른 곳(다른 인스턴스 · 시험 컨텍스트)이 남긴 오래된 행을 바로 처리하지 않게 한다
+    @Scheduled(fixedDelayString = "${payment.reconcile.delay-ms:60000}", initialDelayString = "${payment.reconcile.delay-ms:60000}")
     public void reconcileStaleReady() {
         LocalDateTime cutoff = LocalDateTime.now().minusNanos(staleAfterMs * 1_000_000);
         List<Payment> stale = paymentRepository.findStaleReady(cutoff, BATCH_SIZE);
         for (Payment payment : stale) {
             try {
-                reconcile(payment);
+                reconcile(payment, cutoff);
             } catch (Exception e) {
                 // 한 건의 실패가 나머지 대사를 막지 않는다. 다음 회차에 다시 본다
                 log.error("[PAYMENT_READY_RECONCILE] 대사 실패(다음 회차에 재시도) - PaymentId: {}, Error: {}",
@@ -54,7 +57,7 @@ public class PaymentReadyReconciler {
         }
     }
 
-    private void reconcile(Payment payment) {
+    private void reconcile(Payment payment, LocalDateTime cutoff) {
         // ① 보상 행이 있다 - 환불은 보상 배치 몫이다. 결제가 READY 로 남은 표시 누락만 바로잡는다
         if (paymentCompensationRepository.findByPaymentId(payment.getId()).isPresent()) {
             log.warn("[PAYMENT_READY_RECONCILE] branch=COMPENSATION_EXISTS, FAILED 표시만 복구 - PaymentId: {}", payment.getId());
@@ -72,6 +75,14 @@ public class PaymentReadyReconciler {
             return;
         }
 
+        // ③④ 는 outbox 가 stale 기준보다 오래전에 발행됐을 때만 한다. Payment.updated_at 은 재발행해도 바뀌지 않아 이 가드가 없으면
+        // 결제가 stale 이 된 뒤 회차(60초)마다 ③④ 가 이어져 컨슈머가 몇 분만 멈춰도 환불로 끝난다. 재발행 사이 간격 = stale 기준이다
+        if (outbox.isPresent() && outbox.get().getPublishedAt() != null && outbox.get().getPublishedAt().isAfter(cutoff)) {
+            log.info("[PAYMENT_READY_RECONCILE] branch=RECENTLY_PUBLISHED, 다음 회차까지 대기 - PaymentId: {}, PublishedAt: {}",
+                    payment.getId(), outbox.get().getPublishedAt());
+            return;
+        }
+
         // ③ 발행은 됐는데 후처리가 안 끝났다 - 상한까지 다시 내보낸다(컨슈머는 Payment 상태로 멱등)
         if (outbox.isPresent() && outbox.get().getRepublishCount() < maxRepublish) {
             PaymentOutbox row = outbox.get();
@@ -85,9 +96,29 @@ public class PaymentReadyReconciler {
         // ④ 재발행 상한에 닿았거나 outbox 행이 없다 - Toss 승인은 됐는데 후처리가 영영 안 끝난다. 환불 의도를 남기고 FAILED 로 닫는다
         log.error("[PAYMENT_READY_RECONCILE] branch=COMPENSATE, 후처리 미완료로 환불 의도 기록 - PaymentId: {}, OutboxExists: {}",
                 payment.getId(), outbox.isPresent());
+        // 순서: ① 보상 의도 기록(돈이 걸린 일) → ② Redis 선점 복원 → ③ FAILED 기록 (다른 실패 경로와 같다)
         paymentCompensationService.compensate(payment.getId(), payment.getPaymentKeyValue(), payment.getAmountValue(),
                 "대사: 후처리 미완료(READY 로 " + staleAfterMs + "ms 이상 머묾)");
+        releaseReservation(payment, outbox);
         paymentApplicationService.markPaymentFailed(payment.getId(), FAILURE_CODE,
                 "대사: 후처리 미완료로 환불 처리");
+    }
+
+    // confirmPayment 가 선점한 Redis 재고를 outbox payload 의 reservedItems 로 되돌린다. 복원하지 않으면 대사로 닫은 결제마다
+    // Redis 관문 재고만 영구히 줄어든다(DB 재고는 차감된 적이 없다). 실패는 환불 의도 기록과 FAILED 를 막지 않게 삼키고 로그만 남긴다
+    private void releaseReservation(Payment payment, Optional<PaymentOutbox> outbox) {
+        if (outbox.isEmpty()) {
+            log.warn("[PAYMENT_READY_RECONCILE] no outbox row → Redis reservation unknown - PaymentId: {}", payment.getId());
+            return;
+        }
+        try {
+            PaymentApprovedEvent event = objectMapper.readValue(outbox.get().getPayload(), PaymentApprovedEvent.class);
+            if (event.reservedItems() != null) {
+                paymentApplicationService.releaseStock(event.reservedItems());
+            }
+        } catch (Exception e) {
+            log.error("[PAYMENT_READY_RECONCILE] Redis 선점 복원 실패(StockReconciliationJob 이 되맞춰야 함) - PaymentId: {}, Error: {}",
+                    payment.getId(), e.getMessage(), e);
+        }
     }
 }
