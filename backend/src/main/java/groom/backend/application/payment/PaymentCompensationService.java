@@ -61,7 +61,6 @@ public class PaymentCompensationService {
     // 회차 지표 - 게이지가 가리키는 값. 게이지는 이 AtomicLong 을 읽으므로 @PostConstruct 등록 여부와 무관하게 갱신된다
     private final AtomicLong dueGauge = new AtomicLong(0);      // 회차 시작 시점의 재시도 대기 전체 수
     private final AtomicLong carriedGauge = new AtomicLong(0);  // due - processed. 한 페이지로 못 비운 적재
-    private final AtomicLong givenUpTotal = new AtomicLong(0);  // 재시도 한도 초과로 최종 포기한 누적 수
 
     /**
      * 기동 시 배치 설정을 검증한다. 어긋나면 기동을 실패시켜 잘못된 값으로 배치가 도는 것을 막는다.
@@ -83,14 +82,20 @@ public class PaymentCompensationService {
                 .description("회차 시작 시점의 재시도 대기 전체 수").register(meterRegistry);
         Gauge.builder("payment_compensation_carried", carriedGauge, AtomicLong::get)
                 .description("carried = due - processed. 한 페이지로 못 비운 적재").register(meterRegistry);
-        Gauge.builder("payment_compensation_given_up_total", givenUpTotal, AtomicLong::get)
-                .description("재시도 한도 초과로 최종 포기(GIVEN_UP)한 누적 수").register(meterRegistry);
+        // 메모리 누적이 아니라 DB 의 GIVEN_UP 행 수를 읽는다 - 재기동·다중 인스턴스에서도 GIVEN_UP 행이 진실이다
+        Gauge.builder("payment_compensation_given_up_total", compensationRepository,
+                        repo -> repo.countByStatus(CompensationStatus.GIVEN_UP))
+                .description("최종 포기(GIVEN_UP)한 보상 행 수(DB 카운트)").register(meterRegistry);
     }
 
     // 토스가 살아 있다는 신호(429·403·409)를 받았을 때 다음 시도까지 미루는 시간
     // retry-delay-ms(스케줄러 주기, 기본 30초)보다 길게 잡아 같은 회차 안에서 바로 재충돌하지 않게 한다
     @Value("${payment.compensation.retry-later-defer-ms:45000}")
     private long retryLaterDeferMs;
+
+    // 유예(429·403·409)가 이어져도 생성 후 이 시간이 지나면 더 기다리지 않고 GIVEN_UP 으로 끝낸다
+    @Value("${payment.compensation.defer-max-age-minutes:60}")
+    private long deferMaxAgeMinutes = 60;
 
     // 배치 주기와 값을 맞춘다(@Scheduled 의 fixedDelayString 과 동일한 프로퍼티·기본값)
     // 죽은 인스턴스 회수 기준(staleThreshold)이 이 값의 3배이므로 항상 같은 값을 참조해야 한다
@@ -248,6 +253,12 @@ public class PaymentCompensationService {
         return selfProvider.getObject().recordResult(compensation, failure);
     }
 
+    // ±20% 지터 - 같은 순간 유예된 행들이 같은 시각에 한꺼번에 돌아와 Toss 의 429 를 다시 맞는 일을 흩는다
+    private static Duration jittered(Duration base) {
+        double factor = 0.8 + java.util.concurrent.ThreadLocalRandom.current().nextDouble() * 0.4;
+        return Duration.ofMillis((long) (base.toMillis() * factor));
+    }
+
     /**
      * 기록 단계 - 호출 결과를 장부에 독립 커밋한다. {@code failure} 가 null 이면 성공
      */
@@ -276,7 +287,17 @@ public class PaymentCompensationService {
 
         // 토스가 살아 있다는 신호 - retryCount 는 올리지 않고 다음 시각만 미룬다. 성공은 아니므로 false
         if (failure instanceof TossRetryLaterException) {
-            compensation.deferWithoutCounting(Duration.ofMillis(retryLaterDeferMs));
+            // 유예 상한 - 429 가 계속되는 행이 영원히 PENDING 에 남지 않게 생성 후 60분에서 끝낸다
+            if (compensation.getCreatedAt() != null
+                    && compensation.getCreatedAt().plusMinutes(deferMaxAgeMinutes).isBefore(LocalDateTime.now())) {
+                String reason = "유예 상한(생성 후 " + deferMaxAgeMinutes + "분) 초과: " + failure.getMessage();
+                compensation.markGivenUp(reason);
+                compensationRepository.save(compensation);
+                log.error("[PAYMENT_COMPENSATION_DEFER_CAP] PaymentKey: {}, CreatedAt: {} - GIVEN_UP",
+                        compensation.getPaymentKey(), compensation.getCreatedAt());
+                return false;
+            }
+            compensation.deferWithoutCounting(jittered(Duration.ofMillis(retryLaterDeferMs)));
             compensationRepository.save(compensation);
 
             log.warn("[PAYMENT_COMPENSATION_RETRY_LATER] PaymentKey: {}, NextRetryAt: {}",
@@ -293,7 +314,6 @@ public class PaymentCompensationService {
 
         // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
         if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
-            givenUpTotal.incrementAndGet();
             dlqProducer.publish(new PaymentCompensationDlqEvent(
                     compensation.getId(),
                     compensation.getPaymentId(),

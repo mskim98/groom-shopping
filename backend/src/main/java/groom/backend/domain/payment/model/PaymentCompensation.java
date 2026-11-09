@@ -98,8 +98,11 @@ public class PaymentCompensation {
             CompensationStatus.FAILED, EnumSet.of(
                     CompensationStatus.PROCESSING, CompensationStatus.SUCCEEDED,
                     CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+            // PENDING 은 유예(429·403·409)로 되돌아오는 길이다 - PROCESSING 에 남기면 선점 SQL 이 next_retry_at 을 못 보고
+            // updated_at 90초 경과 회수만 기다린다
             CompensationStatus.PROCESSING, EnumSet.of(
-                    CompensationStatus.SUCCEEDED, CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+                    CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
             CompensationStatus.SUCCEEDED, EnumSet.noneOf(CompensationStatus.class),
             CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class));
 
@@ -145,9 +148,17 @@ public class PaymentCompensation {
 
     /**
      * 토스가 살아 있다는 신호(429·403·409 응답 분류)로 재시도 대기가 필요할 때 호출한다
-     * 상태·retryCount 는 그대로 두고 nextRetryAt 만 미룬다 - 실패로 세지 않기 위해 전이표를 거치지 않는다
+     * retryCount 는 올리지 않고(실패로 세지 않는다) 상태를 PENDING 으로 되돌리며 nextRetryAt 을 deferBy 뒤로 미룬다
      */
     public void deferWithoutCounting(Duration deferBy) {
+        transitionTo(CompensationStatus.PENDING);
         this.nextRetryAt = LocalDateTime.now().plus(deferBy);
+    }
+
+    /** 유예가 상한(생성 후 60분)을 넘어 더는 기다리지 않고 수동 처리 대상으로 넘긴다 */
+    public void markGivenUp(String errorMessage) {
+        transitionTo(CompensationStatus.GIVEN_UP);
+        this.lastError = errorMessage;
+        this.nextRetryAt = null;
     }
 }
