@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentOutbox;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.domain.payment.repository.PaymentRepository;
@@ -109,6 +110,13 @@ public class PaymentReadyReconciler {
     private void releaseReservation(Payment payment, Optional<PaymentOutbox> outbox) {
         if (outbox.isEmpty()) {
             log.warn("[PAYMENT_READY_RECONCILE] no outbox row → Redis reservation unknown - PaymentId: {}", payment.getId());
+            return;
+        }
+        // findStaleReady 뒤 컨슈머가 같은 결제를 DONE 으로 끝냈을 수 있다 - 그 결제는 DB 재고가 이미 차감돼 선점분을 돌려주면
+        // Redis 관문 재고만 실제보다 커진다. 복원 직전 상태를 다시 읽어 READY 가 아니면 건드리지 않는다(보상은 SUPERSEDED 로 끝난다)
+        PaymentStatus current = paymentRepository.findById(payment.getId()).map(Payment::getStatus).orElse(null);
+        if (current != PaymentStatus.READY) {
+            log.info("[PAYMENT_READY_RECONCILE] 복원 생략, 결제가 더는 READY 가 아님 - PaymentId: {}, Status: {}", payment.getId(), current);
             return;
         }
         try {
