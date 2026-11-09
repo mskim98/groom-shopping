@@ -173,6 +173,10 @@ public class TossPaymentClientImpl implements TossPaymentClient {
                 throw new TossRetryLaterException(
                         "Toss 취소 응답이 재시도 대기를 지시함 - status: " + status + ", code: " + tossErrorCode);
             }
+            if (status == 404) {
+                log.info("[TOSS_API_NOT_FOUND] Cancel target not approved - PaymentKey: {}, Code: {}", paymentKey, tossErrorCode);
+                throw new TossPaymentNotFoundException("Toss 에 승인된 결제가 없음 - PaymentKey: " + paymentKey);
+            }
             if (status == 400 && "ALREADY_CANCELED_PAYMENT".equals(tossErrorCode)) {
                 log.info("[TOSS_API_ALREADY_CANCELED] Cancel already applied - PaymentKey: {}", paymentKey);
                 throw new TossAlreadyCanceledException(
@@ -201,7 +205,8 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     // 취소 회로 fallback. 보상 서비스의 catch 가 이 예외를 받아 실패로 기록하고 백오프 재시도한다
     private TossPaymentResponse cancelPaymentFallback(
             String paymentKey, String cancelReason, String idempotencyKey, Throwable t) {
-        if (t instanceof TossRetryLaterException || t instanceof TossAlreadyCanceledException) {
+        if (t instanceof TossRetryLaterException || t instanceof TossAlreadyCanceledException
+                || t instanceof TossPaymentNotFoundException) {
             // 분류된 예외는 그대로 보상 서비스에 넘긴다 - PAYMENT_PG_FAILURE 로 뭉개면
             // 재시도 대기와 이미 취소된 결제를 구별할 수 없다
             throw (RuntimeException) t;

@@ -235,6 +235,7 @@ resilience4j:
         ignore-exceptions:
           - groom.backend.infrastructure.payment.TossRetryLaterException
           - groom.backend.infrastructure.payment.TossAlreadyCanceledException
+          - groom.backend.infrastructure.payment.TossPaymentNotFoundException
   retry:
     instances:
       toss:

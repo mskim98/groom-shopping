@@ -12,6 +12,7 @@ import groom.backend.domain.payment.repository.PaymentRepository;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
+import groom.backend.infrastructure.payment.TossPaymentNotFoundException;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -309,6 +310,15 @@ public class PaymentCompensationService {
             log.info("[PAYMENT_COMPENSATION_SUCCESS] PaymentKey: {}, RetryCount: {}",
                     compensation.getPaymentKey(), compensation.getRetryCount());
             return true;
+        }
+
+        // 토스에 승인된 결제가 없다 - 시간 초과로 보상을 걸어 둔 확정이 실제로는 승인되지 않은 경우. 재시도·DLQ 없이 끝낸다
+        if (failure instanceof TossPaymentNotFoundException) {
+            compensation.markNotApproved(failure.getMessage());
+            compensationRepository.save(compensation);
+
+            log.info("[PAYMENT_COMPENSATION_NOT_APPROVED] PaymentKey: {}", compensation.getPaymentKey());
+            return false;
         }
 
         // 토스가 이미 목적을 달성한 응답 - 실패가 아니라 성공으로 기록한다
