@@ -325,8 +325,9 @@ public class Payment {
     public void fail(String failureCode, String failureMessage) {
         PaymentStateTransition.validate(this.status, PaymentStatus.FAILED);
         this.status = PaymentStatus.FAILED;
-        this.failureCode = failureCode;
-        this.failureMessage = failureMessage;
+        // 컬럼 길이(code 100 · message 255) 초과 시 value too long 으로 FAILED 기록이 통째로 실패해 PENDING 이 남는다
+        this.failureCode = TextLimit.clip(failureCode, 100);
+        this.failureMessage = TextLimit.clip(failureMessage, 255);
     }
 
     // 비즈니스 로직: 결제 만료 처리

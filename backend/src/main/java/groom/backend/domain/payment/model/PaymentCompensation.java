@@ -78,7 +78,8 @@ public class PaymentCompensation {
         this.paymentId = paymentId;
         this.paymentKey = paymentKey;
         this.amount = amount;
-        this.reason = reason;
+        // reason 컬럼 500자 - 실패 원인 문구는 길이를 보장할 수 없어 잘라 저장한다
+        this.reason = TextLimit.clip(reason, 500);
         this.status = CompensationStatus.PENDING;
         this.retryCount = 0;
         this.maxRetryCount = maxRetryCount != null ? maxRetryCount : 5;
