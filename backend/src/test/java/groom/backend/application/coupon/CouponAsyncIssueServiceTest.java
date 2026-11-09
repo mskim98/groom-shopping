@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -35,6 +36,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.redisson.api.RedissonClient;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
@@ -211,6 +215,26 @@ class CouponAsyncIssueServiceTest {
         파이프라인_실행();
         verify(valueOps).set(eq("coupon:issue:status:req-1"), eq("SUCCESS"), any(Duration.class));
         verify(valueOps).set(eq("coupon:issue:status:req-2"), eq("SUCCESS"), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("확정된 사용자의 내 쿠폰 목록 캐시를 비운다")
+    void processBatch_확정된_사용자의_목록_캐시를_비운다() {
+        CacheManager cacheManager = mock(CacheManager.class);
+        Cache cache = mock(Cache.class);
+        given(cacheManager.getCache("user-coupons-list-cache")).willReturn(cache);
+        ReflectionTestUtils.setField(service, "couponCacheManager", cacheManager);
+        given(couponRepository.findById(1L)).willReturn(Optional.of(유효한_쿠폰()));
+        // 두 번째 요청은 진짜 중복이라 행이 없다 - 비울 이유가 없다
+        given(couponIssueBatchWriter.insertAll(eq(1L), any(), anyMap())).willReturn(Set.of("req-1"));
+
+        service.processBatch(List.of(
+                new CouponIssueRequestEvent("req-1", 1L, 100L, true),
+                new CouponIssueRequestEvent("req-2", 1L, 200L, true)));
+
+        // searchMyCoupon 은 userId 키로 캐시된다. 비우지 않으면 방금 발급한 쿠폰이 목록에 5분간 보이지 않는다
+        verify(cache).evict(100L);
+        verify(cache, never()).evict(200L);
     }
 
     @Test
