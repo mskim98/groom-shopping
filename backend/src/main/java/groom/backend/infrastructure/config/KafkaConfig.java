@@ -20,6 +20,7 @@ import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import groom.backend.application.payment.event.PaymentEventParseException;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
@@ -326,7 +327,10 @@ public class KafkaConfig {
                 paymentEventKafkaTemplate(),
                 // partition -1 → 브로커가 파티션을 배정
                 (record, ex) -> new TopicPartition("payment-events-dlq", -1));
-        factory.setCommonErrorHandler(new DefaultErrorHandler(recoverer, backOff));
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        // payload 파싱 실패는 다시 읽어도 같으므로 백오프(약 31초)로 파티션을 막지 않고 첫 실패에서 곧장 DLQ 로 보낸다
+        errorHandler.addNotRetryableExceptions(PaymentEventParseException.class);
+        factory.setCommonErrorHandler(errorHandler);
         return factory;
     }
 
