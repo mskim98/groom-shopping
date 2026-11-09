@@ -99,13 +99,13 @@ class PaymentConfirmExceptionPropagationTest {
     }
 
     @Test
-    @DisplayName("DB 후처리가 BusinessException 이면 errorCode 를 잃지 않고 그대로 전파한다")
-    void dbPostProcessBusinessExceptionIsRethrownAsIs() {
+    @DisplayName("READY 전이·Outbox 적재가 BusinessException 이면 errorCode 를 잃지 않고 그대로 전파한다")
+    void recordApprovedBusinessExceptionIsRethrownAsIs() {
         PaymentApplicationService proxy = stubHappyPathUntilDbStep();
         TossPaymentResponse response = mock(TossPaymentResponse.class);
         given(response.getPaymentKey()).willReturn("pk-1");
         given(tossPaymentClient.confirmPayment(any(), eq("pk-1"))).willReturn(response);
-        given(proxy.applyApprovedPaymentInTx(orderId, response))
+        given(proxy.recordApprovedInTx(eq(paymentId), eq(response), any()))
                 .willThrow(new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT));
 
         assertThatThrownBy(() -> service.confirmPayment("pk-1", orderId, 1000))
@@ -128,13 +128,13 @@ class PaymentConfirmExceptionPropagationTest {
     }
 
     @Test
-    @DisplayName("BusinessException 이 아닌 실패는 기존대로 RuntimeException 으로 감싼다")
-    void nonBusinessExceptionKeepsWrapping() {
+    @DisplayName("READY 전이·Outbox 적재가 BusinessException 이 아닌 예외면 기존대로 RuntimeException 으로 감싼다")
+    void nonBusinessRecordApprovedExceptionKeepsWrapping() {
         PaymentApplicationService proxy = stubHappyPathUntilDbStep();
         TossPaymentResponse response = mock(TossPaymentResponse.class);
         given(response.getPaymentKey()).willReturn("pk-1");
         given(tossPaymentClient.confirmPayment(any(), eq("pk-1"))).willReturn(response);
-        given(proxy.applyApprovedPaymentInTx(orderId, response))
+        given(proxy.recordApprovedInTx(eq(paymentId), eq(response), any()))
                 .willThrow(new IllegalStateException("티켓 발급 실패"));
 
         assertThatThrownBy(() -> service.confirmPayment("pk-1", orderId, 1000))
