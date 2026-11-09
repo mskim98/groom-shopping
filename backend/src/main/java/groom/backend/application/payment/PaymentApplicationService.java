@@ -126,7 +126,7 @@ public class PaymentApplicationService {
             // Toss 승인 자체가 실패 → 외부 승인 없음. 선점한 Redis 재고를 복원하고 DB 상태만 FAILED로 기록.
             releaseStock(reservedItems);
             // 프록시 경유 호출이라야 REQUIRES_NEW 가 적용되어 독립 커밋된다.
-            selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage());
+            selfProvider.getObject().markPaymentFailed(payment.getId(), "TOSS_CONFIRM_FAILED", e.getMessage(), paymentKey);
             // 도메인 예외는 재포장하지 않는다 - 감싸는 순간 errorCode 가 소실돼 전역 핸들러의 catch-all(500)로 떨어진다
             if (e instanceof BusinessException businessException) {
                 throw businessException;
@@ -290,10 +290,18 @@ public class PaymentApplicationService {
     //    호출하므로 REQUIRES_NEW 가 정상 적용된다(독립 커밋 보장).
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPaymentFailed(UUID paymentId, String code, String message) {
+        markPaymentFailed(paymentId, code, message, null);
+    }
+
+    // paymentKey : Toss 승인 실패 행에도 키를 남겨 PG 콘솔·보상 행과 대조할 수 있게 한다(PENDING 행은 키가 비어 있다)
+    // 같은 클래스 안 호출이라 프록시를 안 거치지만 이미 REQUIRES_NEW 트랜잭션 안이라 상관없다
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markPaymentFailed(UUID paymentId, String code, String message, String paymentKey) {
         paymentRepository.findById(paymentId).ifPresent(p -> {
             if (p.getStatus() != PaymentStatus.DONE) {
                 try {
                     p.fail(code, message);
+                    p.attachPaymentKeyIfAbsent(paymentKey);
                     paymentRepository.save(p);
                 } catch (IllegalStateException ignored) {
                     // 이미 종료 상태면 더 이상 전이하지 않음 (State Machine이 차단).

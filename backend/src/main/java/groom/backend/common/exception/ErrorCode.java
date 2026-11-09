@@ -146,6 +146,10 @@ public enum ErrorCode {
     PAYMENT_TEMPORARILY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "결제 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."),
     /** PG(Toss) 호출 실패 (timeout·5xx 등) */
     PAYMENT_PG_FAILURE(HttpStatus.BAD_GATEWAY, "결제 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."),
+    /** PG(Toss) 응답 시간 초과 - 승인 여부를 알 수 없어 보상 대상일 수 있다 */
+    PAYMENT_PG_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "결제 서버의 응답이 늦어 처리하지 못했습니다. 결제 내역을 확인한 뒤 다시 시도해주세요."),
+    /** PG(Toss) 가 4xx 로 승인을 거절 (카드 거절·잔액 부족 등) - 재시도해도 같은 결과 */
+    PAYMENT_PG_REJECTED(HttpStatus.UNPROCESSABLE_ENTITY, "결제가 거절되었습니다. 결제 수단을 확인해주세요."),
 
     /** 보상 레코드가 종단 상태(SUCCEEDED·GIVEN_UP)에서 다시 전이되려 함 */
     PAYMENT_COMPENSATION_ILLEGAL_TRANSITION(HttpStatus.CONFLICT, "허용되지 않은 보상 상태 전이입니다."),

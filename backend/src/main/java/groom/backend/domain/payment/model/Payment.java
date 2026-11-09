@@ -330,6 +330,13 @@ public class Payment {
         this.failureMessage = TextLimit.clip(failureMessage, 255);
     }
 
+    // 승인 전에 실패한 결제에도 Toss paymentKey 를 남긴다 - 이미 키가 있으면(READY 이후) 바꾸지 않는다
+    public void attachPaymentKeyIfAbsent(String paymentKey) {
+        if (this.paymentKey == null && paymentKey != null && !paymentKey.isBlank()) {
+            this.paymentKey = PaymentKey.of(paymentKey);
+        }
+    }
+
     // 비즈니스 로직: 결제 만료 처리
     public void expire() {
         PaymentStateTransition.validate(this.status, PaymentStatus.EXPIRED);
