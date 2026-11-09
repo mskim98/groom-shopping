@@ -1,6 +1,8 @@
 package groom.backend.application.payment;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.domain.order.model.Order;
 import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.order.model.enums.OrderStatus;
@@ -11,7 +13,10 @@ import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -83,6 +88,22 @@ final class PaymentFixture {
         }
     }
 
+    /** 컨슈머가 받는 PaymentApproved 이벤트를 만든다. 선점 항목은 상품 하나 quantity 개다 */
+    static PaymentApprovedEvent approvedEvent(Payment payment, UUID productId, int quantity, String paymentKey) {
+        int amount = PRICE * quantity;
+        return new PaymentApprovedEvent(payment.getId(), payment.getOrderId(), amount,
+                tossResponse(paymentKey, amount), List.of(new PaymentApprovedEvent.ReservedItem(productId, quantity)));
+    }
+
+    /** 이벤트를 Kafka 에서 받은 모양(key = 결제 id, outbox-id 헤더)의 레코드로 만든다 */
+    static ConsumerRecord<String, String> record(ObjectMapper mapper, PaymentApprovedEvent event)
+            throws JsonProcessingException {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("payment-events", 0, 0L,
+                event.paymentId().toString(), mapper.writeValueAsString(event));
+        record.headers().add("outbox-id", UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
+        return record;
+    }
+
     /** payment 한 벌과 매단 보상·아웃박스 행, 주문, 상품을 순서대로 지운다 */
     void cleanup(Payment payment, UUID productId) {
         jdbc.update("DELETE FROM payment_compensation WHERE payment_id = ?", payment.getId());
@@ -90,6 +111,24 @@ final class PaymentFixture {
         paymentRepository.deleteById(payment.getId());
         orderRepository.deleteById(payment.getOrderId());
         productRepository.deleteById(productId);
+    }
+
+    /** 승인 직후 상태(READY, paymentKey 부착)로 맞춘다 - 컨슈머가 이벤트를 받는 시작 상태다 */
+    void markReady(UUID paymentId, String paymentKey) {
+        jdbc.update("UPDATE payment SET status = 'READY', payment_key = ? WHERE id = ?", paymentKey, paymentId);
+    }
+
+    String orderStatusOf(UUID orderId) {
+        return jdbc.queryForObject("SELECT status FROM \"Order\" WHERE id = ?", String.class, orderId);
+    }
+
+    String failureCodeOf(UUID paymentId) {
+        return jdbc.queryForObject("SELECT failure_code FROM payment WHERE id = ?", String.class, paymentId);
+    }
+
+    int compensationCountOf(UUID paymentId) {
+        return jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
+                Integer.class, paymentId);
     }
 
     int stockOf(UUID productId) {
