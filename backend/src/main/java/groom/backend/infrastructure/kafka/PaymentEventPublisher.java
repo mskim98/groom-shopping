@@ -14,7 +14,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 // Outbox 폴러: PENDING 이벤트를 주기적으로 읽어 Kafka 로 발행하고 PUBLISHED 로 전이한다.
-// 발행 성공 후 상태 전이가 실패하면 다음 주기에 재발행되므로(at-least-once), 컨슈머가 멱등 처리한다.
+// 발행 성공 후 상태 전이가 실패하면 다음 주기에 재발행되므로(at-least-once), 컨슈머가 Payment 상태로 멱등 처리한다.
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -31,8 +31,9 @@ public class PaymentEventPublisher {
     private static final String TOPIC = "payment-events";
     private static final int BATCH_SIZE = 100;
 
-    // @Scheduled(fixedDelay) : 이전 실행이 끝난 뒤 1초 후 다시 실행 (스캔 주기)
-    @Scheduled(fixedDelay = 1000)
+    // @Scheduled(fixedDelay) : 이전 실행이 끝난 뒤 poll-delay 만큼 쉬고 다시 실행 (스캔 주기)
+    // 기본 200ms - 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦는다
+    @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:200}")
     public void publishPending() {
         List<PaymentOutbox> batch = outboxRepository.findPendingBatch(BATCH_SIZE);
         if (batch.isEmpty()) {
@@ -62,7 +63,9 @@ public class PaymentEventPublisher {
                 return;
             } catch (Exception e) {
                 // 실패 건은 PENDING 으로 남겨 다음 주기에 재시도 (at-least-once)
+                // 이 회차는 여기서 끝낸다 - Kafka 장애는 건별이 아니라 브로커 전체라 남은 행도 같은 시간 초과를 겪는다(100건 x 40초)
                 log.error("[OUTBOX_PUBLISH_FAILED] outboxId={}, error={}", outbox.getId(), e.getMessage());
+                return;
             }
         }
     }
