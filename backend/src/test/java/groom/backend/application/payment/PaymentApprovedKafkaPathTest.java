@@ -1,6 +1,7 @@
 package groom.backend.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -13,6 +14,7 @@ import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -89,7 +91,9 @@ class PaymentApprovedKafkaPathTest {
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
         assertThat(fixture.orderStatusOf(payment.getOrderId())).isEqualTo("CONFIRMED");
         assertThat(fixture.stockOf(productId)).as("주문 수량 2 만큼 감소").isEqualTo(8);
-        assertThat(jdbc.queryForObject("SELECT status FROM payment_outbox WHERE aggregate_id = ?",
-                String.class, payment.getId())).isEqualTo("PUBLISHED");
+        // 폴러는 send().get() 이 돌아온 뒤에야 PUBLISHED 로 표시하는데 컨슈머가 먼저 끝날 수 있다 - 한 번 읽지 않고 기다린다
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("SELECT status FROM payment_outbox WHERE aggregate_id = ?",
+                        String.class, payment.getId())).isEqualTo("PUBLISHED"));
     }
 }
