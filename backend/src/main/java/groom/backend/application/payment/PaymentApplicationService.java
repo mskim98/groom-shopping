@@ -169,16 +169,22 @@ public class PaymentApplicationService {
         // [3] READY 전이 + Outbox 적재 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
         // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
-            selfProvider.getObject().recordApprovedInTx(payment.getId(), response, reservedItems);
+            boolean recorded = selfProvider.getObject().recordApprovedInTx(payment.getId(), response, reservedItems);
+            if (!recorded) {
+                // 먼저 온 확정 요청이 이미 READY + Outbox 를 남겼다 - 이 요청이 선점한 Redis 재고는 중복이라 돌려준다
+                log.info("[PAYMENT_IDEMPOTENT_HIT] Already recorded by earlier confirm - PaymentKey: {}", paymentKey);
+                releaseStock(reservedItems);
+            }
         } catch (Exception dbError) {
-            // 같은 주문의 중복 확정 - 먼저 끝난 요청이 이미 승인했다면(낙관적 락 · 상태 전이 거부 · 유일 제약 어느 쪽으로 졌든)
-            // 이 요청은 실패가 아니라 멱등 응답이다. 여기서 보상을 기록하면 정상 결제를 취소하는 경로가 열린다
+            // 같은 주문의 중복 확정 - 먼저 끝난 요청이 이미 READY 로 만들었거나 승인했다면(낙관적 락 · 상태 전이 거부 · 유일 제약
+            // 어느 쪽으로 졌든) 이 요청은 실패가 아니라 멱등 응답이다. 여기서 보상을 기록하면 정상 결제를 취소하는 경로가 열린다
+            // READY 는 READY 전이와 Outbox 적재가 한 커밋이라 후처리 이벤트가 이미 있다는 뜻이다
             Payment current = paymentRepository.findById(payment.getId()).orElse(null);
-            if (current != null && current.isAlreadyApproved()) {
+            if (current != null && (current.isAlreadyApproved() || current.getStatus() == PaymentStatus.READY)) {
                 log.info("[PAYMENT_IDEMPOTENT_HIT] Concurrent confirm lost - PaymentKey: {}, Status: {}, Cause: {}",
                         paymentKey, current.getStatus(), dbError.getClass().getSimpleName());
                 releaseStock(reservedItems);
-                return current;
+                return awaitResult(current.getId());
             }
             // Toss 승인은 되었는데 READY 전이 · Outbox 적재가 실패한 경우 → 자동 환불(보상 트랜잭션) 의도 기록 + 선점 복원
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
@@ -269,7 +275,8 @@ public class PaymentApplicationService {
     }
 
     /**
-     * Toss 승인 직후 한 트랜잭션: Payment 를 READY 로 만들고(paymentKey 부착) {@code PaymentApproved} Outbox 행을 1건 적재한다.
+     * Toss 승인 직후 한 트랜잭션: PENDING 인 Payment 를 READY 로 만들고(paymentKey 부착) {@code PaymentApproved} Outbox 행을 1건
+     * 적재한다. 이미 READY 면(먼저 온 확정 요청이 남겼다) 아무것도 쓰지 않고 false 를 돌려줘 이벤트가 결제당 1건이게 한다.
      * DONE 전이 · 주문 확정 · 재고 차감 · 티켓 발급은 여기서 하지 않는다 - 컨슈머({@link #applyApprovedEvent})가 한다.
      * DONE 은 후처리 트랜잭션에서만 쓴다: 보상 실행({@link PaymentCompensationService})은 DONE 인 결제를 취소하지 않고
      * 건너뛰므로(SUPERSEDED) 여기서 DONE 으로 만들면 후처리 실패 때 환불 행이 환불하지 못한다.
@@ -277,15 +284,17 @@ public class PaymentApplicationService {
     // propagation = REQUIRES_NEW : 바깥 트랜잭션(없음 · NOT_SUPPORTED)과 무관하게 READY 와 Outbox 행을 한 커밋으로 묶는다
     // 커밋 = 이벤트 영구 보존(at-least-once). 직렬화 실패는 그대로 던져 롤백한다 - 이벤트가 후처리의 유일한 전달 수단이다
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Payment recordApprovedInTx(UUID paymentId, TossPaymentResponse response,
+    public boolean recordApprovedInTx(UUID paymentId, TossPaymentResponse response,
                                       List<PaymentApprovedEvent.ReservedItem> reservedItems) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
-        // 상태머신은 PENDING → READY → DONE 만 허용한다. 결제창에서 paymentKey 를 받아 confirm 에 진입한 시점이 곧 READY 다
-        if (payment.getStatus() == PaymentStatus.PENDING) {
-            payment.ready(response.getPaymentKey());
-            paymentRepository.save(payment);
+        if (payment.getStatus() == PaymentStatus.READY) {
+            return false;
         }
+        // 상태머신은 PENDING → READY → DONE 만 허용한다. 결제창에서 paymentKey 를 받아 confirm 에 진입한 시점이 곧 READY 다
+        // PENDING 이 아닌 그 밖의 상태(FAILED 등)에서는 ready() 가 전이를 거부해 던지고, 호출자가 승인된 돈을 보상 경로로 돌려보낸다
+        payment.ready(response.getPaymentKey());
+        paymentRepository.save(payment);
         PaymentApprovedEvent event = new PaymentApprovedEvent(
                 payment.getId(), payment.getOrder().getId(), payment.getAmountValue(), response, reservedItems);
         String payload;
@@ -295,7 +304,7 @@ public class PaymentApplicationService {
             throw new IllegalStateException("PaymentApproved 이벤트 직렬화 실패: " + e.getMessage(), e);
         }
         paymentOutboxRepository.save(PaymentOutbox.create(payment.getId(), PaymentApprovedEvent.EVENT_TYPE, payload));
-        return payment;
+        return true;
     }
 
     /**
