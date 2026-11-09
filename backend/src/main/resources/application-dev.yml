@@ -119,6 +119,11 @@ payment:
   # Outbox 폴러 주기. 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦다
   outbox:
     poll-delay-ms: 200
+  # READY 에 멈춘 결제 대사(PaymentReadyReconciler). 컨슈머가 끝내지 못한 결제(DLQ · 긴 Kafka 장애 · FAILED 기록 유실)를 되찾는다
+  reconcile:
+    delay-ms: 60000              # 대사 주기. 이보다 짧아도 stale 기준(5분)이 먼저라 얻는 것이 없다
+    stale-after-ms: 300000       # READY 로 이만큼 머문 결제만 본다. 확정 대기 상한(10초)보다 훨씬 길어 대기 중인 요청의 결제를 건드리지 않는다
+    max-republish: 2             # 이벤트 재발행 상한. 5분 x 2회 = 약 10분을 기다린 뒤에도 못 끝내면 돈을 돌려준다
   # 결제 확정 요청이 컨슈머의 후처리 결과를 기다리는 상한과 상태 재조회 간격
   confirm:
     wait-timeout-ms: 10000       # 넘으면 READY 로 202 응답 - 클라이언트가 GET /v1/payment/{id} 로 확인. Toss 응답 한도(60초)보다 짧아야 한다
