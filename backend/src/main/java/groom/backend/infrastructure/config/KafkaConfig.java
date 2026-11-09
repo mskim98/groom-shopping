@@ -3,6 +3,9 @@ package groom.backend.infrastructure.config;
 import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import groom.backend.infrastructure.kafka.StockThresholdEvent;
 import groom.backend.infrastructure.kafka.stream.CouponDelayEvent;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -12,6 +15,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -29,7 +33,16 @@ import java.util.Map;
  * Spring Bean으로 등록합니다.
  */
 @Configuration
+@RequiredArgsConstructor
 public class KafkaConfig {
+
+    // 프로듀서 상한. 브로커가 멈췄을 때 send 가 호출 스레드를 붙드는 시간과 전달을 포기하는 시각이다
+    // delivery.timeout.ms 는 linger.ms + request.timeout.ms(기본 30초) 이상이어야 기동 검증을 통과한다
+    private static final int PRODUCER_MAX_BLOCK_MS = 5_000;
+    private static final int PRODUCER_DELIVERY_TIMEOUT_MS = 35_000;
+
+    // 손으로 만든 팩토리에는 Boot 가 Micrometer 리스너를 붙여 주지 않는다
+    private final MeterRegistry meterRegistry;
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
@@ -72,7 +85,7 @@ public class KafkaConfig {
         configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
         configProps.put(ProducerConfig.ACKS_CONFIG, "1");
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
-        return new DefaultKafkaProducerFactory<>(configProps);
+        return monitoredProducerFactory(configProps);
     }
 
     @Bean
@@ -89,7 +102,7 @@ public class KafkaConfig {
         configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
         configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        return new DefaultKafkaConsumerFactory<>(configProps);
+        return monitoredConsumerFactory(configProps);
     }
 
     @Bean
@@ -133,7 +146,7 @@ public class KafkaConfig {
         //    (메시지 유실을 방지하는 중요한 옵션)
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
 
-        return new DefaultKafkaProducerFactory<>(configProps);
+        return monitoredProducerFactory(configProps);
     }
 
     /**
@@ -191,7 +204,7 @@ public class KafkaConfig {
         //    "latest": (기본값) 가장 "최신" 메시지(앱이 실행된 이후 오는 메시지)부터 읽습니다.
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        return new DefaultKafkaConsumerFactory<>(configProps);
+        return monitoredConsumerFactory(configProps);
     }
 
     /**
@@ -247,7 +260,7 @@ public class KafkaConfig {
         configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         configProps.put(ProducerConfig.ACKS_CONFIG, "all");   // 이벤트 유실 방지 위해 all
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
-        return new DefaultKafkaProducerFactory<>(configProps);
+        return monitoredProducerFactory(configProps);
     }
 
     @Bean
@@ -263,7 +276,7 @@ public class KafkaConfig {
         configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        return new DefaultKafkaConsumerFactory<>(configProps);
+        return monitoredConsumerFactory(configProps);
     }
 
     @Bean
@@ -283,7 +296,7 @@ public class KafkaConfig {
         configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
         configProps.put(ProducerConfig.ACKS_CONFIG, "1");
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
-        return new DefaultKafkaProducerFactory<>(configProps);
+        return monitoredProducerFactory(configProps);
     }
 
     @Bean
@@ -300,7 +313,7 @@ public class KafkaConfig {
         configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
         configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        return new DefaultKafkaConsumerFactory<>(configProps);
+        return monitoredConsumerFactory(configProps);
     }
 
     @Bean
@@ -311,7 +324,31 @@ public class KafkaConfig {
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
         return factory;
     }
+
+    // 모든 프로듀서 팩토리의 공통 마무리: 지표 연결 + 상한 + 멱등 전송
+    // enable.idempotence=true 는 acks=all 을 요구해 acks=1 이던 팩토리도 all 로 올린다
+    private <K, V> ProducerFactory<K, V> monitoredProducerFactory(Map<String, Object> configProps) {
+        configProps.put(ProducerConfig.ACKS_CONFIG, "all");
+        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        configProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, PRODUCER_MAX_BLOCK_MS);
+        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, PRODUCER_DELIVERY_TIMEOUT_MS);
+        DefaultKafkaProducerFactory<K, V> factory = new DefaultKafkaProducerFactory<>(configProps);
+        factory.addListener(new MicrometerProducerListener<>(meterRegistry));
+        return factory;
+    }
+
+    private <K, V> ConsumerFactory<K, V> monitoredConsumerFactory(Map<String, Object> configProps) {
+        DefaultKafkaConsumerFactory<K, V> factory = new DefaultKafkaConsumerFactory<>(configProps);
+        factory.addListener(new MicrometerConsumerListener<>(meterRegistry));
+        return factory;
+    }
+
+    /**
+     * Kafka Streams 의 원천 토픽. 없으면 Streams 가 INCOMPLETE_SOURCE_TOPIC_METADATA 로 스스로 종료하고
+     * 그 클라이언트가 내보내던 모든 kafka_* 지표도 함께 사라진다
+     */
+    @Bean
+    public NewTopic couponDelayEventsTopic() {
+        return TopicBuilder.name("coupon-delay-events").partitions(1).replicas(1).build();
+    }
 }
-
-
-

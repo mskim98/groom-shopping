@@ -3,9 +3,12 @@ package groom.backend.infrastructure.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.event.CouponIssueRequestEvent;
+import groom.backend.infrastructure.kafka.CouponIssueDlqProducer;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -21,6 +24,8 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.MicrometerConsumerListener;
+import org.springframework.kafka.core.MicrometerProducerListener;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -35,7 +40,11 @@ import org.springframework.util.backoff.FixedBackOff;
  */
 @Slf4j
 @Configuration
+@RequiredArgsConstructor
 public class CouponIssueKafkaConfig {
+
+    // 손으로 만든 팩토리에는 Boot 가 Micrometer 리스너를 붙여 주지 않는다
+    private final MeterRegistry meterRegistry;
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
@@ -68,6 +77,15 @@ public class CouponIssueKafkaConfig {
                 .build();
     }
 
+    // 읽을 수 없는 요청 메시지의 원문 보관소. 처리량이 아니라 보존이 목적이라 파티션은 1 개다
+    @Bean
+    public NewTopic couponIssueDlqTopic() {
+        return TopicBuilder.name(CouponIssueDlqProducer.DLQ_TOPIC)
+                .partitions(1)
+                .replicas(1)
+                .build();
+    }
+
     @Bean
     public NewTopic couponIssueResultTopic() {
         return TopicBuilder.name("coupon-issue-results")
@@ -78,6 +96,9 @@ public class CouponIssueKafkaConfig {
 
     /**
      * 발급 요청 발행자
+     *
+     * <p>2026-11 이후 상한은 max.block.ms 5초 · delivery.timeout.ms 35초다. 전달 포기가 늦어진 만큼 "브로커가 기록했는지 모르는"
+     * 타임아웃은 줄고, 그래도 나는 타임아웃은 서비스가 되돌리지 않고 같은 requestId 로 재전송한다
      *
      * <p>타임아웃이 이 설정의 본체다. 동기 방식인 한 <b>외부 호출 타임아웃이 곧 스레드 점유 상한</b>이고,
      * 상한이 없으면 브로커가 느려질 때 접수 스레드가 그만큼 붙잡힌다
@@ -98,12 +119,14 @@ public class CouponIssueKafkaConfig {
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 1000);
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000);
         // delivery.timeout.ms >= linger.ms + request.timeout.ms 라야 기동 시 검증을 통과한다
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
         props.put(ProducerConfig.LINGER_MS_CONFIG, 5);
-        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 5000);
-        return new DefaultKafkaProducerFactory<>(props);
+        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 35000);
+        DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(props);
+        factory.addListener(new MicrometerProducerListener<>(meterRegistry));
+        return factory;
     }
 
     @Bean
@@ -121,7 +144,9 @@ public class CouponIssueKafkaConfig {
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, batchSize);
-        return new DefaultKafkaConsumerFactory<>(props);
+        DefaultKafkaConsumerFactory<String, String> factory = new DefaultKafkaConsumerFactory<>(props);
+        factory.addListener(new MicrometerConsumerListener<>(meterRegistry));
+        return factory;
     }
 
     /**
