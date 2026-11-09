@@ -118,6 +118,18 @@ class PaymentConfirmOutboxTest {
     }
 
     @Test
+    @DisplayName("이미 READY 인 주문을 다시 확정해도 outbox 는 결제당 1건이고 결제는 READY 그대로다")
+    void confirm_READY_주문을_다시_확정해도_outbox는_1건이다() {
+        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+
+        Payment second = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+
+        assertThat(second.getStatus()).isEqualTo(PaymentStatus.READY);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_outbox WHERE aggregate_id = ?",
+                Integer.class, payment.getId())).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("confirm 이 적재한 outbox payload 에 Toss 응답과 선점 항목이 담긴다")
     void confirm_outbox_payload에_Toss응답과_선점항목이_담긴다() throws Exception {
         // Redis 재고를 초기화해 둬야 선점이 일어나 reservedItems 에 항목이 남는다(미초기화 상품은 건너뛴다)
