@@ -162,8 +162,11 @@ class ManualCancelCircuitTest {
 
         assertThat(fixture.statusOf(payment.getId())).as("DB 롤백 뒤 결제 상태").isEqualTo("DONE");
         // Toss 는 취소됐는데 DB 는 DONE 인 불일치가 조용히 남지 않도록 보상 장부에 기록한다
+        // 배치는 DONE 결제를 SUPERSEDED 로 덮어 버리므로, 재시도 대상이 아닌 수동 처리 대상(GIVEN_UP + DLQ 이벤트)으로 남긴다
         assertThat(jdbc.queryForList(
-                "SELECT reason FROM payment_compensation WHERE payment_id = ?", String.class, payment.getId()))
-                .singleElement().asString().contains("RECONCILE_MANUAL_CANCEL");
+                "SELECT status || '|' || reason FROM payment_compensation WHERE payment_id = ?", String.class, payment.getId()))
+                .singleElement().asString().startsWith("GIVEN_UP|").contains("RECONCILE_MANUAL_CANCEL");
+        assertThat(jdbc.queryForList("SELECT topic FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId()))
+                .containsExactly("payment-compensation-dlq");
     }
 }
