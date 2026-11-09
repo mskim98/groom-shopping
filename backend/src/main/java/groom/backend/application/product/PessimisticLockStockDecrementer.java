@@ -27,8 +27,10 @@ public class PessimisticLockStockDecrementer implements StockDecrementer {
 
     private final SpringDataProductRepository springDataProductRepository;
 
+    // REQUIRED : 결제 후처리 트랜잭션(applyApprovedPaymentInTx)에 합류한다. 독립 커밋하면 후처리가 롤백돼도
+    // 재고만 영구 차감된다(R9 실측: 9999 -> 9800, 복원 0건). 트랜잭션 밖에서 불리면 스스로 새 트랜잭션을 연다
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public int decrease(UUID productId, int quantity) {
         ProductJpaEntity product = springDataProductRepository.findByIdForUpdate(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));

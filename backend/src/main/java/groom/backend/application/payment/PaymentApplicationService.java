@@ -197,10 +197,13 @@ public class PaymentApplicationService {
     }
 
     /**
-     * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급이 모두 하나의 커밋 단위에서 실행
+     * Toss 승인 결과를 내부 상태에 반영하는 트랜잭션 경계. 재고 차감, 주문 상태 변경, 티켓 발급, Outbox 적재가 모두 하나의
+     * 커밋 단위에서 실행된다. 재고 차감({@link StockDecrementer#decrease})이 이 트랜잭션에 합류하므로 후처리가 실패하면
+     * DB 재고도 같은 롤백으로 되돌아온다(Redis 선점분 복원은 호출자 confirmPayment 의 releaseStock 이 맡는다)
      */
     // propagation = REQUIRES_NEW : 결제 상태 변경 + 주문 확정 + 재고 차감 + 티켓 발급을 항상
     // '독립된 새 트랜잭션'으로 묶어, 중간에 하나라도 실패하면 전부 롤백한다(All-or-Nothing).
+    // 재고 차감 전략은 REQUIRED 라 이 트랜잭션에 합류한다(PessimisticLock · ConditionalUpdate 전략).
     // ✅ 자기호출 함정 해결: confirmPayment() 가 selfProvider.getObject() 로 프록시를 거쳐 호출.
     // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 항상 read-write 새 트랜잭션 생성.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -480,41 +483,24 @@ public class PaymentApplicationService {
     private List<PaymentNotificationService.StockReductionResult> reduceProductStock(Order order) {
         List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
 
-        // 부분 차감 보상용: 상품별 차감은 REQUIRES_NEW 로 즉시 독립 커밋되므로, 다중상품 주문 중간에
-        // 한 건이라도 실패하면 '이미 커밋된 앞선 차감'이 그대로 남는 edge case 가 있다.
-        // → 성공한 차감 항목을 추적해 두고, 실패 시 같은 낙관적 락 경로로 DB 재고를 복원한 뒤 예외를 전파해
-        //   재고 누락(차감됐는데 주문은 롤백되는 유실)을 보상한다.
-        List<OrderItem> decremented = new java.util.ArrayList<>();
-        try {
-            for (OrderItem orderItem : order.getOrderItems()) {
-                // 선택된 전략으로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
-                int stockAfter = stockDecrementer.decrease(
-                        orderItem.getProductId(), orderItem.getQuantity());
-                decremented.add(orderItem);
+        // 차감은 호출한 트랜잭션(후처리 REQUIRES_NEW 또는 테스트용 @Transactional)에 합류한다. 중간에 한 건이 실패하면
+        // 앞선 차감까지 같은 롤백으로 되돌아오므로 별도 복원 코드를 두지 않는다(복원을 REQUIRES_NEW 로 하면 바깥 트랜잭션이
+        // 쥔 행 락을 기다려 교착한다)
+        // 상품 id 오름차순으로 잠가, 서로 다른 순서로 여러 상품을 담은 두 주문이 서로의 행 락을 기다리는 교착을 막는다
+        List<OrderItem> items = order.getOrderItems().stream()
+                .sorted(java.util.Comparator.comparing(OrderItem::getProductId))
+                .toList();
+        for (OrderItem orderItem : items) {
+            // 선택된 전략으로 재고 차감 (동시 결제의 Lost Update 차단). 차감 후 재고량을 반환.
+            int stockAfter = stockDecrementer.decrease(orderItem.getProductId(), orderItem.getQuantity());
 
-                // 차감된 상품 ID와 차감 후 재고량 저장
-                results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
+            // 차감된 상품 ID와 차감 후 재고량 저장
+            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
 
-                log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
-                        orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
-            }
-            return results;
-        } catch (RuntimeException e) {
-            // 보상: 이미 독립 커밋된 차감 항목을 복원(증가)한다. 복원 자체 실패는 운영 인지를 위해 로깅만(best-effort).
-            log.error("[STOCK_REDUCE_PARTIAL_FAIL] 다중상품 차감 중 실패 - 복원 시도 {}건, error={}",
-                    decremented.size(), e.getMessage());
-            for (OrderItem done : decremented) {
-                try {
-                    productStockService.increaseWithOptimisticLock(done.getProductId(), done.getQuantity());
-                    log.info("[STOCK_REDUCE_COMPENSATED] 부분 차감 복원 - ProductId: {}, Quantity: {}",
-                            done.getProductId(), done.getQuantity());
-                } catch (RuntimeException restoreEx) {
-                    log.error("[STOCK_REDUCE_COMPENSATE_FAIL] 부분 차감 복원 실패(수동 처리 필요) - ProductId: {}, Quantity: {}, error={}",
-                            done.getProductId(), done.getQuantity(), restoreEx.getMessage());
-                }
-            }
-            throw e;
+            log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
+                    orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
         }
+        return results;
     }
 
     private void restoreProductStock(Order order) {
