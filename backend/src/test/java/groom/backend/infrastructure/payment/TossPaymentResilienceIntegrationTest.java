@@ -36,7 +36,7 @@ import org.springframework.web.client.RestTemplate;
  *
  * <p>WireMock 으로 Toss API 의 지연/5xx 를 주입해 실제 빈(RestTemplate + @CircuitBreaker/@Retry 프록시)이
  * <ul>
- *   <li>③ 응답 타임아웃(5s) 내에 호출을 컷하는지</li>
+ *   <li>③ 응답 타임아웃(테스트에서 5s 로 단축) 내에 호출을 컷하는지</li>
  *   <li>② 연속 실패 시 CLOSED→OPEN(fast-fail)→HALF_OPEN→CLOSED 로 전이/복구하는지</li>
  * </ul>
  * 를 검증한다. OPEN 유지 시간(prod 30s)은 HALF_OPEN 전이를 빠르게 관찰하기 위해 테스트에서 2s 로만 단축한다.
@@ -60,6 +60,8 @@ class TossPaymentResilienceIntegrationTest {
     static void overrideProps(DynamicPropertyRegistry registry) {
         registry.add("payment.toss.api-url", WIRE_MOCK::baseUrl);
         registry.add("payment.toss.secret-key", () -> "test_sk_dummy");
+        // 읽기 시간 초과가 호출을 끊는지만 본다 - 운영값 60s 를 기다리면 시험이 60초 걸리므로 5s 로 줄인다(운영값 고정은 PaymentTimeoutPolicyTest)
+        registry.add("http.client.toss.response-timeout", () -> "5s");
         // OPEN 유지 시간만 단축(나머지 임계/윈도우는 prod 설정 그대로 사용).
         registry.add("resilience4j.circuitbreaker.instances.toss.wait-duration-in-open-state", () -> "2s");
         // 실행 중인 앱과 Kafka Streams 상태 디렉토리 락이 충돌하지 않도록 테스트에선 Streams 미기동(불필요)
@@ -146,6 +148,8 @@ class TossPaymentResilienceIntegrationTest {
         for (int i = 0; i < 15 && cb.getState() != CircuitBreaker.State.OPEN; i++) {
             lastError = callConfirmAndCaptureError();
         }
+        // 마지막 호출이 열게 한 회로를 다음 호출이 fast-fail 로 만나는지 본다(재시도 2회라 열리는 호출은 자기 500 으로 끝난다)
+        lastError = callConfirmAndCaptureError();
 
         // then - 회로 OPEN + 마지막 호출은 회로 OPEN fast-fail(PAYMENT_TEMPORARILY_UNAVAILABLE)
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
