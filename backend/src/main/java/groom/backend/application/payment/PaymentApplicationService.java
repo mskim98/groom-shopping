@@ -454,7 +454,7 @@ public class PaymentApplicationService {
             log.error("[PAYMENT_CANCEL_DB_UPDATE_FAILED] Toss 취소 성공 뒤 DB 갱신 실패(대사 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
                     paymentId, paymentKey, dbError.getMessage(), dbError);
             try {
-                paymentCompensationService.compensate(paymentId, paymentKey, payment.getAmountValue(),
+                paymentCompensationService.recordReconcileNeeded(paymentId, paymentKey, payment.getAmountValue(),
                         "[RECONCILE_MANUAL_CANCEL] Toss 취소 성공, DB 갱신 실패: " + dbError.getMessage());
             } catch (Exception recordError) {
                 log.error("[PAYMENT_CANCEL_RECONCILE_ENTRY_FAILED] 대사 행 기록 실패(수동 처리 필요) - PaymentId: {}, Error: {}",

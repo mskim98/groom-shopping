@@ -139,6 +139,27 @@ public class PaymentCompensationService {
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
     }
 
+    /**
+     * 재시도할 취소가 아니라 사람이 대사해야 하는 건(수동 취소에서 Toss 는 취소됐는데 DB 갱신이 실패)을 남긴다.
+     * 배치에 맡기면 DONE 결제라 SUPERSEDED 로 덮여 버리므로, 처음부터 GIVEN_UP 행 + DLQ 이벤트로 기록한다
+     */
+    public void recordReconcileNeeded(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        try {
+            selfProvider.getObject().recordGivenUpIntent(paymentId, paymentKey, amount, reason);
+        } catch (DataIntegrityViolationException duplicate) {
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - PaymentId: {}", paymentId);
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordGivenUpIntent(UUID paymentId, String paymentKey, Integer amount, String reason) {
+        PaymentCompensation compensation = PaymentCompensation.builder()
+                .paymentId(paymentId).paymentKey(paymentKey).amount(amount).reason(reason).maxRetryCount(5).build();
+        compensation.markGivenUp(reason);
+        compensationRepository.save(compensation);
+        appendGivenUpOutbox(compensation, reason);
+    }
+
     /** 보상 의도만 독립 커밋한다. 이 커밋이 끝나야 실행이 실패해도 배치가 재시도할 수 있다 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PaymentCompensation recordCompensationIntent(UUID paymentId, String paymentKey,
