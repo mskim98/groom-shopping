@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import groom.backend.application.cart.CartApplicationService;
@@ -38,6 +39,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -249,5 +251,23 @@ class PaymentFailurePathOrderTest {
         });
         assertThat(notifyUserId.get()).isEqualTo(1L);
         assertThat(stockAfter.get()).as("알림에 실리는 차감 후 재고").isEqualTo(9);
+    }
+
+    @Test
+    @DisplayName("후처리가 매 시도마다 version 충돌이면 409(PRODUCT_STOCK_CONFLICT)로 답하고 보상 의도가 기록되며 재고는 그대로다")
+    void 후처리_매시도_version충돌_409로_답하고_보상의도를_기록한다() {
+        // 재고 차감 뒤 Outbox 적재에서 매번 낙관적 락 충돌이 난다 - 시도마다 롤백되므로 재고는 그대로여야 한다
+        doThrow(new ObjectOptimisticLockingFailureException(Payment.class, payment.getId()))
+                .when(outboxRepository).save(any());
+
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT));
+
+        verify(outboxRepository, times(3)).save(any());
+        assertThat(jdbc.queryForList("SELECT payment_key FROM payment_compensation WHERE payment_id = ?",
+                String.class, payment.getId())).as("이미 승인된 결제의 환불 의도").containsExactly(paymentKey);
+        assertThat(fixture.stockOf(productId)).isEqualTo(10);
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
     }
 }
