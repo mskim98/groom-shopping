@@ -8,6 +8,8 @@ import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
+import groom.backend.domain.payment.repository.PaymentRepository;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
@@ -32,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -54,6 +57,8 @@ public class PaymentCompensationService {
     private final TossPaymentClient tossPaymentClient;
     // 최종 실패(GIVEN_UP) 시 DLQ 이벤트를 같은 트랜잭션의 Outbox 행으로 남긴다(폴러가 발행 - 직접 send 없음)
     private final PaymentOutboxRepository outboxRepository;
+    // 취소 직전 결제 상태 재확인용
+    private final PaymentRepository paymentRepository;
     private final ObjectMapper objectMapper;
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
@@ -121,8 +126,14 @@ public class PaymentCompensationService {
     // 요청 커넥션을 취소 지연(최대 30초)만큼 물어 풀이 마른다. PENDING(nextRetryAt=now) 으로 남기면
     // retryPendingCompensations 배치가 다음 회차에 주워 트랜잭션 밖에서 취소한다. 취소 경로가 배치 하나뿐
     public void compensate(UUID paymentId, String paymentKey, Integer amount, String failureReason) {
-        selfProvider.getObject()
-                .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
+        try {
+            selfProvider.getObject()
+                    .recordCompensationIntent(paymentId, paymentKey, amount, failureReason);
+        } catch (DataIntegrityViolationException duplicate) {
+            // payment_id 유일 제약 - 같은 결제의 보상 행이 이미 있다. 같은 의도를 두 번 적는 것은 무해하므로 넘어간다
+            log.warn("[PAYMENT_COMPENSATION_DUPLICATE] 이미 보상 행이 있음 - PaymentId: {}", paymentId);
+            return;
+        }
 
         log.warn("[PAYMENT_COMPENSATION_START] PaymentKey: {}, Reason: {}", paymentKey, failureReason);
     }
@@ -241,6 +252,16 @@ public class PaymentCompensationService {
     // PG 응답을 기다리는 동안 DB 커넥션을 쥐면 실패 1건이 취소 타임아웃(30초)만큼 풀을 점유해
     // 풀 50 이 초당 1.7건의 실패에 마른다. 호출은 밖에서, 기록만 REQUIRES_NEW 로 짧게 한다
     public boolean executeCompensation(PaymentCompensation compensation) {
+        // 취소 직전 결제를 다시 읽는다. 동시 중복 확정에서 한쪽이 정상 승인(DONE)을 끝냈다면 이 보상은 그 정상 결제를
+        // 같은 paymentKey 로 취소하게 된다 - 호출하지 않고 SUPERSEDED 로 끝낸다
+        PaymentStatus current = paymentRepository.findById(compensation.getPaymentId())
+                .map(p -> p.getStatus()).orElse(null);
+        if (current == PaymentStatus.DONE || current == PaymentStatus.PARTIAL_CANCELED
+                || current == PaymentStatus.CANCELED) {
+            selfProvider.getObject().recordSuperseded(compensation,
+                    "결제가 이미 " + current + " - 정상 승인이거나 이미 취소돼 Toss 취소를 호출하지 않음");
+            return false;
+        }
         // 멱등성 키 : 보상 레코드 ID 는 재시도 간 불변이라 같은 취소 의도가 항상 같은 키로 도달한다
         // retryCount 를 섞으면 시도마다 키가 달라져, Toss 는 이미 처리했는데 응답만 유실된 경우를
         // 새 요청으로 오인해 이중 환불이 난다 -> 멱등키가 목적을 잃는다
@@ -264,6 +285,14 @@ public class PaymentCompensationService {
     private static Duration jittered(Duration base) {
         double factor = 0.8 + java.util.concurrent.ThreadLocalRandom.current().nextDouble() * 0.4;
         return Duration.ofMillis((long) (base.toMillis() * factor));
+    }
+
+    /** 취소를 호출하지 않고 SUPERSEDED 로 끝낸 결과를 독립 커밋한다 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordSuperseded(PaymentCompensation compensation, String reason) {
+        compensation.markSuperseded(reason);
+        compensationRepository.save(compensation);
+        log.warn("[PAYMENT_COMPENSATION_SUPERSEDED] PaymentKey: {}, Reason: {}", compensation.getPaymentKey(), reason);
     }
 
     /**

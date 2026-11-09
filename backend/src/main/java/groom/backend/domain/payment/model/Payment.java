@@ -21,6 +21,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -189,6 +190,12 @@ public class Payment {
     // 결제창(checkout) 정보 원본 보관용
     @Column(name = "checkout", columnDefinition = "TEXT")
     private String checkout;
+
+    // 낙관적 락 버전. 같은 결제를 두 요청이 동시에 DONE 으로 바꾸면 늦게 커밋하는 쪽이 갱신 0행으로 실패한다
+    // 컬럼명을 lock_version 으로 한 이유: version 컬럼은 Toss API 버전 문자열이 이미 쓰고 있다
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion;
 
     // 결제 레코드 생성 시각 (최초 저장 시 자동 입력)
     @CreationTimestamp

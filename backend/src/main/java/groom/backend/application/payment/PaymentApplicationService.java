@@ -145,6 +145,15 @@ public class PaymentApplicationService {
         try {
             return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
         } catch (Exception dbError) {
+            // 같은 주문의 중복 확정 - 먼저 끝난 요청이 이미 승인했다면(낙관적 락 · 상태 전이 거부 · 유일 제약 어느 쪽으로 졌든)
+            // 이 요청은 실패가 아니라 멱등 응답이다. 여기서 보상을 기록하면 정상 결제를 취소하는 경로가 열린다
+            Payment current = paymentRepository.findById(payment.getId()).orElse(null);
+            if (current != null && current.isAlreadyApproved()) {
+                log.info("[PAYMENT_IDEMPOTENT_HIT] Concurrent confirm lost - PaymentKey: {}, Status: {}, Cause: {}",
+                        paymentKey, current.getStatus(), dbError.getClass().getSimpleName());
+                releaseStock(reservedItems);
+                return current;
+            }
             // [4] Toss 승인은 되었는데 내부 DB 처리가 실패한 경우 → 자동 환불(보상 트랜잭션) 의도 기록 + 선점 복원
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
                     orderId, paymentKey, dbError.getMessage(), dbError);

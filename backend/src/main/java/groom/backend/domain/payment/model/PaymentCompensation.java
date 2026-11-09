@@ -102,9 +102,10 @@ public class PaymentCompensation {
             // updated_at 90초 경과 회수만 기다린다
             CompensationStatus.PROCESSING, EnumSet.of(
                     CompensationStatus.PENDING, CompensationStatus.SUCCEEDED,
-                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP),
+                    CompensationStatus.FAILED, CompensationStatus.GIVEN_UP, CompensationStatus.SUPERSEDED),
             CompensationStatus.SUCCEEDED, EnumSet.noneOf(CompensationStatus.class),
-            CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class));
+            CompensationStatus.GIVEN_UP, EnumSet.noneOf(CompensationStatus.class),
+            CompensationStatus.SUPERSEDED, EnumSet.noneOf(CompensationStatus.class));
 
     private void transitionTo(CompensationStatus next) {
         Set<CompensationStatus> allowed = ALLOWED_TRANSITIONS
@@ -159,6 +160,13 @@ public class PaymentCompensation {
     public void markGivenUp(String errorMessage) {
         transitionTo(CompensationStatus.GIVEN_UP);
         this.lastError = errorMessage;
+        this.nextRetryAt = null;
+    }
+
+    /** 취소 직전 재확인에서 취소할 이유가 사라졌음이 드러난 행(정상 승인된 결제 등)을 호출 없이 끝낸다 */
+    public void markSuperseded(String reason) {
+        transitionTo(CompensationStatus.SUPERSEDED);
+        this.lastError = reason;
         this.nextRetryAt = null;
     }
 }
