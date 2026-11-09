@@ -4,6 +4,7 @@ import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.payment.model.Payment;
+import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.interfaces.payment.dto.request.CancelPaymentRequest;
 import groom.backend.interfaces.payment.dto.request.ConfirmPaymentRequest;
 import groom.backend.interfaces.payment.dto.response.PaymentResponse;
@@ -54,7 +55,10 @@ public class PaymentController {
             description = "Toss Payments API를 호출하여 결제를 승인합니다."
     )
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "결제 승인 성공",
+            @ApiResponse(responseCode = "200", description = "결제 승인 성공(후처리까지 완료)",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "202", description = "Toss 승인은 끝났고 후처리 대기 중(READY) - GET /v1/payment/{paymentId} 로 확인",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = PaymentResponse.class))),
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
@@ -85,10 +89,13 @@ public class PaymentController {
 
         PaymentResponse response = PaymentResponse.from(payment);
 
-        log.info("[API_RESPONSE] Payment confirmed - PaymentId: {}, Status: {}",
+        log.info("[API_RESPONSE] Payment confirm - PaymentId: {}, Status: {}",
                 response.getId(), response.getStatus());
 
-        return ResponseEntity.ok(response);
+        // DONE 이면 후처리까지 끝난 200, 대기 상한을 넘겨 아직 READY 면 202 - 클라이언트는 GET /v1/payment/{paymentId} 로 확인한다
+        return payment.getStatus() == PaymentStatus.DONE
+                ? ResponseEntity.ok(response)
+                : ResponseEntity.accepted().body(response);
     }
 
     /**
