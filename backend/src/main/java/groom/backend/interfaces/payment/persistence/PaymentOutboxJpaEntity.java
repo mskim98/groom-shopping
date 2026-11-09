@@ -35,6 +35,10 @@ public class PaymentOutboxJpaEntity {
     @Column(name = "payload", nullable = false, columnDefinition = "text")
     private String payload;
 
+    // 발행 토픽. null 이면 기본 토픽(payment-events)
+    @Column(name = "topic", length = 100)
+    private String topic;
+
     @Column(name = "status", nullable = false)
     private String status;
 

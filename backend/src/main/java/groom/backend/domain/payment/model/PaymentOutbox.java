@@ -16,6 +16,7 @@ public class PaymentOutbox {
     private UUID aggregateId;        // 결제(Payment) ID
     private String eventType;        // 예: PAYMENT_COMPLETED
     private String payload;          // 이벤트 JSON
+    private String topic;            // 발행 토픽. null 이면 publisher 의 기본 토픽(payment-events)
     private OutboxStatus status;     // PENDING / PUBLISHED
     private LocalDateTime createdAt;
     private LocalDateTime publishedAt;
@@ -24,7 +25,13 @@ public class PaymentOutbox {
 
     // 신규 적재용 팩토리. 처음엔 항상 PENDING 상태.
     public static PaymentOutbox create(UUID aggregateId, String eventType, String payload) {
+        return create(aggregateId, eventType, payload, null);
+    }
+
+    // 기본 토픽이 아닌 곳(예: DLQ)으로 보낼 이벤트용
+    public static PaymentOutbox create(UUID aggregateId, String eventType, String payload, String topic) {
         PaymentOutbox outbox = new PaymentOutbox();
+        outbox.topic = topic;
         outbox.id = UUID.randomUUID();
         outbox.aggregateId = aggregateId;
         outbox.eventType = eventType;
@@ -37,7 +44,13 @@ public class PaymentOutbox {
     // 영속 데이터 복원용 (Repository 매핑에서 사용)
     public static PaymentOutbox of(UUID id, UUID aggregateId, String eventType, String payload,
             OutboxStatus status, LocalDateTime createdAt, LocalDateTime publishedAt) {
+        return of(id, aggregateId, eventType, payload, null, status, createdAt, publishedAt);
+    }
+
+    public static PaymentOutbox of(UUID id, UUID aggregateId, String eventType, String payload, String topic,
+            OutboxStatus status, LocalDateTime createdAt, LocalDateTime publishedAt) {
         PaymentOutbox outbox = new PaymentOutbox();
+        outbox.topic = topic;
         outbox.id = id;
         outbox.aggregateId = aggregateId;
         outbox.eventType = eventType;

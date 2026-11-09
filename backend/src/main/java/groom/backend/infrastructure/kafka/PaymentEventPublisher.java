@@ -35,8 +35,10 @@ public class PaymentEventPublisher {
         for (PaymentOutbox outbox : batch) {
             try {
                 // key = 결제 ID → 같은 결제 이벤트는 같은 파티션으로 라우팅(순서 보장)
+                // topic 이 비어 있으면 결제 완료 이벤트(payment-events), 있으면 그 토픽(예: GIVEN_UP DLQ)
+                String topic = outbox.getTopic() != null ? outbox.getTopic() : TOPIC;
                 ProducerRecord<String, String> record =
-                        new ProducerRecord<>(TOPIC, outbox.getAggregateId().toString(), outbox.getPayload());
+                        new ProducerRecord<>(topic, outbox.getAggregateId().toString(), outbox.getPayload());
                 // 멱등 식별자: outbox.id 를 헤더로 실어 컨슈머가 중복을 거른다.
                 record.headers().add("outbox-id", outbox.getId().toString().getBytes(StandardCharsets.UTF_8));
 

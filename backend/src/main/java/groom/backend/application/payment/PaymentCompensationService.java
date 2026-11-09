@@ -1,10 +1,13 @@
 package groom.backend.application.payment;
 
 import groom.backend.application.payment.event.PaymentCompensationDlqEvent;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.domain.payment.model.PaymentCompensation;
+import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.model.enums.CompensationStatus;
 import groom.backend.domain.payment.repository.PaymentCompensationRepository;
-import groom.backend.infrastructure.kafka.PaymentCompensationDlqProducer;
+import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.infrastructure.payment.TossAlreadyCanceledException;
 import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
@@ -48,7 +51,9 @@ public class PaymentCompensationService {
     // private final : 스프링이 주입하는 협력 객체. 외부에서 못 바꾸게 막아 안전하게 사용.
     private final PaymentCompensationRepository compensationRepository;
     private final TossPaymentClient tossPaymentClient;
-    private final PaymentCompensationDlqProducer dlqProducer; // 최종 실패(GIVEN_UP) 시 DLQ 발행
+    // 최종 실패(GIVEN_UP) 시 DLQ 이벤트를 같은 트랜잭션의 Outbox 행으로 남긴다(폴러가 발행 - 직접 send 없음)
+    private final PaymentOutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
     // 자기호출 우회: recordCompensationIntent/recordResult 의 @Transactional 이 프록시를 거쳐 적용되도록 한다
     private final ObjectProvider<PaymentCompensationService> selfProvider;
     // 배치 설정(페이지 크기 · 워커 수 · 정지 신호 회로 이름들)
@@ -293,6 +298,7 @@ public class PaymentCompensationService {
                 String reason = "유예 상한(생성 후 " + deferMaxAgeMinutes + "분) 초과: " + failure.getMessage();
                 compensation.markGivenUp(reason);
                 compensationRepository.save(compensation);
+                appendGivenUpOutbox(compensation, failure.getMessage());
                 log.error("[PAYMENT_COMPENSATION_DEFER_CAP] PaymentKey: {}, CreatedAt: {} - GIVEN_UP",
                         compensation.getPaymentKey(), compensation.getCreatedAt());
                 return false;
@@ -314,16 +320,33 @@ public class PaymentCompensationService {
 
         // 재시도 한도 초과로 최종 실패(GIVEN_UP)면 DLQ 로 이관해 운영팀이 즉시 인지하도록 한다.
         if (compensation.getStatus() == CompensationStatus.GIVEN_UP) {
-            dlqProducer.publish(new PaymentCompensationDlqEvent(
-                    compensation.getId(),
-                    compensation.getPaymentId(),
-                    compensation.getPaymentKey(),
-                    compensation.getAmount(),
-                    compensation.getReason(),
-                    failure.getMessage(),
-                    compensation.getRetryCount(),
-                    LocalDateTime.now()));
+            appendGivenUpOutbox(compensation, failure.getMessage());
         }
         return false;
+    }
+
+    // GIVEN_UP 전환과 같은 트랜잭션(recordResult 의 REQUIRES_NEW)에 DLQ 이벤트를 Outbox 로 적재한다
+    // 저장이 실패하면 예외가 그대로 전파돼 GIVEN_UP 전환도 함께 롤백된다 - 행은 PROCESSING 에 남아 stale 회수 뒤 다시 시도된다
+    private void appendGivenUpOutbox(PaymentCompensation compensation, String lastError) {
+        PaymentCompensationDlqEvent event = new PaymentCompensationDlqEvent(
+                compensation.getId(),
+                compensation.getPaymentId(),
+                compensation.getPaymentKey(),
+                compensation.getAmount(),
+                compensation.getReason(),
+                lastError,
+                compensation.getRetryCount(),
+                LocalDateTime.now());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("GIVEN_UP DLQ 이벤트 직렬화 실패: " + e.getMessage(), e);
+        }
+        outboxRepository.save(PaymentOutbox.create(
+                compensation.getPaymentId(), PaymentCompensationDlqEvent.EVENT_TYPE, payload,
+                PaymentCompensationDlqEvent.TOPIC));
+        log.warn("[COMPENSATION_DLQ_OUTBOX] compensationId={}, paymentKey={}",
+                compensation.getId(), compensation.getPaymentKey());
     }
 }
