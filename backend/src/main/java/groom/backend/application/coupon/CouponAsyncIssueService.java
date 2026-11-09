@@ -444,6 +444,29 @@ public class CouponAsyncIssueService {
         }
     }
 
+    /**
+     * 읽을 수 없는 요청 메시지가 잡아 둔 예약을 반납한다
+     *
+     * <p>이벤트 전체는 못 읽어도 couponId · userId 가 읽히면 어느 자리를 되돌릴지 알 수 있다
+     * 읽히지 않으면 되돌릴 대상을 모르므로 건드리지 않는다 - 그 몫은 종료 쿠폰의 고아 예약 회수가 정리한다
+     *
+     * @return 예약을 반납했으면 true
+     */
+    public boolean abandonUnreadable(String rawPayload, Throwable cause) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(rawPayload);
+            if (node == null || !node.path("couponId").canConvertToLong() || !node.path("userId").canConvertToLong()) {
+                return false;
+            }
+            String requestId = node.path("requestId").isTextual() ? node.path("requestId").asText() : null;
+            abandonBatch(List.of(new CouponIssueRequestEvent(requestId, node.path("couponId").asLong(),
+                    node.path("userId").asLong(), true)), cause);
+            return true;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return false;
+        }
+    }
+
     private void fail(CouponIssueRequestEvent event, String reason,
                       Map<String, String> statuses, List<CouponIssueResultEvent> results) {
         statuses.put(event.requestId(), STATUS_FAILED_PREFIX + reason);

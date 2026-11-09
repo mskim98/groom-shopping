@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.coupon;
 
+import groom.backend.application.coupon.CouponStockRecoveryService;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
@@ -40,6 +41,7 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
     private final CouponRepository couponRepository;
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
+    private final CouponStockRecoveryService couponStockRecoveryService;
 
     // 한 번에 읽어올 페이지 크기(메모리/쿼리 횟수 트레이드오프)
     @Value("${coupon.warmup.batch-size:1000}")
@@ -47,6 +49,10 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // 재고 키가 없는 쿠폰이 있으면 Redis 가 사라진 것이다. 랙을 빼서 심는 복구가 먼저 돈다(복구 중 접수는 503)
+        // 아래 SETNX 는 복구가 심은 키를 덮지 않고, 복구가 심지 못한 쿠폰(랙을 못 읽은 경우)만 채운다
+        couponStockRecoveryService.recoverIfStockMissing();
+
         int planted = 0;
         int skipped = 0;
         long restored = 0;

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import groom.backend.application.coupon.CouponStockRecoveryService;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.enums.CouponType;
@@ -33,6 +34,8 @@ class CouponStockWarmUpRunnerTest {
     private CouponIssueRepository couponIssueRepository;
     @Mock
     private CouponStockRedisRepository couponStockRedisRepository;
+    @Mock
+    private CouponStockRecoveryService couponStockRecoveryService;
 
     private Coupon 쿠폰(long quantity) {
         return Coupon.builder()
@@ -45,7 +48,7 @@ class CouponStockWarmUpRunnerTest {
         given(couponRepository.findActiveByIdGreaterThan(anyLong(), any(Pageable.class)))
                 .willReturn(List.of(coupon), List.of());
         CouponStockWarmUpRunner runner = new CouponStockWarmUpRunner(
-                couponRepository, couponIssueRepository, couponStockRedisRepository);
+                couponRepository, couponIssueRepository, couponStockRedisRepository, couponStockRecoveryService);
         ReflectionTestUtils.setField(runner, "batchSize", 1);
         return runner;
     }

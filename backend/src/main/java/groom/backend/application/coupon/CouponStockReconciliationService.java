@@ -16,13 +16,14 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /**
- * 재고 대조·보정과 마감 처리. <b>주기 실행하지 않는다</b>
+ * 재고 대조·보정과 마감 처리. <b>진행 중 쿠폰은 건드리지 않는다</b> - 주기 실행은 종료된 쿠폰에만 작용한다
  *
- * <p>주기 실행을 뺀 이유는 둘이다
+ * <p>진행 중 쿠폰을 대조하지 않는 이유는 둘이다
  * <ul>
  *   <li><b>이벤트 진행 중에는 고아와 처리 중인 요청을 구별할 수단이 없다.</b> 게이트를 통과했는데
  *       아직 저장되지 않은 건은 두 경우가 완전히 같은 모습이라, 되돌리면 남의 자리를 뺏는다
@@ -84,10 +85,20 @@ public class CouponStockReconciliationService {
     }
 
     /**
+     * 주기 실행 진입점. 종료된 쿠폰만 대조하므로 진행 중 요청의 자리를 건드리지 않는다
+     * 진행 중 쿠폰은 {@link #reconcileCoupon} 이 처음에 걸러 낸다
+     */
+    @Scheduled(fixedDelayString = "${coupon.reconcile.interval-ms:600000}",
+            initialDelayString = "${coupon.reconcile.initial-delay-ms:60000}")
+    public void scheduledReconcile() {
+        reconcileWithLock();
+    }
+
+    /**
      * 전 쿠폰 대조 진입점. 인스턴스 중 하나만 실제로 돈다
      *
-     * <p>주기 실행하지 않는다. 운영자가 부르거나 마감 처리에서 부른다 -
-     * 진행 중 이벤트에 이 작업을 걸면 처리 중인 요청의 자리를 되돌려 남에게 넘긴다
+     * <p>종료된 쿠폰만 대조한다. 진행 중 이벤트에 이 작업을 걸면 처리 중인 요청의 자리를
+     * 되돌려 남에게 넘기므로 {@link #reconcileCoupon} 이 진행 중 쿠폰을 건너뛴다
      */
     public void reconcileWithLock() {
         RLock lock = redissonClient.getLock(RECONCILE_LOCK_KEY);

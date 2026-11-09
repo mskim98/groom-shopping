@@ -1,8 +1,10 @@
 package groom.backend.infrastructure.kafka.stream;
 
+import groom.backend.application.coupon.CouponStockReconciliationService;
 import groom.backend.domain.coupon.service.CouponService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +26,11 @@ public class CouponDelayConsumer {
    * 실제 쿠폰 비활성화 로직을 담고 있는 도메인 서비스
    */
   private final CouponService couponService;
+
+  /**
+   * 마감 처리. 대조 서비스는 설정으로 끌 수 있어 없을 수 있다
+   */
+  private final ObjectProvider<CouponStockReconciliationService> reconciliationProvider;
 
   /**
    * Kafka 토픽의 메시지를 구독하는 리스너 메소드입니다.
@@ -52,7 +59,10 @@ public class CouponDelayConsumer {
     log.info("[Kafka] coupon inactivate reservation event consumed: {}", event);
     try {
       // 전달받은 이벤트의 couponId를 사용하여 실제 비즈니스 로직(쿠폰 비활성화) 실행
-      couponService.disableCoupon(event.getCouponId());
+      Boolean disabled = couponService.disableCoupon(event.getCouponId());
+      if (Boolean.TRUE.equals(disabled)) {
+        closeCoupon(event.getCouponId());
+      }
 
       log.info("[KAFKA_CONSUME_SUCCESS] couponId={}", event.getCouponId());
 
@@ -69,6 +79,20 @@ public class CouponDelayConsumer {
       // 인지하고, 설정된 정책(예: 재시도, Dead Letter Queue로 전송 등)에 따라
       // 후속 조치를 시도할 수 있습니다.
       throw e;
+    }
+  }
+
+  // 종료 시각이 지난 쿠폰의 고아 예약을 회수하고 확정 발급 수를 굳힌다
+  // 마감 처리의 실패는 비활성화를 되돌리거나 이 메시지를 재처리할 이유가 아니므로 기록만 한다
+  // 한계: 비활성화 시점에 아직 확정되지 않은 요청(컨슈머 랙)은 굳힌 수에 들어가지 않는다
+  private void closeCoupon(Long couponId) {
+    try {
+      CouponStockReconciliationService reconciliation = reconciliationProvider.getIfAvailable();
+      if (reconciliation != null) {
+        reconciliation.closeCoupon(couponId);
+      }
+    } catch (Exception e) {
+      log.error("[COUPON_CLOSE_FAILED] couponId={}, error={}", couponId, e.toString());
     }
   }
 }
