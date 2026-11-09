@@ -132,13 +132,17 @@ public class CouponStockReconciliationService {
     // 스캔 전체를 한 트랜잭션으로 묶지 않는다 - 락 보유 구간만큼 DB 커넥션을 점유하게 되고,
     // 이 배치는 페이지마다 읽고 Redis 를 고치는 작업이라 하나의 일관된 스냅숏이 필요하지도 않다
     public void reconcileAll() {
+        // 랙은 토픽 · 그룹 단위라 쿠폰마다 읽을 이유가 없다. lagOf 는 호출마다 AdminClient 를 새로 만들고 5 초 제한을 건다
+        // 종료된 쿠폰은 새 게이트 통과가 없으므로 이 실행에서 처음 필요할 때 읽은 값이 실행 내내 유효하다
+        // 값이 0 이 아니면 이번 실행의 모든 쿠폰이 회수를 건너뛰고 다음 주기가 다시 읽는다
+        RunLag runLag = new RunLag();
         long lastId = 0L;
         int scanned = 0;
         List<Coupon> page;
         do {
             page = couponRepository.findAllByIdGreaterThanOrderById(lastId, PageRequest.of(0, batchSize));
             for (Coupon coupon : page) {
-                ReconcileReport report = reconcileCoupon(coupon);
+                ReconcileReport report = reconcileCoupon(coupon, runLag);
                 if (report != null) {
                     scanned++;
                 }
@@ -157,6 +161,10 @@ public class CouponStockReconciliationService {
      * 그래서 이 식은 <b>진행 중인 재고를 되살리지 않는다</b>
      */
     public ReconcileReport reconcileCoupon(Coupon coupon) {
+        return reconcileCoupon(coupon, new RunLag());
+    }
+
+    private ReconcileReport reconcileCoupon(Coupon coupon, RunLag runLag) {
         Long couponId = coupon.getId();
         if (!isFinished(coupon)) {
             // 진행 중이면 손대지 않는다. 게이트를 통과했는데 아직 저장되지 않은 건과
@@ -174,7 +182,7 @@ public class CouponStockReconciliationService {
         long reserved = couponStockRedisRepository.countIssuedUsers(couponId);
         long expected = dbQuantity + confirmed - reserved;
 
-        int orphansRemoved = removeOrphanReservations(couponId);
+        int orphansRemoved = removeOrphanReservations(couponId, runLag);
         if (orphansRemoved > 0) {
             // 고아를 뺐으므로 기대값을 다시 계산한다
             reserved -= orphansRemoved;
@@ -235,15 +243,15 @@ public class CouponStockReconciliationService {
                 || (coupon.getExpireDate() != null && coupon.getExpireDate().isBefore(LocalDate.now()));
     }
 
-    private int removeOrphanReservations(Long couponId) {
-        // 랙을 가장 먼저 읽는다. 명단과 확정 행을 읽은 뒤에 읽으면, 첫 읽기 때 랙에 있던 요청이 그 사이 커밋되고
+    private int removeOrphanReservations(Long couponId, RunLag runLag) {
+        // 랙을 명단과 확정 행보다 먼저 읽는다. 명단과 확정 행을 읽은 뒤에 읽으면, 첫 읽기 때 랙에 있던 요청이 그 사이 커밋되고
         // 랙이 0 으로 읽혀 "확정 행 목록에 없는 사용자" 가 방금 확정된 사용자인 채 명단에서 지워진다
         // 그러면 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받고 DB 유니크가 막으면서 재고가 +1 된다
         // 랙이 0 이 된 뒤에 읽은 확정 행에는 그 시점까지 커밋된 요청이 모두 들어 있다
         // 랙을 읽지 못한 경우(-1)도 같다. 건너뛴 회수는 다음 주기 대조가 랙이 0 일 때 한다
-        long lag = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC, CouponAsyncIssueService.CONSUMER_GROUP);
+        long lag = runLag.get();
         if (lag != 0) {
-            log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] couponId={}, lag={}", couponId, lag);
+            runLag.warnSkippedOnce(couponId);
             return 0;
         }
         Set<String> reservedUsers = couponStockRedisRepository.getIssuedUsers(couponId);
@@ -268,6 +276,28 @@ public class CouponStockReconciliationService {
         couponStockRedisRepository.removeIssuedUsers(couponId, orphans);
         orphanCounter.increment(orphans.size());
         return orphans.size();
+    }
+
+    // 한 번의 대조 실행이 공유하는 랙 값. 처음 필요할 때 한 번 읽고, 회수를 건너뛴 사실은 실행당 한 줄만 남긴다
+    private final class RunLag {
+        private Long value;
+        private boolean warned;
+
+        long get() {
+            if (value == null) {
+                value = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC,
+                        CouponAsyncIssueService.CONSUMER_GROUP);
+            }
+            return value;
+        }
+
+        void warnSkippedOnce(Long firstCouponId) {
+            if (!warned) {
+                warned = true;
+                log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] lag={}, firstCouponId={} - 이번 실행의 고아 예약 회수를 건너뛴다",
+                        value, firstCouponId);
+            }
+        }
     }
 
     /** 한 쿠폰 대조 결과. 테스트와 로그 분석에 쓴다 */
