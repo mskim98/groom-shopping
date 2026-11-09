@@ -37,6 +37,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -155,7 +156,7 @@ public class PaymentApplicationService {
         // [3] DB 후처리 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
         // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
-            return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
+            return applyWithRetry(orderId, response);
         } catch (Exception dbError) {
             // 같은 주문의 중복 확정 - 먼저 끝난 요청이 이미 승인했다면(낙관적 락 · 상태 전이 거부 · 유일 제약 어느 쪽으로 졌든)
             // 이 요청은 실패가 아니라 멱등 응답이다. 여기서 보상을 기록하면 정상 결제를 취소하는 경로가 열린다
@@ -194,6 +195,32 @@ public class PaymentApplicationService {
                 throw businessException;
             }
             throw new RuntimeException("결제 승인 후 처리 중 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    // 후처리 트랜잭션을 version 충돌(ObjectOptimisticLockingFailureException) 시 통째로 다시 돈다. 낙관적 락 재고 전략이
+    // 후처리 트랜잭션에 합류하므로 충돌 재시도는 트랜잭션 안이 아니라 이 바깥에서만 가능하다. 다른 전략에서는 Payment 의
+    // lock_version 충돌(동시 중복 확정)이 여기로 오는데, 다시 돌면 이미 DONE 이라 아래 멱등 응답 경로가 받는다
+    private static final int POST_PROCESS_MAX_ATTEMPTS = 3;
+
+    private Payment applyWithRetry(UUID orderId, TossPaymentResponse response) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                // 프록시 경유 호출이라야 @Transactional 경계가 매 시도마다 새로 열린다
+                return selfProvider.getObject().applyApprovedPaymentInTx(orderId, response);
+            } catch (ObjectOptimisticLockingFailureException conflict) {
+                if (attempt >= POST_PROCESS_MAX_ATTEMPTS) {
+                    throw conflict;
+                }
+                log.warn("[POST_PROCESS_RETRY] version 충돌로 후처리 재시도 - OrderId: {}, Attempt: {}", orderId, attempt);
+                try {
+                    // 같은 행을 두고 다투는 요청이 같은 시점에 재진입해 재충돌하지 않게 흩는다
+                    Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextLong(10, 60));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw conflict;
+                }
+            }
         }
     }
 
