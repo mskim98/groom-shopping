@@ -10,6 +10,8 @@ import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentCompensationRepository;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
+import groom.backend.domain.payment.repository.PaymentCompensationRepository;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +41,8 @@ class CompensationNotApprovedTest {
     private PaymentCompensationService compensationService;
     @Autowired
     private SpringDataPaymentCompensationRepository compensationJpa;
+    @Autowired
+    private PaymentCompensationRepository compensationRepository;
     @Autowired
     private SpringDataProductRepository productRepository;
     @Autowired
@@ -80,5 +84,40 @@ class CompensationNotApprovedTest {
                 compensationId)).containsEntry("status", "NOT_APPROVED").containsEntry("retry_count", 0);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_outbox WHERE aggregate_id = ?",
                 Long.class, payment.getId())).as("DLQ Outbox 행").isZero();
+    }
+
+    private void compensateOverTerminalRow(String terminalStatus) {
+        jdbc.update("UPDATE payment_compensation SET status = ?, retry_count = 3, next_retry_at = NULL, last_error = '이전 사유' WHERE id = ?",
+                terminalStatus, compensationId);
+        String newKey = "pk-" + UUID.randomUUID();
+
+        compensationService.compensate(payment.getId(), newKey, 1000, "재시도 확정이 승인됐으나 후처리 실패");
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
+                Long.class, payment.getId())).as("결제당 보상 행은 하나").isEqualTo(1L);
+        assertThat(jdbc.queryForMap(
+                "SELECT status, reason, payment_key, retry_count, last_error FROM payment_compensation WHERE id = ?",
+                compensationId))
+                .containsEntry("status", "PENDING")
+                .containsEntry("reason", "재시도 확정이 승인됐으나 후처리 실패")
+                .containsEntry("payment_key", newKey)
+                .containsEntry("retry_count", 0)
+                .containsEntry("last_error", null);
+        // 배치의 선점 조회가 이 행을 집어 간다
+        assertThat(compensationRepository.findRetryable(LocalDateTime.now().plusSeconds(1),
+                LocalDateTime.now().minusMinutes(5), 1000))
+                .extracting(PaymentCompensation::getId).contains(compensationId);
+    }
+
+    @Test
+    @DisplayName("이미 NOT_APPROVED 로 끝난 결제의 재시도 확정이 승인된 뒤 후처리가 실패하면 그 행을 다시 열어 환불을 시도한다")
+    void compensate_기존_NOT_APPROVED행_다시_PENDING으로_열린다() {
+        compensateOverTerminalRow("NOT_APPROVED");
+    }
+
+    @Test
+    @DisplayName("이미 SUPERSEDED 로 끝난 결제에 새 보상 의도가 오면 그 행을 다시 열어 환불을 시도한다")
+    void compensate_기존_SUPERSEDED행_다시_PENDING으로_열린다() {
+        compensateOverTerminalRow("SUPERSEDED");
     }
 }
