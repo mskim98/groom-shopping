@@ -208,6 +208,8 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         }
         if (t instanceof CallNotPermittedException) {
             log.warn("[CB_CANCEL_FALLBACK_OPEN] 취소 회로 OPEN, fast-fail - PaymentKey: {}", paymentKey);
+            // 열린 회로는 "잠시 후 재시도" 로 알린다(승인 쪽 fallback 과 같은 오류 코드)
+            throw new TossCircuitOpenException();
         } else {
             log.error("[CB_CANCEL_FALLBACK_FAILURE] Toss cancel failed - PaymentKey: {}, Error: {}",
                     paymentKey, t.getMessage());

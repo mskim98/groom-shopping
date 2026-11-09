@@ -17,6 +17,7 @@ import groom.backend.domain.order.model.enums.OrderStatus;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentOutbox;
+import groom.backend.domain.payment.model.enums.PaymentStateTransition;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.domain.payment.repository.PaymentRepository;
@@ -357,42 +358,70 @@ public class PaymentApplicationService {
     }
 
     /**
-     * 결제 취소
+     * 결제 취소(사용자 수동). Toss 호출은 트랜잭션 밖에서, DB 반영만 별도 트랜잭션으로 수행한다
      */
-    @Transactional
+    // NOT_SUPPORTED : Toss 취소 응답을 기다리는 동안(최대 30초) DB 커넥션을 쥐지 않는다. 승인(confirmPayment)과 같은 구조
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment cancelPayment(UUID paymentId, String cancelReason) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+        // Toss 를 부르기 전에 취소 가능 상태인지 본다 - 부른 뒤에 상태 전이가 거부되면 Toss 만 취소된 불일치가 남는다
+        PaymentStateTransition.validate(payment.getStatus(), PaymentStatus.CANCELED);
 
+        String paymentKey = payment.getPaymentKeyValue();
         try {
-            // Toss Payments API 결제 취소 요청
-            TossPaymentResponse response = tossPaymentClient.cancelPayment(
-                    payment.getPaymentKeyValue(),
-                    cancelReason
-            );
-
-            // Payment 취소 처리
-            payment.cancel();
-            paymentRepository.save(payment);
-
-            // Order 상태 변경 (CONFIRMED -> CANCELLED)
-            Order order = payment.getOrder();
-            order.changeStatus(OrderStatus.CANCELLED);
-            orderRepository.save(order);
-
-            // 재고 복구
-            restoreProductStock(order);
-
-            log.info("[PAYMENT_CANCEL_SUCCESS] Payment cancelled - PaymentId: {}, Reason: {}",
-                    paymentId, cancelReason);
-
-            return payment;
-
+            // 3인자 메서드를 직접 불러야 프록시의 @CircuitBreaker(toss-cancel) 가 적용된다.
+            // 2인자 default 메서드는 같은 객체 안에서 3인자를 부르는 자기 호출이라 서킷을 우회한다
+            tossPaymentClient.cancelPayment(paymentKey, cancelReason, paymentKey + ":cancel");
+        } catch (BusinessException e) {
+            // 서킷 OPEN 같은 도메인 예외는 재포장하지 않는다 - errorCode(503)를 잃으면 500 으로 나간다
+            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}", paymentId, e.getMessage());
+            throw e;
         } catch (Exception e) {
-            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}",
-                    paymentId, e.getMessage());
+            log.error("[PAYMENT_CANCEL_FAILED] Payment cancel failed - PaymentId: {}, Error: {}", paymentId, e.getMessage());
             throw new RuntimeException("결제 취소에 실패했습니다: " + e.getMessage(), e);
         }
+
+        try {
+            // 프록시 경유라야 REQUIRES_NEW 가 적용된다
+            return selfProvider.getObject().applyCancelInTx(paymentId);
+        } catch (Exception dbError) {
+            // Toss 는 취소됐는데 DB 는 DONE 인 상태 - 조용히 남지 않도록 보상 장부에 대사 행을 남긴다
+            log.error("[PAYMENT_CANCEL_DB_UPDATE_FAILED] Toss 취소 성공 뒤 DB 갱신 실패(대사 필요) - PaymentId: {}, PaymentKey: {}, Error: {}",
+                    paymentId, paymentKey, dbError.getMessage(), dbError);
+            try {
+                paymentCompensationService.compensate(paymentId, paymentKey, payment.getAmountValue(),
+                        "[RECONCILE_MANUAL_CANCEL] Toss 취소 성공, DB 갱신 실패: " + dbError.getMessage());
+            } catch (Exception recordError) {
+                log.error("[PAYMENT_CANCEL_RECONCILE_ENTRY_FAILED] 대사 행 기록 실패(수동 처리 필요) - PaymentId: {}, Error: {}",
+                        paymentId, recordError.getMessage(), recordError);
+            }
+            throw new RuntimeException("결제 취소에 실패했습니다: " + dbError.getMessage(), dbError);
+        }
+    }
+
+    /**
+     * Toss 취소 성공 뒤의 DB 반영 - 결제 취소, 주문 취소, 재고 복구를 한 트랜잭션으로 묶는다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Payment applyCancelInTx(UUID paymentId) {
+        Payment payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+
+        // Payment 취소 처리
+        payment.cancel();
+        paymentRepository.save(payment);
+
+        // Order 상태 변경 (CONFIRMED -> CANCELLED)
+        Order order = payment.getOrder();
+        order.changeStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+
+        // 재고 복구
+        restoreProductStock(order);
+
+        log.info("[PAYMENT_CANCEL_SUCCESS] Payment cancelled - PaymentId: {}", paymentId);
+        return payment;
     }
 
     /**
