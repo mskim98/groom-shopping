@@ -18,7 +18,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.resource.ClientResources;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
@@ -48,10 +52,25 @@ public class RedisConfig {
     public static final String COUPON_ITEM_CACHE_NAME = "coupon-item-cache";
     public static final String COUPON_LIST_CACHE_NAME = "user-coupons-list-cache";
 
+    // 명령 타임아웃. 기본값을 1초로 두는 이유 - Redis 가 응답을 멈추면 접수 스레드가 그 시간만큼 붙들리고,
+    // Lettuce 기본값(60초)이면 톰캣 스레드가 먼저 바닥난다
+    @Value("${spring.data.redis.timeout:1s}")
+    private Duration commandTimeout;
+
     // @Bean : Redis 연결 팩토리를 빈으로 등록(Lettuce는 비동기/논블로킹 Redis 클라이언트).
+    // new LettuceConnectionFactory(host, port) 는 spring.data.redis.timeout 을 읽지 않고
+    // Boot 가 만든 ClientResources(Micrometer 명령 지연 기록기 포함)도 버린다
     @Bean
-    public RedisConnectionFactory redisConnectionFactory() {
-        return new LettuceConnectionFactory(host, port);
+    public RedisConnectionFactory redisConnectionFactory(ClientResources clientResources) {
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+                .commandTimeout(commandTimeout)
+                .clientResources(clientResources)
+                // 끊긴 동안 명령을 큐에 쌓으면 재연결 뒤 한꺼번에 실행되고 그동안 호출 스레드는 타임아웃까지 기다린다
+                .clientOptions(ClientOptions.builder()
+                        .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                        .build())
+                .build();
+        return new LettuceConnectionFactory(new RedisStandaloneConfiguration(host, port), clientConfig);
     }
 
     // @Bean : 쿠폰 재고용 기본 RedisTemplate. 키/값을 모두 문자열로 직렬화한다.
