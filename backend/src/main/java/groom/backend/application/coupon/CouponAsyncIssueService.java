@@ -9,6 +9,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
+import groom.backend.infrastructure.config.RedisConfig;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -29,7 +30,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.RetriableException;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -90,6 +95,12 @@ public class CouponAsyncIssueService {
     // SSE 푸시를 붙이는 시점에 켠다
     @Value("${coupon.issue.publish-success-results:false}")
     private boolean publishSuccessResults;
+
+    // 내 쿠폰 목록 캐시(userId 키). searchMyCoupon 이 @Cacheable 로 읽는 목록이라 확정 경로가 비우지 않으면
+    // 방금 발급한 쿠폰이 캐시 TTL 동안 목록에 보이지 않는다. 대조 서비스를 끈 구성처럼 없을 수도 있어 선택 주입이다
+    @Autowired(required = false)
+    @Qualifier("couponCacheManager")
+    private CacheManager couponCacheManager;
 
     // 발행 타임아웃(브로커 기록 여부 불명) 뒤 같은 requestId 로 다시 보내는 횟수
     // 한 번에 delivery.timeout.ms 가 걸리므로 늘리면 표시까지 걸리는 시간이 그만큼 길어진다
@@ -328,6 +339,7 @@ public class CouponAsyncIssueService {
         for (CouponIssueRequestEvent event : confirmable) {
             if (owned.contains(event.requestId())) {
                 statuses.put(event.requestId(), STATUS_SUCCESS);
+                evictMyCouponCache(event.userId());
                 if (publishSuccessResults) {
                     results.add(new CouponIssueResultEvent(event.requestId(), couponId, event.userId(),
                             STATUS_SUCCESS, null));
@@ -431,6 +443,7 @@ public class CouponAsyncIssueService {
         for (CouponIssueRequestEvent event : events) {
             if (committed.contains(event.requestId())) {
                 statuses.put(event.requestId(), STATUS_SUCCESS);
+                evictMyCouponCache(event.userId());
                 continue;
             }
             couponStockRedisRepository.rollbackIssue(event.couponId(), event.userId());
@@ -464,6 +477,22 @@ public class CouponAsyncIssueService {
             return true;
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             return false;
+        }
+    }
+
+    // 행이 커밋된 사용자의 목록 캐시를 비운다. 캐시 저장소(Redis) 장애로 확정 배치를 재전달시킬 이유는 없다 -
+    // 비우지 못하면 TTL 이 지날 때까지 목록이 낡을 뿐이다
+    private void evictMyCouponCache(Long userId) {
+        if (couponCacheManager == null) {
+            return;
+        }
+        try {
+            Cache cache = couponCacheManager.getCache(RedisConfig.COUPON_LIST_CACHE_NAME);
+            if (cache != null) {
+                cache.evict(userId);
+            }
+        } catch (Exception e) {
+            log.warn("[COUPON_MY_LIST_CACHE_EVICT_FAILED] userId={}, error={}", userId, e.toString());
         }
     }
 
