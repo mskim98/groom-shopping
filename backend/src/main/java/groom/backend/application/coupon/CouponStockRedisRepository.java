@@ -77,15 +77,19 @@ public class CouponStockRedisRepository {
      * <p>INCR 은 없는 키를 1 로 만든다. Redis 가 비워진 직후 반납이 들어오면 재고 키가 1 로 생겨
      * 판정 근거가 없다는 신호(-2 → 503)가 사라진다. 키가 없으면 -2 를 돌려주고 아무것도 쓰지 않는다 -
      * 명단만 줄이면 복구가 DB 로 다시 세울 때 두 값이 어긋난다
+     *
+     * <p>명단에서 실제로 빠진 경우에만 올린다(-3 은 이미 풀린 예약). 예약 = 재고 차감 + 명단 등록이므로
+     * 명단에 없으면 돌려줄 차감이 없고, 재전달된 배치가 같은 정리를 다시 불러도 재고가 한 번만 오른다
      */
     private static final RedisScript<Long> ROLLBACK_ISSUE_SCRIPT = new DefaultRedisScript<>(
             """
-                    if redis.call('EXISTS', KEYS[1]) == 1 then
-                        redis.call('SREM', KEYS[2], ARGV[1])
-                        return redis.call('INCRBY', KEYS[1], 1)
-                    else
+                    if redis.call('EXISTS', KEYS[1]) == 0 then
                         return -2
                     end
+                    if redis.call('SREM', KEYS[2], ARGV[1]) == 1 then
+                        return redis.call('INCRBY', KEYS[1], 1)
+                    end
+                    return -3
                     """,
             Long.class
     );
