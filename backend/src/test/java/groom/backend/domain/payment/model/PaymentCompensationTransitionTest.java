@@ -191,4 +191,36 @@ class PaymentCompensationTransitionTest {
                 .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
         assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.NOT_APPROVED);
     }
+
+    // ── 종단 행 다시 열기 ──
+
+    @Test
+    @DisplayName("reopen 은 NOT_APPROVED 행을 새 값으로 PENDING 에 되돌리고 재시도 횟수·오류를 지운다")
+    void reopenResetsTerminalRow() {
+        PaymentCompensation compensation = newCompensation(5);
+        compensation.markProcessing();
+        compensation.markNotApproved("결제 없음");
+
+        compensation.reopen("pk-new", 2000, "새 사유");
+
+        assertThat(compensation.getStatus()).isEqualTo(CompensationStatus.PENDING);
+        assertThat(compensation.getPaymentKey()).isEqualTo("pk-new");
+        assertThat(compensation.getAmount()).isEqualTo(2000);
+        assertThat(compensation.getReason()).isEqualTo("새 사유");
+        assertThat(compensation.getRetryCount()).isZero();
+        assertThat(compensation.getLastError()).isNull();
+        assertThat(compensation.getNextRetryAt()).isNotNull();
+        assertThat(compensation.isTerminal()).isFalse();
+    }
+
+    @Test
+    @DisplayName("reopen 은 이미 재시도 대기(PENDING)인 행에는 쓸 수 없다")
+    void reopenRejectsPendingRow() {
+        PaymentCompensation compensation = newCompensation(5);
+
+        assertThatThrownBy(() -> compensation.reopen("pk-new", 1000, "사유"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.PAYMENT_COMPENSATION_ILLEGAL_TRANSITION);
+    }
 }
