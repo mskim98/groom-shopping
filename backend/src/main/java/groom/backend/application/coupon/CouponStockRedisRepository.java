@@ -1,5 +1,6 @@
 package groom.backend.application.coupon;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -30,6 +31,11 @@ public class CouponStockRedisRepository {
     // Lua 가 두 키를 함께 다루므로, Cluster 에서 슬롯이 갈리면 CROSSSLOT 으로 항상 실패한다
     // 중괄호 안(couponId)만 슬롯 계산에 쓰이므로 두 키가 반드시 같은 노드에 놓인다
     private static final String KEY_PREFIX = "coupon:{";
+
+    // 발행 결과를 끝내 모르는 요청 표시. 값은 requestId:couponId:userId
+    // 브로커가 기록했는지 알 수 없어 재고를 되돌리지 못한 건이다. 대조(종료 쿠폰의 고아 예약 회수)가 이 목록으로 조사한다
+    private static final String PUBLISH_UNCERTAIN_KEY = "coupon:issue:publish-uncertain";
+    private static final Duration PUBLISH_UNCERTAIN_TTL = Duration.ofDays(1);
 
     public static String stockKey(Long couponId) {
         return KEY_PREFIX + couponId + "}:stock";
@@ -153,6 +159,16 @@ public class CouponStockRedisRepository {
         Long result = redisTemplate.execute(ROLLBACK_ISSUE_SCRIPT,
                 List.of(stockKey(couponId), issuedUsersKey(couponId)), userId.toString());
         warnIfKeyMissing(result, couponId);
+    }
+
+    /**
+     * 발행 결과를 모르는 요청을 대조 대상으로 표시한다. 재고는 건드리지 않는다
+     *
+     * <p>TTL 은 키 전체에 걸린다. 표시가 들어올 때마다 갱신되므로 마지막 표시 하루 뒤에 사라진다
+     */
+    public void markPublishUncertain(String requestId, Long couponId, Long userId) {
+        redisTemplate.opsForSet().add(PUBLISH_UNCERTAIN_KEY, requestId + ":" + couponId + ":" + userId);
+        redisTemplate.expire(PUBLISH_UNCERTAIN_KEY, PUBLISH_UNCERTAIN_TTL);
     }
 
     /**

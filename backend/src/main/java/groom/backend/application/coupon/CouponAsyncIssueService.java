@@ -21,9 +21,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.RetriableException;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
@@ -88,6 +91,14 @@ public class CouponAsyncIssueService {
     @Value("${coupon.issue.publish-success-results:false}")
     private boolean publishSuccessResults;
 
+    // 발행 타임아웃(브로커 기록 여부 불명) 뒤 같은 requestId 로 다시 보내는 횟수
+    // 한 번에 delivery.timeout.ms 가 걸리므로 늘리면 표시까지 걸리는 시간이 그만큼 길어진다
+    @Value("${coupon.issue.publish-resend-attempts:2}")
+    private int publishResendAttempts = 2;
+
+    // 재전송 전용. 접수 스레드와 프로듀서 I/O 스레드 어느 쪽도 재전송의 대기에 붙들리지 않게 가상 스레드로 보낸다
+    private final Executor resendExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
     /**
      * 접수 - 판정하고 큐에 싣는다. 여기서 기다리는 일이 없어야 한다
      *
@@ -144,19 +155,21 @@ public class CouponAsyncIssueService {
     }
 
     /**
-     * 요청 이벤트를 발행한다. 발행에 실패하면 배정한 자리를 되돌린다
+     * 요청 이벤트를 발행한다. 브로커에 없다고 확실한 실패에서만 배정한 자리를 되돌린다
      *
-     * <p>실패는 두 갈래로 나타나고 <b>되돌림이 양쪽 모두에 걸려 있어야 한다</b>
+     * <p>실패는 세 갈래로 나타난다
      * <ul>
-     *   <li>비동기 - 브로커가 받지 못한 경우. 콜백으로 오며 상한은 {@code delivery.timeout.ms} 가 정한다</li>
      *   <li>동기 - 토픽 메타데이터를 못 받거나 프로듀서 버퍼가 차서 {@code max.block.ms} 를 넘긴 경우.
-     *       {@code send} 자체가 던지므로 <b>콜백이 등록되지 않는다</b></li>
+     *       {@code send} 자체가 던지므로 <b>콜백이 등록되지 않고</b>, 레코드는 어디에도 실리지 않았다 -
+     *       되돌림이 이 갈래에도 걸려 있어야 한다. 2026-09-02 초당 5,000 도착 측정에서 새로 만든 토픽의
+     *       메타데이터 대기가 1초를 넘겨 132건이 동기로 던졌고, 되돌림 로그는 0건인데 재고 132개가 잠겼다
+     *       (발급 9,868 / 재고 10,000)</li>
+     *   <li>비동기 확정 실패 - 브로커가 거절한 경우(레코드 크기 초과 등). 브로커에 없으므로 되돌린다</li>
+     *   <li>비동기 타임아웃 - {@code delivery.timeout.ms} 가 지났다. <b>브로커가 기록하고 응답만 유실됐을 수 있다.</b>
+     *       이때 되돌리면 컨슈머가 그 요청을 INSERT 한 뒤 같은 자리가 한 번 더 팔린다.
+     *       같은 requestId 로 다시 보내고(컨슈머는 같은 requestId 의 행을 이미 처리한 요청으로 본다),
+     *       끝내 모르면 대조 대상으로 표시만 한다</li>
      * </ul>
-     *
-     * <p>동기 갈래를 콜백에만 맡겨 두면 자리를 배정한 채 아무도 되돌리지 않아 그 수량이 잠긴다.
-     * 2026-09-02 초당 5,000 도착 측정에서 실제로 발생 - 새로 만든 토픽의 메타데이터 대기가
-     * 1초를 넘겨 132건이 동기로 던졌고, 되돌림 로그는 0건인데 재고 132개가 잠겼다
-     * (발급 9,868 / 재고 10,000)
      */
     private void publishRequest(String requestId, Long couponId, Long userId) {
         CouponIssueRequestEvent event = new CouponIssueRequestEvent(requestId, couponId, userId, true);
@@ -168,16 +181,67 @@ public class CouponAsyncIssueService {
             throw new BusinessException(ErrorCode.SERVER_ERROR);
         }
         try {
-            couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
-                    .whenComplete((sent, error) -> {
-                        if (error == null) {
-                            return;
-                        }
-                        recoverFailedPublish(requestId, couponId, userId, error);
-                    });
+            sendWatched(requestId, couponId, userId, payload, 0);
         } catch (Exception e) {
+            // 첫 전송이 동기로 던졌다 - 아무것도 실리지 않았으므로 되돌려도 안전하다
             recoverFailedPublish(requestId, couponId, userId, e);
             throw new BusinessException(ErrorCode.SERVER_ERROR);
+        }
+    }
+
+    private void sendWatched(String requestId, Long couponId, Long userId, String payload, int resent) {
+        couponIssueKafkaTemplate.send(REQUEST_TOPIC, userId.toString(), payload)
+                .whenComplete((sent, error) -> {
+                    if (error == null) {
+                        return;
+                    }
+                    // 콜백은 프로듀서 I/O 스레드에서 돈다. 재전송의 send 가 거기서 막히지 않게 넘긴다
+                    resendExecutor.execute(() -> onPublishFailure(requestId, couponId, userId, payload, error, resent));
+                });
+    }
+
+    private void onPublishFailure(String requestId, Long couponId, Long userId, String payload,
+                                  Throwable error, int resent) {
+        if (!isPublishOutcomeUnknown(error)) {
+            recoverFailedPublish(requestId, couponId, userId, error);
+            return;
+        }
+        log.warn("[COUPON_PUBLISH_OUTCOME_UNKNOWN] requestId={}, couponId={}, userId={}, resent={}, error={}",
+                requestId, couponId, userId, resent, error.toString());
+        if (resent < publishResendAttempts) {
+            try {
+                sendWatched(requestId, couponId, userId, payload, resent + 1);
+                return;
+            } catch (Exception e) {
+                // 앞 전송이 브로커에 있을 수 있으므로 여기서 던져도 되돌리지 않는다
+                log.error("[COUPON_PUBLISH_RESEND_FAILED] requestId={}, error={}", requestId, e.toString());
+            }
+        }
+        markPublishUncertain(requestId, couponId, userId);
+    }
+
+    // 브로커가 기록했는지 알 수 없는 실패: 재시도 가능한 오류(타임아웃 · 네트워크 · 복제 부족 후 기록)
+    // 알 수 없으면 되돌리지 않는 쪽이다 - 되돌린 재고는 초과 발급이 되고, 되돌리지 않은 재고는 정산이 메우는 미달 발급이다
+    private static boolean isPublishOutcomeUnknown(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (t instanceof RetriableException || t instanceof java.util.concurrent.TimeoutException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    private void markPublishUncertain(String requestId, Long couponId, Long userId) {
+        log.error("[COUPON_PUBLISH_UNCERTAIN] requestId={}, couponId={}, userId={} - 재고를 되돌리지 않고 대조 대상으로 표시한다",
+                requestId, couponId, userId);
+        try {
+            couponStockRedisRepository.markPublishUncertain(requestId, couponId, userId);
+        } catch (Exception e) {
+            // 표시마저 못 남겼다. 상태 키는 WAITING 으로 남아 TTL 로 사라지고, 종료 쿠폰의 고아 예약 회수가 마지막 안전망이다
+            log.error("[COUPON_PUBLISH_UNCERTAIN_MARK_FAILED] requestId={}, error={}", requestId, e.toString());
         }
     }
 
