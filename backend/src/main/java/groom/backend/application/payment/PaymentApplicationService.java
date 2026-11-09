@@ -76,7 +76,7 @@ public class PaymentApplicationService {
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
-    private final PaymentOutboxRepository paymentOutboxRepository; // 결제 완료 이벤트 Outbox 적재
+    private final PaymentOutboxRepository paymentOutboxRepository; // 결제 승인(PaymentApproved) 이벤트 Outbox 적재
     private final ProductStockService productStockService; // 복원(increase) 경로 전용 - 세 전략 공통으로 낙관적 락을 쓴다
     private final StockDecrementer stockDecrementer;       // 차감 전략(stock.decrease-strategy 로 교체)
     private final ProductStockRedisRepository productStockRedisRepository; // Redis 재고 선점(결제 진입 전 게이트)
@@ -376,7 +376,7 @@ public class PaymentApplicationService {
 
     // 후처리 트랜잭션을 version 충돌(ObjectOptimisticLockingFailureException) 시 통째로 다시 돈다. 낙관적 락 재고 전략이
     // 후처리 트랜잭션에 합류하므로 충돌 재시도는 트랜잭션 안이 아니라 이 바깥에서만 가능하다. 다른 전략에서는 Payment 의
-    // lock_version 충돌(동시 중복 확정)이 여기로 오는데, 다시 돌면 이미 DONE 이라 아래 멱등 응답 경로가 받는다
+    // lock_version 충돌(동시 중복 확정)이 여기로 오는데, 다시 돌면 이미 DONE 이라 handlePostProcessFailure 의 isAlreadyApproved 분기(멱등 종료)가 받는다
     private static final int POST_PROCESS_MAX_ATTEMPTS = 3;
 
     private Payment applyWithRetry(UUID orderId, TossPaymentResponse response) {
@@ -545,8 +545,8 @@ public class PaymentApplicationService {
      */
     // propagation = REQUIRES_NEW : 항상 '새 트랜잭션'을 열어 독립적으로 커밋하여,
     // 바깥 트랜잭션이 롤백돼도 'FAILED 기록'은 별도로 남긴다.
-    // ✅ 자기호출 함정 해결: confirmPayment() 가 selfProvider.getObject() 로 프록시를 거쳐
-    //    호출하므로 REQUIRES_NEW 가 정상 적용된다(독립 커밋 보장).
+    // ✅ 자기호출 함정 해결: 호출자 confirmPayment() 와 applyApprovedEvent()(handlePostProcessFailure) 가
+    //    selfProvider.getObject() 로 프록시를 거쳐 호출하므로 REQUIRES_NEW 가 정상 적용된다(독립 커밋 보장).
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPaymentFailed(UUID paymentId, String code, String message) {
         markPaymentFailed(paymentId, code, message, null);
