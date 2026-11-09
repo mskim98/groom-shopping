@@ -65,6 +65,36 @@ public class CouponStockRedisRepository {
             Long.class
     );
 
+    /**
+     * 반납 Lua - 재고 키가 있을 때만 올린다. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키, ARGV[1]=userId
+     *
+     * <p>INCR 은 없는 키를 1 로 만든다. Redis 가 비워진 직후 반납이 들어오면 재고 키가 1 로 생겨
+     * 판정 근거가 없다는 신호(-2 → 503)가 사라진다. 키가 없으면 -2 를 돌려주고 아무것도 쓰지 않는다 -
+     * 명단만 줄이면 복구가 DB 로 다시 세울 때 두 값이 어긋난다
+     */
+    private static final RedisScript<Long> ROLLBACK_ISSUE_SCRIPT = new DefaultRedisScript<>(
+            """
+                    if redis.call('EXISTS', KEYS[1]) == 1 then
+                        redis.call('SREM', KEYS[2], ARGV[1])
+                        return redis.call('INCRBY', KEYS[1], 1)
+                    else
+                        return -2
+                    end
+                    """,
+            Long.class
+    );
+
+    private static final RedisScript<Long> ROLLBACK_STOCK_ONLY_SCRIPT = new DefaultRedisScript<>(
+            """
+                    if redis.call('EXISTS', KEYS[1]) == 1 then
+                        return redis.call('INCRBY', KEYS[1], 1)
+                    else
+                        return -2
+                    end
+                    """,
+            Long.class
+    );
+
     // RedisTemplate : 스프링이 제공하는 Redis 명령 실행 도구. private final 로 안전하게 주입받는다.
     private final RedisTemplate<String, String> redisTemplate;
 
@@ -120,8 +150,9 @@ public class CouponStockRedisRepository {
      * Lua 결과를 DB 커밋 실패 등으로 롤백해야 할 때 사용
      */
     public void rollbackIssue(Long couponId, Long userId) {
-        redisTemplate.opsForValue().increment(stockKey(couponId));
-        redisTemplate.opsForSet().remove(issuedUsersKey(couponId), userId.toString());
+        Long result = redisTemplate.execute(ROLLBACK_ISSUE_SCRIPT,
+                List.of(stockKey(couponId), issuedUsersKey(couponId)), userId.toString());
+        warnIfKeyMissing(result, couponId);
     }
 
     /**
@@ -131,7 +162,15 @@ public class CouponStockRedisRepository {
      * 게이트가 그를 다시 통과시켜 같은 실패를 무한 반복한다
      */
     public void rollbackStockOnly(Long couponId) {
-        redisTemplate.opsForValue().increment(stockKey(couponId));
+        Long result = redisTemplate.execute(ROLLBACK_STOCK_ONLY_SCRIPT, List.of(stockKey(couponId)));
+        warnIfKeyMissing(result, couponId);
+    }
+
+    // 키가 없어 반납하지 못한 경우다. 복구가 quantity − DB 발급 수로 다시 세우므로 이 반납분은 그 값에 이미 반영된다
+    private void warnIfKeyMissing(Long result, Long couponId) {
+        if (result != null && result == -2L) {
+            log.warn("[COUPON_ROLLBACK_SKIPPED_KEY_MISSING] couponId={}", couponId);
+        }
     }
 
     /**

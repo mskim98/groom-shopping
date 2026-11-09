@@ -27,6 +27,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
@@ -100,8 +102,15 @@ public class CouponAsyncIssueService {
             // 재고를 세우는 중이다. 지금 판정하면 아직 없는 근거로 통과 여부를 정하게 된다
             return CouponIssueResult.unavailable();
         }
-        CouponStockRedisRepository.IssueResult gate =
-                couponStockRedisRepository.tryIssue(couponId, userId);
+        CouponStockRedisRepository.IssueResult gate;
+        try {
+            gate = couponStockRedisRepository.tryIssue(couponId, userId);
+        } catch (RedisConnectionFailureException | QueryTimeoutException e) {
+            // 판정을 Redis 한 곳에서 하므로 끊기면 통과시킬 수도 없다. 500 은 재시도하지 말라는 뜻으로 읽히고
+            // 503 은 잠시 뒤 다시 시도하라는 뜻이다
+            log.error("[COUPON_GATE_REDIS_UNAVAILABLE] couponId={}, userId={}, error={}", couponId, userId, e.toString());
+            throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
+        }
         switch (gate) {
             case OUT_OF_STOCK -> {
                 return CouponIssueResult.soldOut();

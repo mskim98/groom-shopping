@@ -29,6 +29,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
@@ -40,6 +41,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
  */
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+// 스파이 빈 때문에 전용 컨텍스트가 하나 더 뜬다. Kafka Streams 상태 디렉터리 락이 앞 컨텍스트와 부딪히지 않게 끈다
+@TestPropertySource(properties = "spring.kafka.streams.auto-startup=false")
 @DisplayName("쿠폰 컨슈머 재전달 멱등")
 class CouponRedeliveryIdempotencyTest {
 
