@@ -47,6 +47,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+/**
+ * 결제 유스케이스 응용 서비스.
+ * <p>
+ * 승인 흐름: {@link #confirmPayment} 가 Toss 승인 뒤 Payment READY + {@code PaymentApproved} Outbox 행을 한 트랜잭션으로
+ * 남기면({@link #recordApprovedInTx}), Outbox 폴러가 payment-events 로 발행하고 PaymentEventConsumer 가
+ * {@link #applyApprovedEvent} 로 후처리(DONE · 주문 확정 · 재고 차감 · 티켓 발급)를 끝낸다. {@code confirmPayment} 는 그 결과를
+ * 대기 상한까지 기다려 DONE 이면 DONE 을, 상한을 넘으면 READY 를 돌려준다.
+ */
 // @Slf4j : log 객체 생성.
 @Slf4j
 // @Service : 결제 유스케이스를 오케스트레이션하는 응용 서비스 빈.

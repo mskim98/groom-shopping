@@ -45,7 +45,7 @@ class PaymentOutboxIntegrationTest {
     void publishPending_marksPublished() {
         // given - PENDING 이벤트 적재
         PaymentOutbox saved = paymentOutboxRepository.save(
-                PaymentOutbox.create(UUID.randomUUID(), "PAYMENT_COMPLETED",
+                PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved",
                         "{\"paymentId\":\"" + UUID.randomUUID() + "\"}"));
         outboxId = saved.getId();
         assertThat(saved.getStatus()).isEqualTo(PaymentOutbox.OutboxStatus.PENDING);
