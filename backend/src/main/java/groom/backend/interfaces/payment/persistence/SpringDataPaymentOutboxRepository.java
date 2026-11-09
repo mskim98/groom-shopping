@@ -1,6 +1,7 @@
 package groom.backend.interfaces.payment.persistence;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,4 +10,7 @@ public interface SpringDataPaymentOutboxRepository extends JpaRepository<Payment
 
     // status 가 PENDING 인 행을 created_at 오래된 순으로 가져온다 (limit 은 Pageable 로 제어).
     List<PaymentOutboxJpaEntity> findByStatusOrderByCreatedAtAsc(String status, Pageable pageable);
+
+    // 결제 한 건의 해당 이벤트 행(결제당 1건이 정상이지만 여럿이면 가장 최근 것)
+    Optional<PaymentOutboxJpaEntity> findFirstByAggregateIdAndEventTypeOrderByCreatedAtDesc(UUID aggregateId, String eventType);
 }

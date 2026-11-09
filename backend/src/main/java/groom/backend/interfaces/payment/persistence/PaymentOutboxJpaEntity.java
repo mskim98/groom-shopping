@@ -47,4 +47,7 @@ public class PaymentOutboxJpaEntity {
 
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
+
+    @Column(name = "republish_count", nullable = false)
+    private int republishCount;
 }

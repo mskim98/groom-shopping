@@ -55,6 +55,12 @@ public class PaymentRepositoryImpl implements PaymentRepository {
     }
 
     @Override
+    public List<Payment> findStaleReady(java.time.LocalDateTime cutoff, int limit) {
+        return springDataPaymentRepository.findStaleByStatus(PaymentStatus.READY, cutoff,
+                org.springframework.data.domain.PageRequest.of(0, limit));
+    }
+
+    @Override
     public void delete(Payment payment) {
         springDataPaymentRepository.delete(payment);
     }

@@ -2,6 +2,7 @@ package groom.backend.domain.payment.repository;
 
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,6 +24,9 @@ public interface PaymentRepository {
     List<Payment> findByUserIdAndStatus(Long userId, PaymentStatus status);
 
     boolean existsByOrderId(UUID orderId);
+
+    // READY 인데 updated_at 이 cutoff 보다 오래된 결제를 오래된 순으로 limit 건. READY 에 멈춘 결제 대사용
+    List<Payment> findStaleReady(LocalDateTime cutoff, int limit);
 
     void delete(Payment payment);
 

@@ -17,6 +17,11 @@ public interface SpringDataPaymentRepository extends JpaRepository<Payment, UUID
     @Query("SELECT p FROM Payment p WHERE p.paymentKey.value = :paymentKey")
     Optional<Payment> findByPaymentKeyValue(@Param("paymentKey") String paymentKey);
 
+    // status 인덱스(idx_payment_status)로 READY 행만 읽고 updated_at 으로 거른다 - READY 는 평소 거의 없다
+    @Query("SELECT p FROM Payment p WHERE p.status = :status AND p.updatedAt < :cutoff ORDER BY p.updatedAt ASC")
+    List<Payment> findStaleByStatus(@Param("status") PaymentStatus status, @Param("cutoff") java.time.LocalDateTime cutoff,
+            org.springframework.data.domain.Pageable pageable);
+
     List<Payment> findByUserId(Long userId);
 
     @Query("SELECT p FROM Payment p WHERE p.userId = :userId AND p.status = :status")

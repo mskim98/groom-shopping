@@ -3,6 +3,8 @@ package groom.backend.interfaces.payment.persistence;
 import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
@@ -28,6 +30,12 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 .toList();
     }
 
+    @Override
+    public Optional<PaymentOutbox> findByAggregateIdAndEventType(UUID aggregateId, String eventType) {
+        return springRepo.findFirstByAggregateIdAndEventTypeOrderByCreatedAtDesc(aggregateId, eventType)
+                .map(this::toDomain);
+    }
+
     private PaymentOutboxJpaEntity toEntity(PaymentOutbox o) {
         return PaymentOutboxJpaEntity.builder()
                 .id(o.getId())
@@ -38,6 +46,7 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 .status(o.getStatus().name())
                 .createdAt(o.getCreatedAt())
                 .publishedAt(o.getPublishedAt())
+                .republishCount(o.getRepublishCount())
                 .build();
     }
 
@@ -50,6 +59,7 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 e.getTopic(),
                 PaymentOutbox.OutboxStatus.valueOf(e.getStatus()),
                 e.getCreatedAt(),
-                e.getPublishedAt());
+                e.getPublishedAt(),
+                e.getRepublishCount());
     }
 }

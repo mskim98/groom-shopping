@@ -20,6 +20,7 @@ public class PaymentOutbox {
     private OutboxStatus status;     // PENDING / PUBLISHED
     private LocalDateTime createdAt;
     private LocalDateTime publishedAt;
+    private int republishCount;      // READY 대사가 PUBLISHED 행을 PENDING 으로 되돌려 다시 내보낸 횟수
 
     public enum OutboxStatus { PENDING, PUBLISHED }
 
@@ -49,6 +50,11 @@ public class PaymentOutbox {
 
     public static PaymentOutbox of(UUID id, UUID aggregateId, String eventType, String payload, String topic,
             OutboxStatus status, LocalDateTime createdAt, LocalDateTime publishedAt) {
+        return of(id, aggregateId, eventType, payload, topic, status, createdAt, publishedAt, 0);
+    }
+
+    public static PaymentOutbox of(UUID id, UUID aggregateId, String eventType, String payload, String topic,
+            OutboxStatus status, LocalDateTime createdAt, LocalDateTime publishedAt, int republishCount) {
         PaymentOutbox outbox = new PaymentOutbox();
         outbox.topic = topic;
         outbox.id = id;
@@ -58,7 +64,15 @@ public class PaymentOutbox {
         outbox.status = status;
         outbox.createdAt = createdAt;
         outbox.publishedAt = publishedAt;
+        outbox.republishCount = republishCount;
         return outbox;
+    }
+
+    // 발행은 됐는데 후처리가 끝나지 않은 결제의 이벤트를 다시 내보내려 PENDING 으로 되돌린다. 컨슈머는 Payment 상태로 멱등이라 중복 전달은 무해하다
+    public void republish() {
+        this.status = OutboxStatus.PENDING;
+        this.publishedAt = null;
+        this.republishCount++;
     }
 
     // Kafka 발행 성공 시 호출 — PUBLISHED 로 전이하고 발행 시각을 남긴다.
