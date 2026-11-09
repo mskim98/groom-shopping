@@ -2,6 +2,7 @@ package groom.backend.infrastructure.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import groom.backend.application.payment.event.PaymentEventParseException;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import java.util.function.BiFunction;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -19,7 +20,9 @@ import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.classify.BinaryExceptionClassifier;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -92,6 +95,22 @@ class PaymentKafkaConfigTest {
         TopicPartition target = destination.apply(new ConsumerRecord<>("payment-events", 2, 7L, "k", "v"),
                 new IllegalStateException("poison"));
         assertThat(target.topic()).isEqualTo("payment-events-dlq");
+    }
+
+    @Test
+    @DisplayName("payload 파싱 실패는 재시도 없이 곧장 DLQ 로 보내고(재시도 불가 분류) 그 밖의 예외는 재시도한다")
+    void 결제오류처리기는_파싱실패를_재시도하지_않고_그_밖의_예외는_재시도한다() {
+        Object handler = container(PAYMENT_FACTORY).getCommonErrorHandler();
+        // 리스너 예외는 ListenerExecutionFailedException 에 감싸여 오므로 감싼 모양으로 분류를 본다(원인 사슬을 따라 내려간다)
+        BinaryExceptionClassifier classifier = (BinaryExceptionClassifier) ReflectionTestUtils.invokeMethod(handler, "getClassifier");
+
+        ListenerExecutionFailedException parseFailure = new ListenerExecutionFailedException("listener failed",
+                new PaymentEventParseException("PaymentApproved 레코드를 읽지 못했다", new IllegalStateException("bad json")));
+        ListenerExecutionFailedException dbFailure = new ListenerExecutionFailedException("listener failed",
+                new IllegalStateException("db down"));
+
+        assertThat(classifier.classify(parseFailure)).as("파싱 실패는 재시도해도 같다").isFalse();
+        assertThat(classifier.classify(dbFailure)).as("DB 장애는 재시도 대상").isTrue();
     }
 
     @Test
