@@ -2,15 +2,19 @@ package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.common.exception.GlobalExceptionHandler;
+import java.time.Duration;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +29,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 
@@ -49,6 +54,8 @@ class CouponAcceptRedisFailureTest {
     private CouponStockRedisRepository couponStockRedisRepository;
     @Mock
     private RedisTemplate<String, String> redisTemplate;
+    @Mock
+    private ValueOperations<String, String> valueOps;
     @Mock
     private KafkaTemplate<String, String> couponIssueKafkaTemplate;
     @Mock
@@ -88,5 +95,38 @@ class CouponAcceptRedisFailureTest {
                 });
         // 판정하지 못한 요청은 브로커에 싣지 않는다
         verify(couponIssueKafkaTemplate, never()).send(anyString(), anyString(), anyString());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("redisFailures")
+    @DisplayName("게이트를 통과한 뒤 상태 키 기록이 Redis 오류로 실패하면 예약을 반납하고 503 으로 바꾼다")
+    void enqueue_게이트_통과_뒤_상태_기록_실패는_반납하고_503이다(Throwable failure) {
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
+        given(redisTemplate.opsForValue()).willReturn(valueOps);
+        doThrow((RuntimeException) failure).when(valueOps).set(anyString(), anyString(), any(Duration.class));
+
+        assertThatThrownBy(() -> service.enqueue(1L, 100L))
+                .isInstanceOfSatisfying(BusinessException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.COUPON_ISSUE_UNAVAILABLE));
+
+        // 게이트가 이미 재고를 깎았다 - 되돌리지 않으면 그 자리는 아무도 받지 못한 채 잠긴다
+        verify(couponStockRedisRepository, times(1)).rollbackIssue(1L, 100L);
+        verify(couponIssueKafkaTemplate, never()).send(anyString(), anyString(), anyString());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("redisFailures")
+    @DisplayName("반납마저 Redis 오류로 실패해도 예외는 503 이다")
+    void enqueue_반납도_실패하면_그대로_503이다(Throwable failure) {
+        given(couponStockRedisRepository.tryIssue(1L, 100L))
+                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
+        given(redisTemplate.opsForValue()).willReturn(valueOps);
+        doThrow((RuntimeException) failure).when(valueOps).set(anyString(), anyString(), any(Duration.class));
+        doThrow((RuntimeException) failure).when(couponStockRedisRepository).rollbackIssue(1L, 100L);
+
+        assertThatThrownBy(() -> service.enqueue(1L, 100L))
+                .isInstanceOfSatisfying(BusinessException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.COUPON_ISSUE_UNAVAILABLE));
     }
 }
