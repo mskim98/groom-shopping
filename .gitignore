@@ -8,6 +8,10 @@
 CLAUDE.md
 backend/CLAUDE.md
 
+# JWT 서명 키 파일(JWT_KEY_FILE 이 가리키는 PEM) - 개인키가 저장소에 들어가면 안 된다
+*.pem
+jwt-keys.pem
+
 # kafka streams tmp files
 tmp/**
 
