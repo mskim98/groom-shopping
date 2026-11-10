@@ -1,0 +1,109 @@
+2026-11-11 17:01:36
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11-LTS mixed mode, sharing):
+
+"http-nio-8080-exec-1" #45 [45] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002d nid=45 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/sun.nio.ch.SocketDispatcher.read0(Native Method)
+	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:340)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:161)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-2" #46 [46] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002e nid=46 waiting on condition  [0x00007f0000000000]
+   java.lang.Thread.State: WAITING (parking)
+	at java.base/jdk.internal.misc.Unsafe.park(Native Method)
+	at java.base/java.util.concurrent.locks.LockSupport.park(LockSupport.java:371)
+	at io.lettuce.core.protocol.AsyncCommand.await(AsyncCommand.java:83)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-3" #47 [47] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002f nid=47 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/java.io.FileOutputStream.writeBytes(Native Method)
+	at java.base/java.io.PrintStream.write(PrintStream.java:643)
+	at ch.qos.logback.core.ConsoleAppender.append(ConsoleAppender.java:56)
+	at org.slf4j.Logger.info(Logger.java:1)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-4" #48 [48] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000030 nid=48 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/sun.nio.ch.SocketDispatcher.read0(Native Method)
+	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:340)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:161)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-Poller" #49 [49] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000031 nid=49 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/sun.nio.ch.EPoll.wait(Native Method)
+
+"scheduling-1" #50 [50] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000032 nid=50 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/sun.nio.ch.SocketDispatcher.read0(Native Method)
+	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:340)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:161)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+
+JNI global refs: 20, weak refs: 0
+
+2026-11-11 17:01:36.500 INFO  [http-nio-8080-exec-9] g.b.CartController : [CART_ADD_START]
+
+2026-11-11 17:01:38
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11-LTS mixed mode, sharing):
+
+"http-nio-8080-exec-1" #45 [45] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002d nid=45 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at java.base/sun.nio.ch.SocketDispatcher.read0(Native Method)
+	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:340)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:161)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-2" #46 [46] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002e nid=46 waiting for monitor entry  [0x00007f0000000000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at groom.backend.common.Registry.lookup(Registry.java:30)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-3" #47 [47] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f0000002f nid=47 runnable  [0x00007f0000000000]
+   java.lang.Thread.State: RUNNABLE
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-5" #51 [51] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000033 nid=51 waiting on condition  [0x00007f0000000000]
+   java.lang.Thread.State: WAITING (parking)
+	at java.base/jdk.internal.misc.Unsafe.park(Native Method)
+	at java.base/java.util.concurrent.locks.LockSupport.park(LockSupport.java:371)
+	at io.lettuce.core.protocol.AsyncCommand.await(AsyncCommand.java:83)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+"http-nio-8080-exec-6" #52 [52] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000034 nid=52 waiting on condition  [0x00007f0000000000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at java.base/jdk.internal.misc.Unsafe.park(Native Method)
+	at java.base/java.util.concurrent.locks.LockSupport.parkNanos(LockSupport.java:410)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:179)
+	at org.springframework.orm.jpa.JpaTransactionManager.doBegin(JpaTransactionManager.java:420)
+	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
+
+JNI global refs: 20, weak refs: 0
