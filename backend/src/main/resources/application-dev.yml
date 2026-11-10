@@ -189,6 +189,12 @@ http:
       max-total: 50                  # 풀 전체 최대 커넥션
       max-per-route: 50              # 목적지당 최대 커넥션. 목적지가 Toss 하나뿐이라 풀 전체(50)와 같게 둔다 - 20 이면 승인 20건이 60초씩 쥘 때 21번째가 대기
 
+# 한 인스턴스가 연 회로를 Redis 키(cb:{name}:open_until)로 다른 인스턴스에 알리는 회로 이름(쉼표 구분) - 목록에서 빼면 그 회로는 인스턴스마다 따로 열린다
+# redis-stock · redis-coupon 은 대상이 Redis 자체라 넣지 않는다
+circuit:
+  shared:
+    names: toss,toss-cancel,db-ledger
+
 # Resilience4j - 외부 PG(Toss) 호출 서킷브레이커·재시도 (인스턴스명 toss)
 resilience4j:
   circuitbreaker:
