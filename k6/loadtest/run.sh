@@ -17,6 +17,7 @@
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
+SEED_STAMP="${SEED_STAMP:-/tmp/r119-measure-seed-stamp}"
 
 RAMP_S="${RAMP_S:-10}"
 HOLD_S="${HOLD_S:-30}"
@@ -61,6 +62,7 @@ cmd_seed() {
     echo "== shop_seed_template exists, reused"
   fi
   bash db/seed/reset.sh "$SEED_DB"
+  date -u +%FT%TZ > "$SEED_STAMP"
   psql_seed -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
   # 백엔드가 멈춘 상태의 측정용 Redis 를 비운다 - 앞 시험이 남긴 장바구니 키(cart:<사용자 id>)가 남으면 GET /cart 가 DB 에 없는 옛 항목을 보여 주고
   # 시드가 DB 에 넣어 둔 장바구니 항목은 비워지지 않아 첫 주문에 섞인다. load-redis.sh 는 자기 소유 키 패턴만 지우므로 여기서 한다
@@ -195,6 +197,16 @@ sample_k6_cpu() { # 폴더 · k6 pid
 # 시험 창(DB 시계) - 주문 시각은 앱이 Asia/Seoul 시각으로 timestamp 열에 쓰므로 같은 기준으로 읽는다
 db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS.US')"; }
 
+# 이 단계가 어떤 조건에서 돌았는지 단계 폴더에 남긴다 - 스레드 종류 · 누수 감지 문턱값은 실제로 떠 있는 backend1 컨테이너의 환경에서 읽는다
+write_condition() { # 단계 폴더 · 목표 요청률
+  local vt lk
+  vt="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_THREADS_VIRTUAL_ENABLED 2> /dev/null || echo true)"
+  lk="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 2> /dev/null || echo 0)"
+  printf '{"threads": "%s", "leak_detection": %s, "diag_samplers": %s, "hold_s": %s, "ramp_s": %s, "seed_copy": "%s"}\n' \
+    "$([ "$vt" = false ] && echo platform || echo virtual)" "$([ "${lk:-0}" -gt 0 ] && echo true || echo false)" \
+    "$([ "${DIAG_SAMPLERS:-0}" = 1 ] && echo true || echo false)" "$HOLD_S" "$RAMP_S" "$(cat "$SEED_STAMP" 2> /dev/null || echo unknown)" > "$1/condition.json"
+}
+
 run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출력 폴더(진단 파일이 가는 곳)
   local name="$1" rps="$2" vus="$3" dir="$4" out="$5"
   mkdir -p "$dir"
@@ -217,7 +229,9 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_lag "$dir" & local p1=$!
   sample_stats "$dir" & local p2=$!
   sample_prom "$dir" & local p3=$!
-  sample_pg "$out" & local p5=$!
+  # 진단 표본(pg_stat_activity 1 초)은 요청마다 DB 에 연결 하나를 더 쓰므로 DIAG_SAMPLERS=1 일 때만 돈다 - 최종 측정은 끈다
+  local p5=""
+  if [ "${DIAG_SAMPLERS:-0}" = 1 ]; then sample_pg "$out" & p5=$!; fi
   local p6=""
   if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then
     for b in $BACKENDS; do follow_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt" & done
@@ -225,6 +239,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   fi
   trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
 
+  write_condition "$dir" "$rps"
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
   # 종료 코드는 임계값 실패 등 k6 자체 판정이다 - 측정값은 요약 파일에서 읽으므로 여기서 멈추지 않는다
   k6 run -q --no-usage-report \
