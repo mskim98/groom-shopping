@@ -21,12 +21,13 @@ for pattern in 'product:stock:*' 'coupon:*:stock' 'coupon:*:issued_users' 'coupo
   seed_rcli --scan --pattern "$pattern" | sed 's/^/UNLINK /' | seed_rcli_pipe > /dev/null
 done
 
+# redis-cli --pipe 는 마지막에 "errors: N, replies: M" 한 줄을 찍는다(오류 응답 본문은 찍지 않는다). N 이 0 이 아니거나 그 줄이 없으면 실패한다
 run_commands() {
   local label="$1" out
-  out="$(seed_rcli_pipe)"
-  if printf '%s\n' "$out" | grep -Eq '^(\(error\)|ERR|WRONGTYPE)'; then
-    echo "redis error while loading $label:" >&2
-    printf '%s\n' "$out" | grep -E '^(\(error\)|ERR|WRONGTYPE)' | head -3 >&2
+  out="$(seed_rcli_pipe --pipe 2>&1)" || { echo "redis-cli --pipe failed while loading $label:" >&2; printf '%s\n' "$out" | tail -3 >&2; exit 1; }
+  if ! printf '%s\n' "$out" | grep -Eq '^errors: 0,'; then
+    echo "redis reported errors while loading $label:" >&2
+    printf '%s\n' "$out" | tail -3 >&2
     exit 1
   fi
 }

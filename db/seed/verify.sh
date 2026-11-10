@@ -3,6 +3,7 @@
 # 사용: bash db/seed/verify.sh <database> <scale>
 #   <scale> 은 그 DB 를 만들 때의 SEED_SCALE (예: 1, 0.01) — 목표 행 수 = scale 1 의 목표 × scale
 # 환경 변수(기본값): SEED_PG_CONTAINER (dev-db) · SEED_PG_USER (dev) — 읽기만 한다. 아무것도 지우지 않는다
+#   SEED_VERIFY_TOL_SCALE (비어 있음 = <scale>) — 행 수 허용 오차 규칙을 고르는 배수. scale >= 1 이면 목표 300 이상은 ceil(1 %), 300 미만은 정확히 일치, scale < 1 이면 max(1 %, 3행)
 # 검사 묶음: counts · flyway · refs · enums · amounts · flash-stock · coupon-quota · sequences · minority · skew · raffle
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -13,7 +14,7 @@ DB="$1"
 SCALE="$2"
 
 set +e
-out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" -f - 2>&1)"
+out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" ${SEED_VERIFY_TOL_SCALE:+-v tol_scale="$SEED_VERIFY_TOL_SCALE"} -f - 2>&1)"
 code=$?
 set -e
 # 11. raffle: 이름이 raffle 로 시작하는 표는 마이그레이션이 만든 행 그대로(raffles 10, 나머지 0). 읽기만 한다

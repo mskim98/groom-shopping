@@ -1,6 +1,11 @@
 -- verify.sh 가 00_sizes.sql 뒤에 이어 붙여 한 psql 세션으로 실행한다. 읽기만 한다(임시 표 chk · 임시 뷰뿐)
 -- 검사 묶음마다 chk 에 한 행(이름 · 통과 여부 · 설명)을 넣고, 끝에 'PASS 이름: 설명' / 'FAIL 이름: 설명' 으로 찍는다
 -- 마이그레이션이 직접 넣는 행(사용자 22 · 상품 40 · 쿠폰 6 · 장바구니 22 · 장바구니 항목 5)은 목표 행 수에서 뺀다
+-- tol_scale: 허용 오차 규칙을 고르는 배수. 기본은 scale 이고 SEED_VERIFY_TOL_SCALE 로 바꾼다(작은 DB 에서 scale 1 규칙을 시험하려는 용도)
+\if :{?tol_scale}
+\else
+\set tol_scale :scale
+\endif
 CREATE TEMP TABLE chk (ord serial, name text, ok boolean, detail text);
 
 -- 승인 요청이 들어온 결제(DONE · CANCELED · READY)의 플래시 상품 쌍 — 재고 원장 SALE 행의 기대 개수, CANCELED 만 REVERSAL 의 기대 개수
@@ -12,11 +17,13 @@ SELECT p.id AS payment_id, p.status, oi.product_id
  WHERE p.status IN ('DONE', 'CANCELED', 'READY')
  GROUP BY p.id, p.status, oi.product_id;
 
--- 1. counts: 목표 ± 1 %(작은 규모에서는 ± 3 행까지 허용). payment_outbox 목표는 승인 요청이 들어온 결제의 수다
+-- 1. counts: 허용 오차는 scale >= 1 이면 목표 300 이상 ceil(1 %) · 300 미만 0(정확히 같음), scale < 1 이면 max(1 %, 3행) payment_outbox 목표는 승인 요청이 들어온 결제의 수다
 --    재고 원장의 SALE · REVERSAL 은 flash_pairs 와 정확히 같아야 한다
 INSERT INTO chk (name, ok, detail)
 SELECT 'counts',
-       bool_and(abs(actual - target) <= GREATEST(0.01 * target, 3)),
+       bool_and(abs(actual - target) <= CASE WHEN :tol_scale::numeric >= 1
+                                             THEN (CASE WHEN target >= 300 THEN ceil(0.01 * target) ELSE 0 END)
+                                             ELSE GREATEST(0.01 * target, 3) END),
        string_agg(t || '=' || actual || '/' || target, ' ' ORDER BY t)
   FROM (VALUES ('users', (SELECT count(*) - 22 FROM users), :n_users::numeric),
                ('product', (SELECT count(*) - 40 FROM product), :n_products::numeric),
