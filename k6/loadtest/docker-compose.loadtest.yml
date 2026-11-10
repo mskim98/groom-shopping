@@ -12,6 +12,8 @@ x-loadtest-env: &loadtest-env
   SPRING_OUTPUT_ANSI_ENABLED: never
   # 진단용 - 커넥션을 2 초 넘게 쥔 스레드의 빌린 시점 스택을 로그에 남긴다(r120 Hikari 고갈 추적). 운영 yml 은 그대로이고 측정 백엔드만 켠다
   SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD: "2000"
+  # 요청 스레드를 가상(기본) 대신 플랫폼 스레드로 바꾸는 손잡이 - 가상 스레드는 SIGQUIT 스레드 덤프에 나오지 않는다. 호스트 환경 변수 SPRING_THREADS_VIRTUAL_ENABLED=false 로 켠다
+  SPRING_THREADS_VIRTUAL_ENABLED: ${SPRING_THREADS_VIRTUAL_ENABLED:-true}
 
 services:
   wiremock:
