@@ -165,7 +165,7 @@ docker compose up -d
 | Frontend | 3000 | Next.js |
 | PostgreSQL | 5432 | |
 | Redis | 6379 | |
-| Kafka | 9092 | Zookeeper 동반 |
+| Kafka | 9092 | KRaft 단일 노드 (ZooKeeper 없음) |
 | Grafana · Prometheus | — | `docker-compose.dev.yml` 한정 |
 
 ## API

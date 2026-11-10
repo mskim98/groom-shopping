@@ -26,32 +26,21 @@ services:
     networks:
       - dev-network
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-    container_name: dev-zookeeper
-    restart: always
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    networks:
-      - dev-network
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_log:/var/lib/zookeeper/log
-
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:8.0.0
     container_name: dev-kafka
     restart: always
-    depends_on:
-      - zookeeper
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # KRaft : 브로커가 메타데이터를 직접 보관한다 (ZooKeeper 없음, Kafka 4.0 부터 유일한 방식)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:9093,CONTROLLER://0.0.0.0:29093
+      # 저장 폴더 포맷에 쓰는 고정 클러스터 id - 바꾸면 기존 볼륨으로 기동하지 못한다
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
@@ -65,7 +54,7 @@ services:
     networks:
       - dev-network
     volumes:
-      - kafka_data:/var/lib/kafka/data
+      - kafka_kraft_data:/var/lib/kafka/data
 
   frontend:
     container_name: dev-frontend
@@ -247,9 +236,7 @@ services:
 
 volumes:
   db_data:
-  zookeeper_data:
-  zookeeper_log:
-  kafka_data:
+  kafka_kraft_data:
   prometheus-data:
   grafana-data:
   loki-data:
