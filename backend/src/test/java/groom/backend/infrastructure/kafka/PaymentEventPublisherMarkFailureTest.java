@@ -1,18 +1,19 @@
 package groom.backend.infrastructure.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
-import groom.backend.infrastructure.product.StockWarmUpRunner;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -23,132 +24,99 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.util.ReflectionTestUtils;
 
-// 발행은 성공했는데 PUBLISHED 표시가 실패한 행의 임대는 유지하고(임대가 끝나야 다시 발행), 인터럽트는 임대를 풀고 플래그를 남기는지 본다
-@SpringBootTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@TestPropertySource(properties = {
-        "spring.kafka.streams.auto-startup=false",
-        "payment.consumer.auto-startup=false"
-})
+// 스프링 컨텍스트 없이 본다 - 같은 컨텍스트의 실제 폴러(200ms 주기)가 공유 DB 의 PENDING 행을 집어 가는 일과 무관하다
+// 임대 SQL 자체는 PaymentOutboxLeaseTest 가 본다. 여기서는 폴러가 임대를 어떤 행에 풀라고 요청하는지를 본다
+@ExtendWith(MockitoExtension.class)
 @DisplayName("Outbox 폴러 PUBLISHED 표시 실패")
 class PaymentEventPublisherMarkFailureTest {
 
-    private static final long LEASE_MS = 60_000;
-
-    @MockBean
-    private StockWarmUpRunner stockWarmUpRunner;
-
-    @Autowired
+    @Mock
     private PaymentOutboxRepository outboxRepository;
-    @Autowired
-    private JdbcTemplate jdbc;
-
-    private final List<UUID> aggregates = new ArrayList<>();
+    @Mock
+    private KafkaTemplate<String, String> paymentEventKafkaTemplate;
+    @InjectMocks
+    private PaymentEventPublisher publisher;
 
     @AfterEach
-    void tearDown() {
-        Thread.interrupted(); // 인터럽트 시험이 남긴 플래그가 정리 쿼리와 다음 시험으로 번지지 않게 한다
-        for (UUID aggregate : aggregates) {
-            jdbc.update("DELETE FROM payment_outbox WHERE aggregate_id = ?", aggregate);
-        }
+    void clearInterruptFlag() {
+        Thread.interrupted(); // 인터럽트 시험이 남긴 플래그가 다음 시험으로 번지지 않게 한다
     }
 
-    // 다른 시험이 남긴 PENDING 행보다 앞에 오도록 오래된 created_at 으로 적재한다
-    private List<UUID> seedPending(int count) {
-        List<UUID> seeded = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            UUID aggregate = UUID.randomUUID();
-            aggregates.add(aggregate);
-            seeded.add(aggregate);
-            PaymentOutbox outbox = outboxRepository.save(PaymentOutbox.create(aggregate, "PaymentApproved", "{}"));
-            jdbc.update("UPDATE payment_outbox SET created_at = ? WHERE id = ?",
-                    LocalDateTime.of(2000, 1, 1, 0, 0).plusSeconds(i), outbox.getId());
-        }
-        return seeded;
-    }
-
-    private PaymentEventPublisher publisher(KafkaTemplate<String, String> kafka, PaymentOutboxRepository repository) {
-        PaymentEventPublisher publisher = new PaymentEventPublisher(repository, kafka);
-        ReflectionTestUtils.setField(publisher, "sendTimeoutMs", 1000L);
-        ReflectionTestUtils.setField(publisher, "leaseMs", LEASE_MS);
-        return publisher;
-    }
-
-    private UUID outboxIdOf(UUID aggregate) {
-        return jdbc.queryForObject("SELECT id FROM payment_outbox WHERE aggregate_id = ?", UUID.class, aggregate);
-    }
-
-    private boolean leased(UUID aggregate) {
-        return jdbc.queryForObject("SELECT COALESCE(claimed_until > now(), false) FROM payment_outbox WHERE aggregate_id = ?",
-                Boolean.class, aggregate);
-    }
-
-    private boolean notLeased(UUID aggregate) {
-        return jdbc.queryForObject("SELECT claimed_until IS NULL FROM payment_outbox WHERE aggregate_id = ?",
-                Boolean.class, aggregate);
-    }
-
-    private String statusOf(UUID aggregate) {
-        return jdbc.queryForObject("SELECT status FROM payment_outbox WHERE aggregate_id = ?", String.class, aggregate);
+    private static PaymentOutbox row() {
+        return PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved", "{}");
     }
 
     @Test
-    @DisplayName("발행은 성공했는데 PUBLISHED 표시가 던지면 그 행의 임대는 남기고 못 보낸 행의 임대는 풀며 다음 회차는 그 행을 다시 보내지 않는다")
+    @DisplayName("발행은 성공했는데 PUBLISHED 표시가 던지면 그 행의 임대는 풀지 않고 못 보낸 행만 풀며 임대가 남은 행은 다음 회차에 집히지 않아 다시 보내지 않는다")
     @SuppressWarnings("unchecked")
     void publishPending_표시가_실패하면_그_행의_임대는_유지하고_뒤의_행만_풀고_다음_회차에_다시_보내지_않는다() {
-        List<UUID> seeded = seedPending(3);
-        UUID marked = seeded.get(0);
-        PaymentOutboxRepository repository = mock(PaymentOutboxRepository.class, delegatesTo(outboxRepository));
-        doThrow(new DataAccessResourceFailureException("db down")).when(repository).markPublished(outboxIdOf(marked));
-        KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
+        PaymentOutbox marked = row();
+        PaymentOutbox second = row();
+        PaymentOutbox third = row();
+        // 두 번째 회차에는 임대가 남은 첫 행이 빠진 나머지만 집힌다 (집기 SQL 이 임대 중인 행을 건너뛴다)
+        given(outboxRepository.claimPendingBatch(100, 60000L))
+                .willReturn(List.of(marked, second, third))
+                .willReturn(List.of(second, third));
+        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository).markPublished(marked.getId());
         List<String> sentKeys = Collections.synchronizedList(new ArrayList<>());
         doAnswer(invocation -> {
             ProducerRecord<String, String> record = invocation.getArgument(0);
             sentKeys.add(record.key());
             return CompletableFuture.completedFuture(null);
-        }).when(kafka).send(any(ProducerRecord.class));
-        PaymentEventPublisher publisher = publisher(kafka, repository);
+        }).when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 
         publisher.publishPending();
 
-        assertThat(sentKeys).as("첫 행만 보내고 표시 실패에서 회차를 끝낸다").containsExactly(marked.toString());
-        assertThat(statusOf(marked)).isEqualTo("PENDING");
-        assertThat(leased(marked)).as("표시에 실패한 행의 임대").isTrue();
-        assertThat(notLeased(seeded.get(1))).as("보내지 못한 둘째 행의 임대").isTrue();
-        assertThat(notLeased(seeded.get(2))).as("보내지 못한 셋째 행의 임대").isTrue();
+        assertThat(sentKeys).as("첫 행만 보내고 표시 실패에서 회차를 끝낸다").containsExactly(marked.getAggregateId().toString());
+        // 표시에 실패한 행은 임대를 남기고 보내지 못한 둘째 · 셋째 행만 푼다
+        verify(outboxRepository, times(1)).releaseLease(List.of(second.getId(), third.getId()));
 
         publisher.publishPending();
 
-        assertThat(sentKeys.stream().filter(marked.toString()::equals)).as("임대 안에 같은 행을 다시 보낸 횟수").hasSize(1);
-        assertThat(sentKeys).contains(seeded.get(1).toString(), seeded.get(2).toString());
+        assertThat(sentKeys.stream().filter(marked.getAggregateId().toString()::equals))
+                .as("임대 안에 같은 행을 다시 보낸 횟수").hasSize(1);
+        assertThat(sentKeys).contains(second.getAggregateId().toString(), third.getAggregateId().toString());
+        verify(outboxRepository, never()).releaseLease(List.of(marked.getId(), second.getId(), third.getId()));
+    }
+
+    @Test
+    @DisplayName("마지막 행의 표시가 던지면 풀 행이 없으므로 임대 해제를 요청하지 않는다")
+    @SuppressWarnings("unchecked")
+    void publishPending_마지막_행의_표시가_실패하면_임대_해제를_요청하지_않는다() {
+        PaymentOutbox only = row();
+        given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of(only));
+        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository).markPublished(only.getId());
+        doAnswer(invocation -> CompletableFuture.completedFuture(null))
+                .when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
+
+        publisher.publishPending();
+
+        verify(outboxRepository, never()).releaseLease(any());
     }
 
     @Test
     @DisplayName("send 중 인터럽트가 오면 그 행과 못 보낸 나머지의 임대를 풀고 스레드의 인터럽트 플래그를 남긴다")
     @SuppressWarnings("unchecked")
     void publishPending_인터럽트면_그_행과_나머지의_임대를_풀고_인터럽트_플래그를_남긴다() throws Exception {
-        List<UUID> seeded = seedPending(2);
-        KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
+        PaymentOutbox first = row();
+        PaymentOutbox second = row();
+        given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of(first, second));
         CompletableFuture<Object> interrupted = mock(CompletableFuture.class);
         when(interrupted.get(anyLong(), any(TimeUnit.class))).thenThrow(new InterruptedException("stop"));
-        doAnswer(invocation -> interrupted).when(kafka).send(any(ProducerRecord.class));
+        doAnswer(invocation -> interrupted).when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 
-        publisher(kafka, outboxRepository).publishPending();
+        publisher.publishPending();
         boolean flagSet = Thread.interrupted();
 
         assertThat(flagSet).as("스레드의 인터럽트 플래그").isTrue();
-        assertThat(notLeased(seeded.get(0))).as("인터럽트된 행의 임대").isTrue();
-        assertThat(notLeased(seeded.get(1))).as("보내지 못한 행의 임대").isTrue();
-        assertThat(statusOf(seeded.get(0))).isEqualTo("PENDING");
+        verify(outboxRepository, times(1)).releaseLease(List.of(first.getId(), second.getId()));
+        verify(outboxRepository, never()).markPublished(any());
     }
 }
