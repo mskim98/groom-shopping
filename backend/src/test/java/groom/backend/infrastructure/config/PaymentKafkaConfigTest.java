@@ -114,12 +114,12 @@ class PaymentKafkaConfigTest {
     }
 
     @Test
-    @DisplayName("payment-events 토픽은 파티션 4개이고 DLQ 토픽 payment-events-dlq 가 선언돼 있다")
-    void payment_events_토픽은_파티션_4개다() {
+    @DisplayName("payment-events 토픽은 파티션 12개이고 DLQ 토픽 payment-events-dlq 가 선언돼 있다")
+    void payment_events_토픽은_파티션_12개다() {
         var topics = context.getBeansOfType(NewTopic.class).values();
 
         assertThat(topics).filteredOn(t -> t.name().equals("payment-events"))
-                .singleElement().satisfies(t -> assertThat(t.numPartitions()).isEqualTo(4));
+                .singleElement().satisfies(t -> assertThat(t.numPartitions()).isEqualTo(12));
         assertThat(topics).filteredOn(t -> t.name().equals("payment-events-dlq"))
                 .singleElement().satisfies(t -> assertThat(t.numPartitions()).isEqualTo(1));
     }

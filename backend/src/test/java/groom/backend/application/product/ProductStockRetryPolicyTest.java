@@ -24,19 +24,11 @@ class ProductStockRetryPolicyTest {
     }
 
     @Test
-    @DisplayName("차감 경로 백오프는 100ms 시작·2배 증가·지터 사용·상한 1000ms 다")
-    void decreaseBackoffUsesJitterAndCap() throws NoSuchMethodException {
-        Backoff backoff = backoffOf("decreaseWithOptimisticLock");
-        assertThat(backoff.delay()).isEqualTo(100L);
-        assertThat(backoff.multiplier()).isEqualTo(2.0);
-        assertThat(backoff.random()).isTrue();
-        assertThat(backoff.maxDelay()).isEqualTo(1000L);
-    }
-
-    @Test
-    @DisplayName("증가(복원) 경로도 같은 백오프 정책을 쓴다")
+    @DisplayName("증가(복원) 경로 백오프는 100ms 시작·2배 증가·지터 사용·상한 1000ms 다")
     void increaseBackoffUsesJitterAndCap() throws NoSuchMethodException {
         Backoff backoff = backoffOf("increaseWithOptimisticLock");
+        assertThat(backoff.delay()).isEqualTo(100L);
+        assertThat(backoff.multiplier()).isEqualTo(2.0);
         assertThat(backoff.random()).isTrue();
         assertThat(backoff.maxDelay()).isEqualTo(1000L);
     }

@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
+import groom.backend.application.product.StockLedgerRepository;
+import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
@@ -57,6 +60,9 @@ class PaymentApprovedConsumerFailureTest {
     // Redis 복원 호출을 관찰한다. 시험이 Redis 에 값을 남기지 않게 복원은 호출만 기록하고 실행하지 않는다
     @SpyBean
     private ProductStockRedisRepository productStockRedisRepository;
+    // 후처리를 재고 부족으로 실패시키는 지점. 플래시 상품의 후처리는 상품 행을 쓰지 않고 원장 조회만 하므로 거기서 던진다
+    @SpyBean
+    private StockLedgerRepository stockLedgerRepository;
 
     @Autowired
     private PaymentEventConsumer consumer;
@@ -79,10 +85,15 @@ class PaymentApprovedConsumerFailureTest {
     @BeforeEach
     void setUp() {
         fixture = new PaymentFixture(productRepository, orderRepository, paymentRepository, jdbc);
-        productId = fixture.product(0); // 재고 0 에 1개 주문 → 후처리의 재고 차감이 실패한다
+        productId = fixture.flashProduct(0); // 플래시 상품은 TX1 이 원장 SALE 을 남기고 후처리는 상품 행을 쓰지 않는다
         payment = fixture.payment(productId, 1);
         paymentKey = "pk-" + UUID.randomUUID();
         fixture.markReady(payment.getId(), paymentKey);
+        // TX1 이 남겼을 SALE 행. 이 행이 있어야 실패 경로가 REVERSAL 과 Redis 복원을 한다
+        jdbc.update("INSERT INTO stock_ledger (payment_id, product_id, qty, kind, applied) VALUES (?, ?, 1, 'SALE', false)",
+                payment.getId(), productId);
+        // 재고 부족으로 후처리가 실패하는 상황을 만든다
+        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_STOCK)).when(stockLedgerRepository).findSaleProductIds(any());
     }
 
     @AfterEach

@@ -12,7 +12,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 // payment-events 토픽의 PaymentApproved 레코드(Toss 승인이 끝난 결제)를 받아 후처리를 맡기는 컨슈머.
-// 후처리(Payment DONE · Order CONFIRMED · 재고 차감 · 티켓 발급)와 실패 처리는 PaymentApplicationService.applyApprovedEvent 가 하고,
+// 후처리(Payment DONE · Order CONFIRMED · 일반 상품 재고 차감 · 티켓 발급)와 실패 처리는 PaymentApplicationService.applyApprovedEvent 가 하고,
 // 같은 레코드가 다시 와도 Payment 가 READY 가 아니면 건너뛰므로 멱등이다(별도 처리 표시를 두지 않는다)
 // 비즈니스 실패는 서비스가 보상·복원·FAILED 로 처리하고 정상 반환한다. 결제를 읽지 못하는 DB 장애는 던져 컨테이너의
 // DefaultErrorHandler 가 재시도한 뒤 payment-events-dlq 로 보내고, 파싱 실패(PaymentEventParseException)는 재시도 없이 곧장 DLQ 로 간다

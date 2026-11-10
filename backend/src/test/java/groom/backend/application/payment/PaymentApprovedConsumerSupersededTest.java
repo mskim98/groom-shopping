@@ -9,7 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import groom.backend.application.product.StockDecrementer;
+import groom.backend.application.product.ConditionalUpdateStockDecrementer;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.infrastructure.kafka.PaymentEventConsumer;
@@ -51,7 +51,7 @@ class PaymentApprovedConsumerSupersededTest {
     private PaymentNotificationService paymentNotificationService; // 실패 때 호출되지 않는지 확인하는 지점
     // 재고 차감 호출을 관찰한다. 후처리 도중 DONE 으로 바뀌는 지점을 끼워 넣는 데 쓴다
     @SpyBean
-    private StockDecrementer stockDecrementer;
+    private ConditionalUpdateStockDecrementer stockDecrementer;
     // 보상 의도 기록 호출 여부를 관찰한다(실제 기록은 그대로 한다)
     @SpyBean
     private PaymentCompensationService compensationService;

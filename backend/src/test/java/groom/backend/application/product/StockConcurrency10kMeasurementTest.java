@@ -33,8 +33,7 @@ import org.springframework.boot.test.context.SpringBootTest;
  * <p>포트폴리오에 기재된 "재고 10,000 / 동시 차감 1만 건" 조건을 재현해
  * 완주율(성공 건수)과 정합성(드리프트)을 분리 측정한다
  *
- * <p>기존 ProductStockConcurrencyIntegrationTest 는 100건 규모이며 정합성만 검증한다
- * 이 테스트는 실패 사유를 코드별로 분류해 재시도 소진과 그 외를 구분하는 것이 목적이다
+ * <p>측정 대상은 플래시 세일이 아닌 상품의 차감 경로(조건부 UPDATE)다. 실패 사유를 코드별로 분류해 재고 부족과 그 외를 구분한다
  */
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -47,7 +46,7 @@ class StockConcurrency10kMeasurementTest {
     private static final int CONCURRENCY = 200;
 
     @Autowired
-    private ProductStockService productStockService;
+    private ConditionalUpdateStockDecrementer stockDecrementer;
     @Autowired
     private ProductRepository productRepository;
     @Autowired
@@ -78,7 +77,7 @@ class StockConcurrency10kMeasurementTest {
 
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
-        // 실패 사유별 분류 -> "재시도 소진"과 그 외를 구분하지 못하면 원인이 추정에 머문다
+        // 실패 사유별 분류 -> "재고 부족"과 그 외를 구분하지 못하면 원인이 추정에 머문다
         Map<String, AtomicInteger> failureByReason = new ConcurrentHashMap<>();
         AtomicLong totalLatencyNanos = new AtomicLong();
 
@@ -90,7 +89,7 @@ class StockConcurrency10kMeasurementTest {
                     // 전 스레드를 같은 시점에 풀어 경합을 최대화
                     start.await();
                     long t0 = System.nanoTime();
-                    productStockService.decreaseWithOptimisticLock(productId, 1);
+                    stockDecrementer.decrease(productId, 1);
                     totalLatencyNanos.addAndGet(System.nanoTime() - t0);
                     success.incrementAndGet();
                 } catch (BusinessException e) {

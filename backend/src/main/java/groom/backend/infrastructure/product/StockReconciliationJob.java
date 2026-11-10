@@ -1,6 +1,7 @@
 package groom.backend.infrastructure.product;
 
 import groom.backend.application.product.ProductStockRedisRepository;
+import groom.backend.application.product.StockLedgerRepository;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import io.micrometer.core.instrument.Gauge;
@@ -20,14 +21,19 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Redis 게이트 재고와 DB 원천 재고를 주기적으로 대조한다.
+ * Redis 선점 재고와 DB 재고를 주기적으로 대조한다.
+ * <p>
+ * DB 쪽 값은 상품 종류에 따라 다르다. 플래시 세일 상품(REDIS 모드)은 판매가 원장에 INSERT 로 남고 배치가 늦게 접어 넣으므로
+ * 남은 재고 = product.stock − SUM(미적용 원장 qty) 와 Redis 를 비교한다. DB 모드 플래시 상품은 Redis 키가 쓰이지 않으므로 건너뛴다.
+ * 그 밖의 상품은 product.stock 과 그대로 비교한다.
  * <p>
  * 판정은 방향과 지속성 두 축으로 나눈다.
  * - redis > db : 선점은 Redis 를 줄이기만 하므로 정상 동작으로는 만들 수 없는 방향 -> 1회 관측으로 이상 확정
  * - redis < db : 인플라이트 선점과 구별 불가 -> 연속 2회 스캔에서 같은 gap 이 유지될 때만 지속 드리프트로 승격
- * - 키 부재   : 게이트가 열린 상태(preReserve 가 -2 로 DB 폴백) -> 별도 계상
+ * - 키 부재   : REDIS 모드 플래시 상품에서만 이상이다(다음 선점이 -2 를 받아 DB 모드로 전환된다) -> 별도 계상.
+ *               플래시가 아닌 상품은 Redis 키가 없는 것이 정상이라 계상하지 않는다
  * <p>
- * 자동 보정은 하지 않는다. 보정이 새 드리프트 원인이 될 수 있어 탐지와 경보까지만 담당한다.
+ * 자동 보정은 하지 않는다. 보정이 새 드리프트 원인이 될 수 있어 탐지와 경보까지만 담당한다(복귀 때의 덮어쓰기는 StockModeRecoveryJob 몫).
  * 순회는 StockWarmUpRunner 와 같은 키셋 페이지네이션을 쓴다.
  */
 @Slf4j
@@ -39,6 +45,7 @@ public class StockReconciliationJob {
 
     private final SpringDataProductRepository productRepository;
     private final ProductStockRedisRepository stockRedisRepository;
+    private final StockLedgerRepository stockLedgerRepository;
     private final MeterRegistry meterRegistry;
 
     @Value("${stock.reconcile.batch-size:1000}")
@@ -61,7 +68,7 @@ public class StockReconciliationJob {
                 .description("Redis 재고가 DB 보다 작고 연속 2회 스캔에서 gap 이 줄지 않은 상품 수")
                 .register(meterRegistry);
         Gauge.builder("stock_drift_missing_key", missingKeyCount, AtomicInteger::get)
-                .description("Redis 재고 키가 없는 상품 수 (게이트 미동작)")
+                .description("Redis 재고 키가 없는 REDIS 모드 플래시 상품 수 (다음 선점이 DB 모드 전환을 일으킴)")
                 .register(meterRegistry);
         Gauge.builder("stock_drift_max_abs_gap", maxAbsGap, AtomicInteger::get)
                 .description("관측된 |DB - Redis| 최댓값")
@@ -102,17 +109,27 @@ public class StockReconciliationJob {
                 lastId = product.getId();
             }
             List<Integer> redisStocks = stockRedisRepository.getStocks(ids);
+            // REDIS 모드 플래시 상품만 미적용 원장 합을 뺀다(한 번의 조회로 페이지 전체를 읽는다)
+            List<UUID> redisModeFlashIds = page.stream().filter(StockReconciliationJob::isRedisModeFlash)
+                    .map(ProductJpaEntity::getId).toList();
+            Map<UUID, Integer> unapplied = stockLedgerRepository.sumUnappliedByProduct(redisModeFlashIds);
 
             for (int i = 0; i < page.size(); i++) {
                 ProductJpaEntity product = page.get(i);
                 Integer dbStock = product.getStock();
                 Integer redisStock = redisStocks.get(i);
-                if (dbStock == null) {
+                if (dbStock == null || isDbModeFlash(product)) {
                     continue;
+                }
+                if (isRedisModeFlash(product)) {
+                    dbStock -= unapplied.getOrDefault(product.getId(), 0);
                 }
                 scanned++;
                 if (redisStock == null) {
-                    missing++;
+                    // 플래시가 아닌 상품은 Redis 키가 없는 것이 정상이다 - REDIS 모드 플래시 상품만 부재로 센다
+                    if (isRedisModeFlash(product)) {
+                        missing++;
+                    }
                     continue;
                 }
                 int gap = dbStock - redisStock;
@@ -144,6 +161,14 @@ public class StockReconciliationJob {
         maxAbsGap.set(maxGap);
 
         return new ReconcileResult(scanned, over, underPersistent, missing, maxGap);
+    }
+
+    private static boolean isRedisModeFlash(ProductJpaEntity product) {
+        return Boolean.TRUE.equals(product.getFlashSale()) && !"DB".equals(product.getStockMode());
+    }
+
+    private static boolean isDbModeFlash(ProductJpaEntity product) {
+        return Boolean.TRUE.equals(product.getFlashSale()) && "DB".equals(product.getStockMode());
     }
 
     public record ReconcileResult(int scanned, int over, int underPersistent, int missingKey, int maxAbsGap) {

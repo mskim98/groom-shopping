@@ -1,5 +1,7 @@
 package groom.backend.domain.product.service;
 
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
@@ -68,6 +70,7 @@ public class ProductCommonService {
             product.changePrice(new Price(request.price()));
         }
         if (request.stock() != null) {
+            rejectIfFlashSale(product);
             int diff = request.stock() - product.getStock();
             if (diff > 0) {
                 product.increaseStock(diff);
@@ -86,8 +89,8 @@ public class ProductCommonService {
 
     @Transactional
     public Product increaseStock(UUID id, Integer amount) {
-        System.out.println("서비스 : " + amount);
         Product product = findById(id);
+        rejectIfFlashSale(product);
         product.increaseStock(amount);
         productCommonRepository.save(product);
         return product;
@@ -96,9 +99,17 @@ public class ProductCommonService {
     @Transactional
     public Product decreaseStock(UUID id, int amount) {
         Product product = findById(id);
+        rejectIfFlashSale(product);
         product.decreaseStock(amount);
         productCommonRepository.save(product);
         return product;
+    }
+
+    // 플래시 세일 상품의 재고는 Redis 선점 + 원장이 정한다. 관리자가 product.stock 을 바꾸면 남은 재고(stock − 미적용 합)와 Redis 키가 어긋난다
+    private void rejectIfFlashSale(Product product) {
+        if (product.isFlashSale()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "플래시 세일 상품의 재고는 직접 바꿀 수 없습니다.");
+        }
     }
 
     @Transactional

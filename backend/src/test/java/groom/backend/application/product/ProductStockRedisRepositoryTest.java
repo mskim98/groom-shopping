@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,11 +49,9 @@ class ProductStockRedisRepositoryTest {
     }
 
     @Test
-    void release_선점_재고를_INCRBY로_복원한다() {
-        given(redisTemplate.opsForValue()).willReturn(valueOps);
-
+    void release_Lua로_복원한다_키가_없으면_만들지_않는_스크립트다() {
         repository.release(productId, 3);
 
-        then(valueOps).should().increment(eq("product:stock:" + productId), eq(3L));
+        then(redisTemplate).should().execute(any(RedisScript.class), eq(List.of("product:stock:" + productId)), eq("3"));
     }
 }

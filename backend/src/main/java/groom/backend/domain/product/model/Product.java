@@ -2,10 +2,12 @@ package groom.backend.domain.product.model;
 
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
+import groom.backend.domain.product.model.enums.StockMode;
 import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
 import groom.backend.domain.product.model.vo.Price;
 import groom.backend.domain.product.model.vo.Stock;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -28,6 +30,10 @@ public class Product {
     // 낙관적 락 버전. 영속 데이터를 로드할 때 채워지고, 저장 시 그대로 되돌려 보내(round-trip) 충돌을 감지한다.
     // 신규 생성 상품은 null (최초 INSERT 시 DB/Hibernate 가 0으로 채움).
     private Long version;
+    // 플래시 세일 상품 여부와 재고 판정 위치. 저장 시 그대로 되돌려 보내 수정 저장이 표시를 지우지 않게 한다
+    private boolean flashSale;
+    private StockMode stockMode = StockMode.REDIS;
+    private Instant stockModeChangedAt;
 
     public void changeImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
@@ -37,6 +43,13 @@ public class Product {
     public void assignVersion(Long version) {
         this.version = version;
     }
+    // 매퍼 전용: 로드한 JPA 엔티티의 플래시 세일 표시와 재고 판정 위치를 도메인에 옮겨 담는다
+    public void assignFlashSale(boolean flashSale, StockMode stockMode, Instant stockModeChangedAt) {
+        this.flashSale = flashSale;
+        this.stockMode = stockMode != null ? stockMode : StockMode.REDIS;
+        this.stockModeChangedAt = stockModeChangedAt;
+    }
+
     public static Product create(
             UUID id,
             Name name,
