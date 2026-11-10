@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# T2-6 시험: scale 1 템플릿에서 shop_seed_t2b 를 reset 하고 Redis 를 적재한 뒤 백엔드를 18082 포트로 띄워
+# 로그인(200 + accessToken) · 플래시 상품 상세(200) · 상품 목록 size=20(200, 항목 20개)을 확인하고 백엔드를 끈다(실패해도)
+# 환경 변수: SEED_PG_CONTAINER(dev-db) SEED_REDIS_PORT(6379 — 이 시험은 16380 을 넘긴다) SEED_KAFKA_CONTAINER
+#   SEED_BOOT_PORT(18082) SEED_BOOT_TIMEOUT(초, 기본 240)
+# 지우는 것: shop_seed_t2b(reset.sh 가 다시 만든다) · load-redis.sh 의 소유 키 패턴 · 이 시험이 띄운 백엔드 프로세스(자기 자식 그룹과 시작 때 비어 있던 $SEED_BOOT_PORT 의 리스너만 — 클래스 경로로 찾아 끄지 않는다)
+# 시작 전에 $SEED_BOOT_PORT 가 이미 쓰이면 아무것도 바꾸지 않고 실패한다
+# 카프카 리스너는 SPRING_KAFKA_BOOTSTRAP_SERVERS 기본값(dev-kafka 9092)에 붙고 이 시험은 아무것도 보내지 않는다
+# 사본(shop_seed_t2b)만 고친다(템플릿은 그대로): PENDING outbox 행을 PUBLISHED 로, 보상의 PENDING · FAILED 재시도를 1일 뒤로 미루고,
+#   PAYMENT_RECONCILE_DELAY_MS · PAYMENT_COMPENSATION_RETRY_DELAY_MS 를 1시간으로 둔다 — 부팅한 폴러가 dev-kafka 로 발행하거나 보상 배치가 Toss 를 부르지 않게 한다
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SEED="$(dirname "$HERE")"
+ROOT="$(dirname "$(dirname "$SEED")")"
+. "$SEED/lib.sh"
+
+TGT=shop_seed_t2b
+PORT="${SEED_BOOT_PORT:-18082}"
+TIMEOUT="${SEED_BOOT_TIMEOUT:-240}"
+LOG="$(mktemp -t boot-smoke.XXXXXX)"
+BOOT_PID=""
+FAILS=0
+fail() { echo "FAIL(test) $*"; FAILS=$((FAILS + 1)); }
+
+stop_backend() {
+  [ -n "$BOOT_PID" ] || return 0
+  # 이 스크립트가 띄운 gradlew 의 프로세스 그룹과, 시작 때 비어 있던 $PORT 에서 지금 듣고 있는 프로세스(Gradle 데몬이 따로 띄운 JVM)만 끈다
+  kill -TERM -- "-$BOOT_PID" 2>/dev/null || kill -TERM "$BOOT_PID" 2>/dev/null || true
+  local listeners
+  listeners="$(lsof -ti ":$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  # shellcheck disable=SC2086
+  [ -z "$listeners" ] || kill -TERM $listeners 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -z "$(lsof -ti ":$PORT" -sTCP:LISTEN 2>/dev/null || true)" ] && break
+    sleep 1
+  done
+  listeners="$(lsof -ti ":$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  # shellcheck disable=SC2086
+  [ -z "$listeners" ] || kill -KILL $listeners 2>/dev/null || true
+  kill -KILL -- "-$BOOT_PID" 2>/dev/null || true
+  BOOT_PID=""
+}
+trap 'stop_backend; rm -f "$LOG"' EXIT
+
+if [ -n "$(lsof -ti ":$PORT" -sTCP:LISTEN 2>/dev/null || true)" ]; then
+  echo "port $PORT is already taken (pid $(lsof -ti ":$PORT" -sTCP:LISTEN | head -1)) — stop that process or set SEED_BOOT_PORT; nothing was changed" >&2
+  exit 1
+fi
+
+echo "== reset $TGT from ${SEED_TEMPLATE_DB:-shop_seed_template} and load Redis :$SEED_REDIS_PORT"
+bash "$SEED/reset.sh" "$TGT"
+bash "$SEED/load-redis.sh" "$TGT"
+
+# 사본에서만: 기동하자마자 outbox 폴러가 PENDING 행을 dev-kafka 로 보내고 보상 배치가 Toss 취소를 부르지 않게 해당 행을 닫는다
+# (시드 템플릿은 그대로다 — 측정 라운드는 이 행들이 PENDING 인 채로 쓴다)
+seed_psql "$TGT" -c "
+  UPDATE payment_outbox SET status = 'PUBLISHED', published_at = now() WHERE status = 'PENDING';
+  UPDATE payment_compensation SET next_retry_at = now() + interval '1 day' WHERE status IN ('PENDING', 'FAILED');
+  UPDATE payment_compensation SET updated_at = now() WHERE status = 'PROCESSING'" > /dev/null
+
+echo "== boot backend on :$PORT"
+set -m
+SPRING_DATASOURCE_URL="jdbc:postgresql://localhost:5432/$TGT" \
+SPRING_DATA_REDIS_PORT="$SEED_REDIS_PORT" \
+SERVER_PORT="$PORT" \
+PAYMENT_RECONCILE_DELAY_MS=3600000 \
+PAYMENT_COMPENSATION_RETRY_DELAY_MS=3600000 \
+  "$ROOT/backend/gradlew" -p "$ROOT/backend" bootRun > "$LOG" 2>&1 &
+BOOT_PID=$!
+set +m
+
+BASE="http://localhost:$PORT/api"
+up=0
+for _ in $(seq 1 "$TIMEOUT"); do
+  if ! kill -0 "$BOOT_PID" 2>/dev/null; then break; fi
+  if grep -q "Started BackendApplication" "$LOG" 2>/dev/null; then up=1; break; fi
+  sleep 1
+done
+if [ "$up" != 1 ]; then
+  echo "backend did not start within ${TIMEOUT}s — last log lines:"
+  tail -30 "$LOG"
+  exit 1
+fi
+grep -Eq "Migrating|Successfully validated [0-9]+ migrations|Schema .* is up to date" "$LOG" || echo "(note: no Flyway line in the log)"
+
+echo "== login"
+login="$(curl -s -o "$LOG.login" -w '%{http_code}' -X POST "$BASE/v1/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"seed_1@test.com","password":"loadtest123!"}' || true)"
+[ "$login" = 200 ] || { fail "login status $login: $(head -c 300 "$LOG.login" 2>/dev/null)"; }
+token="$(jq -r '.accessToken // .data.accessToken // empty' "$LOG.login" 2>/dev/null || true)"
+rm -f "$LOG.login"
+[ -n "$token" ] || fail "login response has no accessToken"
+
+flash="f1a50000-0000-4000-8000-000000000001"
+echo "== GET product/$flash"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$BASE/v1/product/$flash" || true)"
+[ "$code" = 200 ] || fail "flash product status $code"
+
+echo "== GET product?size=20"
+code="$(curl -s -o "$LOG.list" -w '%{http_code}' -H "Authorization: Bearer $token" "$BASE/v1/product?size=20" || true)"
+[ "$code" = 200 ] || fail "product list status $code"
+n="$(jq '.content | length' "$LOG.list" 2>/dev/null || echo -1)"
+rm -f "$LOG.list"
+[ "$n" = 20 ] || fail "product list has $n items, want 20"
+
+if [ "$FAILS" -ne 0 ]; then
+  echo "boot-smoke: $FAILS failure(s) — log tail:"
+  tail -20 "$LOG"
+  exit 1
+fi
+echo "boot-smoke: OK"
