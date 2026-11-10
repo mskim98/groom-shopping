@@ -52,38 +52,5 @@ psql_seed -Atc "SELECT status, count(*) FROM payment_compensation GROUP BY 1 ORD
 for b in $BACKENDS; do
   docker logs --since "$START" --until "$END" "${PROJECT}-$b-1" 2>&1 | grep -E 'PAYMENT_COMPENSATION_BATCH|TOSS_API_LATENCY.*/cancel - ' > "$OUT/batch-$b.log" || true
 done
-python3 -B - "$OUT" "$WINDOW_S" "$DUE_ROWS" "$CANCEL_DELAY_MS" "$START" "$END" <<'PY'
-import json, re, sys, glob, os
-out, window, due, delay, start, end = sys.argv[1:7]
-reqs = [e for e in json.load(open(os.path.join(out, "wiremock-requests.json")))["requests"]
-        if re.search(r"/v1/payments/.*/cancel$", e["request"]["url"])]
-times = sorted(e["timing"]["totalTime"] for e in reqs if e.get("timing") and e["timing"].get("totalTime") is not None)
-def pct(v, p):
-    return v[max(0, min(len(v) - 1, -(-p * len(v) // 100) - 1))] if v else 0
-import re as _re
-skip = run = carried = 0
-per = {}
-lat = []
-for p in sorted(glob.glob(os.path.join(out, "batch-*.log"))):
-    t = open(p).read()
-    lat += [int(x) for x in _re.findall(r"/cancel - (\d+)ms", t)]
-    s, r, c = t.count("PAYMENT_COMPENSATION_BATCH_SKIP"), len(re.findall(r"PAYMENT_COMPENSATION_BATCH\] Retrying", t)), t.count("PAYMENT_COMPENSATION_BATCH_CARRIED")
-    per[os.path.basename(p)[6:-4]] = {"cycles_skipped": s, "cycles_run": r, "forced_open": c}
-    skip += s; run += r; carried += c
-statuses = {}
-for e in reqs:
-    k = str(e["response"]["status"]); statuses[k] = statuses.get(k, 0) + 1
-res = {
-    "fault_window_s": int(window), "window": [start, end], "cancel_stub": "500 after %s ms on every cancel" % delay,
-    "due_rows_injected": int(due),
-    "cancel_calls": len(reqs), "cancel_p95_ms": pct(sorted(lat), 95), "cancel_p99_ms": pct(sorted(lat), 99), "cancel_calls_backend_logs": len(lat),
-    "cancel_wiremock_p95_ms": pct(times, 95), "cancel_response_status": statuses,
-    "cancel_latency_source": "backend log [TOSS_API_LATENCY] POST .../cancel - <n>ms (client side, per call); cancel_calls counts the requests wiremock received",
-    "batch_cycles_run": run, "batch_cycles_skipped_open": skip, "batch_forced_open": carried,
-    "pg_not_reached_ratio": (skip / (skip + run)) if skip + run else 0,
-    "pg_not_reached_definition": "batch cycles (3 backends) that did not call the PG because toss-cancel was OPEN / all batch cycles in the window",
-    "per_backend": per,
-}
-json.dump(res, open(os.path.join(out, "pg-cancel.json"), "w"), indent=2, ensure_ascii=False)
-print(json.dumps({k: res[k] for k in ("cancel_calls", "cancel_p95_ms", "pg_not_reached_ratio", "batch_cycles_run", "batch_cycles_skipped_open")}))
-PY
+# 낸 값은 원시 파일에서 derive-final.py 가 만든다(스택 없이 다시 돌 수 있다)
+python3 -B "$ROOT/k6/loadtest/derive-final.py" pgcancel "$OUT" "$OUT/pg-cancel.json"

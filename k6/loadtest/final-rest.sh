@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:?usage: final-rest.sh <out-dir> [coupon] [detail] [pgcancel]}"; shift
 WHAT="${*:-coupon detail pgcancel}"
 RUN="bash $ROOT/k6/loadtest/run.sh"
+SEED_STAMP="${SEED_STAMP:-/tmp/r119-measure-seed-stamp}"
 mkdir -p "$OUT"
 cd "$ROOT"
 
@@ -35,6 +36,14 @@ for l in open(os.path.join(d, "nginx.log")):
 json.dump({"backend_requests": cnt, "nginx_status": st}, open(os.path.join(d, "split.json"), "w"))
 PY
 }
+# 이 시나리오의 조건 - 스레드 종류 · 누수 감지 문턱값은 떠 있는 backend1 컨테이너의 환경에서, 시드 복제 시각은 run.sh seed 가 남긴 SEED_STAMP 에서 읽는다
+write_condition() { # 시나리오 폴더
+  local vt lk
+  vt="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_THREADS_VIRTUAL_ENABLED 2> /dev/null || echo true)"
+  lk="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 2> /dev/null || echo 0)"
+  printf '{"threads": "%s", "leak_detection": %s, "diag_samplers": false, "seed_copy": "%s"}\n' \
+    "$([ "$vt" = false ] && echo platform || echo virtual)" "$([ "${lk:-0}" -gt 0 ] && echo true || echo false)" "$(cat "$SEED_STAMP" 2> /dev/null || echo unknown)" > "$1/condition.json"
+}
 nginx_lines() { docker exec nginx sh -c "wc -l < $NGINX_LOG" | tr -d ' '; }
 
 coupon() {
@@ -48,6 +57,7 @@ coupon() {
     SELECT max(id) + 1, 'r120 measure coupon', 'r120 measure coupon', $qty, 5000, 30000, true, 'DISCOUNT', (now() AT TIME ZONE 'Asia/Seoul')::date + 30, now() AT TIME ZONE 'Asia/Seoul', now() AT TIME ZONE 'Asia/Seoul' FROM coupon RETURNING id" | head -1)"
   bash db/seed/load-redis.sh "$SEED_DB" > "$d/load-redis.log" 2>&1
   boot || return 1
+  write_condition "$d"
   psql_seed -c "SELECT pg_stat_statements_reset()" > /dev/null
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$d/stock-before.txt"
   local before; before="$(nginx_lines)"
@@ -69,21 +79,8 @@ coupon() {
   psql_seed -Atc "SELECT count(*) FROM coupon_issue WHERE coupon_id = $cid" > "$d/issued-db.txt"
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$d/stock-after.txt"
   docker exec redis redis-cli SCARD "coupon:{$cid}:issued_users" > "$d/issued-users-redis.txt"
-  python3 -B - "$d" "$cid" "$qty" "$t0" <<'PY'
-import json, sys, os
-d, cid, qty, t0 = sys.argv[1:5]
-k = json.load(open(os.path.join(d, "k6-summary.json"))); s = json.load(open(os.path.join(d, "split.json")))
-rd = lambda n: open(os.path.join(d, n)).read().strip()
-out = {"coupon_id": int(cid), "quantity": int(qty), "requests": k["requests"], "rate": k["rate"], "duration_s": k["duration_s"],
-       "issued": int(rd("issued-db.txt")), "completion_p95_ms": k["completion_p95_ms"], "completion_p99_ms": k["completion_p99_ms"],
-       "completion_count": k["completion_count"], "accept_p95_ms": k["accept_p95_ms"], "results": k["results"],
-       "dropped_iterations": k["dropped_iterations"], "max_vus": k["max_vus"], "backend_requests": s["backend_requests"], "nginx_status": s["nginx_status"],
-       "redis_stock_before": rd("stock-before.txt"), "redis_stock_after": rd("stock-after.txt"), "redis_issued_users": rd("issued-users-redis.txt"),
-       "backends": 3, "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
-       "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms)", "start": t0}
-json.dump(out, open(os.path.join(d, "..", "coupon.json"), "w"), indent=2)
-print({x: out[x] for x in ("requests", "quantity", "issued", "rate", "completion_p95_ms")})
-PY
+  echo "$t0" > "$d/start.txt"
+  python3 -B "$ROOT/k6/loadtest/derive-final.py" coupon "$d" "$OUT/coupon.json"
 }
 
 detail() {
@@ -91,6 +88,7 @@ detail() {
   echo "== $(date -u +%T) detail"
   stop_backends; reseed || return 1
   boot || return 1
+  write_condition "$d"
   local n="${DETAIL_PRODUCTS:-200}" rate="${DETAIL_RATE:-2000}" hold="${DETAIL_HOLD_S:-30}"
   psql_seed -Atc "SELECT id FROM product WHERE flash_sale = false ORDER BY id LIMIT $n" > "$d/product-ids.txt"
   # 기준선 - 10 초 동안 부하 없이 Redis GET 이 늘어나는 양(백엔드의 다른 일)
@@ -107,47 +105,15 @@ detail() {
   psql_seed -At -F $'\t' -c "SELECT regexp_replace(left(query, 300), '\s+', ' ', 'g'), calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') ORDER BY calls DESC LIMIT 10" > "$d/pgss.tsv"
   backend_split "$d" '^/api/v1/product/[0-9a-f-]{36}$' "$((before + 1))"
   echo "$t0" > "$d/start.txt"
-  python3 -B - "$d" "$t0" <<'PY'
-import json, os, re, sys
-d, t0 = sys.argv[1:3]
-rd = lambda n: open(os.path.join(d, n)).read()
-k6 = json.load(open(os.path.join(d, "k6-summary.json"))); sp = json.load(open(os.path.join(d, "split.json")))
-cmd = lambda txt, name: int((re.search(r"cmdstat_%s:calls=(\d+)" % name, txt) or [0, 0])[1])
-after, base = rd("redis-after.txt"), rd("redis-baseline.txt")
-# 기준선은 10 초 동안의 EXISTS · GET 이다 - 부하 구간(ramp + hold)의 길이만큼 늘려 뺀다
-secs = k6.get("ramp_s", 5) + k6["hold_s"]
-exists_base = cmd(base, "exists") * secs / 10
-n = sum(sp["backend_requests"].values())
-l2_lookups = max(cmd(after, "exists") - exists_base, 0)
-rows = [l.split("\t") for l in rd("pgss.tsv").splitlines() if l.strip()]
-calls = lambda rx: sum(int(r[1]) for r in rows if re.search(rx, r[0]))
-body_loads = calls(r"^select pje1_0\.id")
-qty_reads = calls(r"^SELECT stock, stock_mode FROM product WHERE id")
-l1 = 1 - l2_lookups / n if n else None
-l2 = 1 - body_loads / l2_lookups if l2_lookups else None
-out = {
-    "requests": k6["requests"], "requests_nginx_all_phases": n, "rate": k6["rate"], "hold_s": k6["hold_s"], "ramp_s": 5, "products": k6["products"],
-    "vus_max": k6["max_vus"], "achieved_rps_hold": k6["achieved_rps"], "p95_ms": k6["p95_ms"], "p99_ms": k6["p99_ms"], "avg_ms": k6["avg_ms"],
-    "ok": k6["ok"], "bad": k6["bad"], "dropped_iterations": k6["dropped_iterations"], "backend_requests": sp["backend_requests"],
-    "cache_hit_ratio": 1 - body_loads / n if n else None,
-    "cache_hit_ratio_definition": "overall = 1 - DB body loads / requests (a request is a hit when neither L1 nor L2 needed the database for the product body)",
-    "l1_hit_ratio": l1, "l1_definition": "1 - L2 lookups / requests; L1 = server-memory Caffeine, 1 s TTL; L2 lookups = Redis EXISTS delta (one per L1 body miss, baseline-corrected)",
-    "l2_hit_ratio": l2, "l2_definition": "1 - DB body loads / L2 lookups; L2 = Redis pointer+body, 30 s TTL; DB body loads = pg_stat_statements calls of the Product select by id (pje1_0)",
-    "l2_lookups": l2_lookups, "db_body_loads": body_loads, "db_quantity_reads": qty_reads,
-    "quantity_note": "the stock quantity has only an L1 (1 s) and no L2: every L1 expiry reads SELECT stock, stock_mode FROM product (db_quantity_reads) regardless of the body cache",
-    "redis_exists_baseline_per_10s": cmd(base, "exists"), "redis_exists_after": cmd(after, "exists"), "redis_get_after": cmd(after, "get"),
-    "other_traffic": "none issued by the driver; the stack's background jobs (outbox poller, stock ledger apply, reconcilers) run - see pgss_top for their statements",
-    "pgss_top": [{"query": r[0][:120], "calls": int(r[1])} for r in rows[:6]], "start": t0,
-}
-json.dump(out, open(os.path.join(d, "..", "detail.json"), "w"), indent=2, ensure_ascii=False)
-print({x: out[x] for x in ("requests", "rate", "p95_ms", "cache_hit_ratio", "l1_hit_ratio", "l2_hit_ratio", "db_body_loads", "db_quantity_reads")})
-PY
+  # BACKGROUND_PGSS = 상품 조회 요청이 없는 실행(쿠폰 실행)의 pgss.tsv - 같은 횟수로 찍히는 배경 작업의 상품 select 를 본문 적재 수에서 뺀다(없으면 빼지 않는다)
+  python3 -B "$ROOT/k6/loadtest/derive-final.py" detail "$d" "$OUT/detail.json" ${BACKGROUND_PGSS:+--background-pgss "$BACKGROUND_PGSS"}
 }
 
 pgcancel() {
   echo "== $(date -u +%T) pgcancel"
   stop_backends; reseed || return 1
   boot || return 1
+  mkdir -p "$OUT/pgcancel"; write_condition "$OUT/pgcancel"
   bash k6/loadtest/final-pg-cancel.sh "$OUT/pgcancel" > "$OUT/pgcancel.run.log" 2>&1
   cp "$OUT/pgcancel/pg-cancel.json" "$OUT/pg-cancel.json" 2> /dev/null || true
   tail -2 "$OUT/pgcancel.run.log"
