@@ -54,7 +54,7 @@ public class PaymentNotificationService {
     /**
      * 재고 차감된 상품에 대한 알림을 비동기로 처리 - notificationExecutor 스레드풀에서 실행 - 팀원이 만든 알림 메서드는 내부적으로 트랜잭션 처리
      *
-     * @param stockReductions 재고 차감 결과 목록 (제품 ID와 차감 후 재고량 포함)
+     * @param stockReductions 재고 차감 결과 목록 (제품 ID · 차감 후 재고량 · 차감 수량 - 수량으로 구한 차감 전 재고와 차감 후 재고가 임계값을 넘겼는지 가린다)
      * @param orderUserId 주문한 사용자 id (알림에서 제외). 엔티티 대신 값으로 받는다 - 이 메서드는 트랜잭션이 끝난 뒤 다른
      *                    스레드에서 돌고 open-in-view 도 꺼져 있어, Order 의 지연 로딩 필드를 읽으면 LazyInitializationException 이다
      */
