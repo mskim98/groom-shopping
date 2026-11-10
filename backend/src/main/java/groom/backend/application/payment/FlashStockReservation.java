@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,11 +48,7 @@ public class FlashStockReservation {
      * @return 이 요청이 실제로 예약한 항목(플래시가 아닌 항목 · 먼저 온 요청이 예약한 항목은 담기지 않는다)
      */
     public List<ReservedItem> reserve(UUID paymentId, List<OrderItem> orderItems) {
-        // 같은 상품이 두 항목이어도 (결제, 상품, 종류) 유일 제약에 맞게 한 건으로 합친다
-        Map<UUID, Integer> quantities = new LinkedHashMap<>();
-        for (OrderItem item : orderItems) {
-            quantities.merge(item.getProductId(), item.getQuantity(), Integer::sum);
-        }
+        Map<UUID, Integer> quantities = quantitiesByProduct(orderItems);
         List<UUID> flashIds = ledger.findFlashProductIds(quantities.keySet());
         List<ReservedItem> reserved = new ArrayList<>();
         for (UUID productId : flashIds) {
@@ -65,13 +62,22 @@ public class FlashStockReservation {
         return reserved;
     }
 
-    private java.util.Optional<ReservedItem> reserveOne(UUID paymentId, UUID productId, int quantity) {
+    // 같은 상품이 두 항목이어도 (결제, 상품, 종류) 유일 제약에 맞게 한 건으로 합친다
+    private static Map<UUID, Integer> quantitiesByProduct(List<OrderItem> orderItems) {
+        Map<UUID, Integer> quantities = new LinkedHashMap<>();
+        for (OrderItem item : orderItems) {
+            quantities.merge(item.getProductId(), item.getQuantity(), Integer::sum);
+        }
+        return quantities;
+    }
+
+    private Optional<ReservedItem> reserveOne(UUID paymentId, UUID productId, int quantity) {
         // 두 번째 시도는 DB 모드 예약 중 REDIS 로 복귀한 드문 경우다
         for (int attempt = 0; attempt < 2; attempt++) {
             if (ledger.readMode(productId) == StockMode.REDIS) {
                 long result = reserveInRedis(productId, quantity);
                 if (result >= 0) {
-                    return java.util.Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS));
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS));
                 }
                 if (result == -1L) {
                     log.info("[STOCK_RESERVE_OUT] ProductId: {}, Quantity: {}", productId, quantity);
@@ -83,10 +89,10 @@ public class FlashStockReservation {
             DbReservation result = ledgerService.reserveInDb(paymentId, productId, quantity);
             switch (result) {
                 case RESERVED -> {
-                    return java.util.Optional.of(new ReservedItem(productId, quantity, StockMode.DB));
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.DB));
                 }
                 case DUPLICATE -> {
-                    return java.util.Optional.empty();
+                    return Optional.empty();
                 }
                 case SHORT -> {
                     log.info("[STOCK_RESERVE_OUT] DB mode - ProductId: {}, Quantity: {}", productId, quantity);
@@ -112,10 +118,7 @@ public class FlashStockReservation {
 
     /** 테스트 확정처럼 예약 단계가 없는 경로에서, 주문의 플래시 항목을 REDIS 예약으로 간주해 돌려준다 */
     public List<ReservedItem> flashItemsOf(List<OrderItem> orderItems) {
-        Map<UUID, Integer> quantities = new LinkedHashMap<>();
-        for (OrderItem item : orderItems) {
-            quantities.merge(item.getProductId(), item.getQuantity(), Integer::sum);
-        }
+        Map<UUID, Integer> quantities = quantitiesByProduct(orderItems);
         return ledger.findFlashProductIds(quantities.keySet()).stream()
                 .map(id -> new ReservedItem(id, quantities.get(id), StockMode.REDIS))
                 .toList();

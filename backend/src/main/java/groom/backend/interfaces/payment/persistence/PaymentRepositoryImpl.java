@@ -25,6 +25,7 @@ public class PaymentRepositoryImpl implements PaymentRepository {
 
     // READY 대사의 선점. FOR UPDATE SKIP LOCKED 로 집으면서 같은 문장에서 updated_at 을 지금으로 올려, 다른 인스턴스와 다음 회차가
     // 이 결제를 stale 기준(5분) 동안 다시 집지 못하게 한다. 대사가 REQUIRES_NEW 로 같은 행을 쓰므로 잠금을 대사 끝까지 쥐지 않는다
+    // 한 번 집은 결제는 stale-after 가 지난 뒤에야 다시 보인다(임대). 트랜잭션 안에서 행 잠금을 쥐면 REQUIRES_NEW 쓰기가 그 잠금을 기다려 교착한다
     private static final String CLAIM_STALE_READY_SQL = """
             UPDATE payment SET updated_at = now()
             WHERE id IN (
