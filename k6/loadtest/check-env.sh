@@ -17,6 +17,10 @@ for b in $BACKENDS; do
 done
 check "nginx:80 product list" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost/api/v1/product?size=1')\" = 200 ]"
 check "wiremock confirm 200" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18089/v1/payments/confirm -H 'Content-Type: application/json' -d '{\"paymentKey\":\"k\",\"orderId\":\"o\",\"amount\":1}')\" = 200 ]"
-check "verify.sh $SEED_DB 1" bash "$ROOT/db/seed/verify.sh" "$SEED_DB" 1
+# 시드 검사는 템플릿(shop_seed_m1 의 복제 원본)에서 한다 - 백엔드가 뜨면 시드의 PENDING outbox · READY 결제 · 보상 행이 발행 · 재시도돼 shop_seed_m1 의 행 수가 시드 목표와 달라진다(Ruling R119-7)
+# 기동 전 shop_seed_m1 검사는 run.sh seed 가 남긴다
+check "verify.sh shop_seed_template 1" bash "$ROOT/db/seed/verify.sh" shop_seed_template 1
+live="$(bash "$ROOT/db/seed/verify.sh" "$SEED_DB" 1 2>&1 | grep '^FAIL ' | cut -c1-200 | tr '\n' ' ')"
+echo "INFO verify.sh $SEED_DB 1 on the live DB (boot-time drift: published outbox, retried compensations): ${live:-no FAIL line}"
 check "pg_stat_statements extension" bash -c ". '$ROOT/k6/loadtest/env.sh'; [ \"\$(psql_seed -Atc \"SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'\")\" = 1 ]"
 exit $bad

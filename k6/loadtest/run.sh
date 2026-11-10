@@ -56,7 +56,11 @@ cmd_seed() {
   psql_seed -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
   bash db/seed/load-redis.sh "$SEED_DB"
   bash db/seed/recreate-topics.sh
-  bash db/seed/verify.sh "$SEED_DB" 1 | tail -3
+  # 백엔드가 뜨기 전의 검사 - 기동 뒤에는 시드의 PENDING 행이 처리돼 이 검사가 통과하지 못한다(R119-7)
+  local code=0 out
+  out="$(bash db/seed/verify.sh "$SEED_DB" 1)" || code=$?
+  echo "verify.sh $SEED_DB 1 before backends boot: exit $code, PASS $(printf '%s\n' "$out" | grep -c '^PASS '), FAIL $(printf '%s\n' "$out" | grep -c '^FAIL ')"
+  [ "$code" -eq 0 ] || { printf '%s\n' "$out" | grep '^FAIL ' >&2; return 1; }
 }
 
 backend_healthy() { docker exec nginx curl -fsS "http://$1:8080/api/actuator/health" | grep -q '"status":"UP"'; }
