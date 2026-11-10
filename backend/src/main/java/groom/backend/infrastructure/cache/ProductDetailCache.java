@@ -7,8 +7,10 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.domain.product.model.Product;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
@@ -80,7 +82,17 @@ public class ProductDetailCache {
     /** 본문과 수량을 읽는다. 상품이 없으면 빈 값이다. loader 는 L1 · L2 가 모두 비었을 때만 부른다 */
     public Optional<ProductDetail> read(UUID id, Function<UUID, Optional<Product>> loader) {
         Optional<ProductBody> body = readBody(id, loader);
-        return body.map(b -> new ProductDetail(b, quantity(id, b)));
+        if (body.isEmpty()) {
+            return Optional.empty();
+        }
+        OptionalInt stock = quantity(id, body.get());
+        if (stock.isEmpty()) {
+            // 다른 인스턴스가 지운 상품 - 이 인스턴스의 L1 본문이 남아 있어도 없는 상품이다
+            bodies.invalidate(id);
+            writeQuietly(() -> redis.opsForValue().set(negativeKey(id), "1", NEGATIVE_TTL), id);
+            return Optional.empty();
+        }
+        return Optional.of(new ProductDetail(body.get(), stock.getAsInt()));
     }
 
     private Optional<ProductBody> readBody(UUID id, Function<UUID, Optional<Product>> loader) {
@@ -144,30 +156,35 @@ public class ProductDetailCache {
         }
     }
 
-    private int quantity(UUID id, ProductBody body) {
+    private OptionalInt quantity(UUID id, ProductBody body) {
         Integer cached = quantities.getIfPresent(id);
         if (cached != null) {
-            return cached;
+            return OptionalInt.of(cached);
         }
-        int stock = loadQuantity(id, body);
-        quantities.put(id, stock);
+        OptionalInt stock = loadQuantity(id, body);
+        stock.ifPresent(value -> quantities.put(id, value));
         return stock;
     }
 
-    private int loadQuantity(UUID id, ProductBody body) {
-        Map<String, Object> row = jdbc.queryForMap("SELECT stock, stock_mode FROM product WHERE id = ?", id);
+    // 행이 없으면 빈 값이다(예외로 올리지 않는다)
+    private OptionalInt loadQuantity(UUID id, ProductBody body) {
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT stock, stock_mode FROM product WHERE id = ?", id);
+        if (rows.isEmpty()) {
+            return OptionalInt.empty();
+        }
+        Map<String, Object> row = rows.get(0);
         int dbStock = ((Number) row.get("stock")).intValue();
         if (body.flashSale() && "REDIS".equals(row.get("stock_mode"))) {
             try {
                 String live = redis.opsForValue().get(ProductStockRedisRepository.STOCK_KEY_PREFIX + id);
                 if (live != null) {
-                    return Integer.parseInt(live);
+                    return OptionalInt.of(Integer.parseInt(live));
                 }
             } catch (RuntimeException e) {
                 logOnce("[PRODUCT_CACHE_READ_FAILED] id={} cause={}", id, e.toString());
             }
         }
-        return dbStock;
+        return OptionalInt.of(dbStock);
     }
 
     /** 커밋 뒤에 부른다 - 새 값 키 → 포인터 이동 → 옛 값 키 짧은 만료 순서다. 이 인스턴스의 L1 도 비운다 */

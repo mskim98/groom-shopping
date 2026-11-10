@@ -78,6 +78,7 @@ public class SharedCircuitFlag {
     }
 
     public boolean isOpen(String name) {
+        // shortcut: 키가 만료되면 자기 회로가 CLOSED 인 인스턴스는 half-open 호출 상한 없이 한꺼번에 보낸다(키를 쓴 인스턴스만 half-open 상한으로 탐색한다), 복구 직후 몰림이 문제가 되면 키 만료 뒤 탐색 허가를 Redis 로 나눠 준다
         try {
             String value = redis.opsForValue().get(key(name));
             return value != null && System.currentTimeMillis() < Long.parseLong(value);

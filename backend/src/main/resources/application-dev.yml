@@ -255,10 +255,13 @@ resilience4j:
       # OPEN 이면 리스너 컨테이너를 멈춰 레코드를 승인하지 않은 채 남긴다(재시도 5회 · DLQ 적재를 막는다). 10초 뒤 HALF_OPEN 의 레코드 2건이 DB 를 탐색한다
       db-ledger:
         sliding-window-type: COUNT_BASED
+        # 최근 10건: 컨슈머 레코드 1건이 DB 를 1~3번 쓰므로 10건이면 몇 초치다. 너무 작으면 DB 가 한 번 느린 것만으로 회로가 열리고, 너무 크면 DB 가 죽은 뒤에도 재시도 5회(약 31초)가 먼저 돈다
         sliding-window-size: 10
+        # 5건 미만은 판단하지 않는다: 너무 작으면 기동 직후 1~2건 실패로 열리고, 너무 크면 한산한 시간대에 DB 장애를 늦게 안다
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
+        # 반쯤 열린 상태에서 레코드 2건만 DB 를 탐색한다: 1건이면 우연한 한 번의 성공으로 닫히고, 많으면 아직 죽은 DB 에 레코드를 쏟는다
         permitted-number-of-calls-in-half-open-state: 2
         automatic-transition-from-open-to-half-open-enabled: true
         record-exceptions:
@@ -290,6 +293,7 @@ resilience4j:
     instances:
       toss:
         max-concurrent-calls: 50
+        # 0: 자리가 없으면 기다리지 않고 바로 거절한다. 양수로 두면 Toss 가 느릴 때 그 시간만큼 요청 스레드가 묶여 승인 응답 한도(60초) 안에 거절을 못 돌려준다
         max-wait-duration: 0
 
   # 플래시 세일 결제 진입 속도(인스턴스당) - 넘으면 Redis 를 부르지 않고 FLASH_ENTRY_LIMITED(429) 로 거절한다
@@ -298,7 +302,9 @@ resilience4j:
     instances:
       flash-entry:
         limit-for-period: 2000
+        # 1초: 한도(2000)를 채우는 주기다. 길게 하면 그 기간 합계가 한도라 한 순간에 몰려도 통과하고, 짧게 하면 짧은 순간 몰림에 정상 요청이 거절된다
         limit-refresh-period: 1s
+        # 0: 한도를 넘으면 기다리지 않고 바로 FLASH_ENTRY_LIMITED(429)로 거절한다. 양수로 두면 몰린 요청이 그 시간만큼 스레드를 잡고 Redis 앞에서 줄을 선다
         timeout-duration: 0
 
   jackson:
