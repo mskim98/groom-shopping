@@ -24,9 +24,9 @@ class LeakDigestTest(unittest.TestCase):
 
     def test_점유_시간은_보고_시각_더하기_문턱값에서_반환_시각까지다(self):
         g = {g["key"]: g for g in load()["by_first_app_frame"]}[AWAIT]
-        # 10:00:05.000 → 10:00:06.500 (3500) · 10:00:07.200 → 10:00:10.400 (5200) · 10:00:20.000 → 10:00:26.100 (10100)
-        self.assertEqual(sorted(g["held_ms"]), [3500, 5200, 10100])
-        self.assertEqual(g["longest_ms"], 10100)
+        # 10:00:05.000 → 10:00:06.500 (3500) · 10:00:07.200 → 10:00:10.400 (5200) · 10:00:20.000 → 10:00:26.100 (8100)
+        self.assertEqual(sorted(g["held_ms"]), [3500, 5200, 8100])
+        self.assertEqual(g["longest_ms"], 8100)
         self.assertEqual(g["returned"], 3)
         self.assertEqual(g["never_returned"], 0)
 
@@ -38,7 +38,7 @@ class LeakDigestTest(unittest.TestCase):
         self.assertIsNone(g["longest_ms"])
 
     def test_같은_연결_번호가_다른_스레드에서_다시_쓰여도_짝이_섞이지_않는다(self):
-        # PgConnection@1a2b3c4d 는 exec-7 (3500 ms) 과 exec-9 (10100 ms) 가 차례로 보고했다
+        # PgConnection@1a2b3c4d 는 exec-7 (3500 ms) 과 exec-9 (8100 ms) 가 차례로 보고했다
         self.assertEqual(load()["totals"], {"reports": 4, "returned": 3, "never_returned": 1})
 
     def test_기다림_프레임_묶음은_종류와_그_위의_애플리케이션_프레임이다(self):
@@ -57,7 +57,7 @@ class LeakDigestTest(unittest.TestCase):
     def test_보고서_글은_묶음마다_건수와_최장_점유를_찍는다(self):
         text = leak_digest.format_report(load())
         self.assertIn("reports 4 · returned 3 · never returned 1", text)
-        self.assertRegex(text, r"3\s+3\s+0\s+10100\s+" + AWAIT.replace("(", r"\(").replace(")", r"\)"))
+        self.assertRegex(text, r"3\s+3\s+0\s+8100\s+" + AWAIT.replace("(", r"\(").replace(")", r"\)"))
 
 
 if __name__ == "__main__":
