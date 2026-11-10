@@ -29,6 +29,8 @@ const CLASSES = ['2xx', '429', '503', '5xx', 'other4xx', 'fail'];
 
 // 주문이 반복 한 번의 상품 1개만 담게 하려고 보내는 추가 요청(장바구니 항목 제거 · 비우기) - 흐름 3건의 요청률에는 넣지 않고 따로 센다
 const extra = {cart_remove: new Counter('extra_cart_remove'), cart_get: new Counter('extra_cart_get'), cart_clear: new Counter('extra_cart_clear')};
+// 장바구니가 비었는지 확인하지 못해 시작하지 않고 넘긴 반복 수 - 확인 없이 담으면 남은 항목이 주문에 섞인다
+const skipped = new Counter('iterations_skipped');
 // VU 별 상태(각 VU 는 독립 JS 런타임이라 모듈 변수는 VU 로컬): 장바구니가 비어 있음이 확인된 상태인가. setup 이 비웠으므로 처음엔 참이고,
 // 결제 확정 200 뒤에는 서버가 비동기로 비우는 일이 밀려 있을 수 있어 거짓이다(부하 때 그 지연이 다음 반복의 주문에 옛 항목을 섞었다)
 let cartKnownEmpty = true;
@@ -163,6 +165,11 @@ export default function (data) {
 
     if (!cartKnownEmpty) {
         cartKnownEmpty = clearCart(headers);
+        if (!cartKnownEmpty) {
+            // 조회나 비우기가 실패했다(과부하 때 Hikari 대기 초과 500 등) - 남은 항목이 이번 주문에 섞이지 않게 이번 반복은 요청 없이 넘기고 다음 반복에서 다시 비운다
+            skipped.add(1);
+            return;
+        }
     }
 
     const add = http.post(BASE_URL + '/cart/add', JSON.stringify({productId, quantity: 1}),
@@ -227,6 +234,7 @@ export function handleSummary(data) {
         endpoints,
         errors: {rate: reqHold > 0 ? errHold / reqHold : 1, status: statusTotal, requests_hold: reqHold},
         // 흐름 3건 밖의 추가 요청(전 구간 합계): 항목 제거 · 장바구니 조회 · 장바구니 비우기
+        iterations_skipped: count(data, 'iterations_skipped'),
         extra_requests: {cart_remove: count(data, 'extra_cart_remove'), cart_get: count(data, 'extra_cart_get'), cart_clear: count(data, 'extra_cart_clear')},
     };
     return {

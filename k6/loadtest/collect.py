@@ -258,6 +258,7 @@ def collect_step(folder, target):
         "docker_stats": stats_peak(os.path.join(folder, "stats.tsv")),
         "orders": orders(folder),
         "extra_requests": k6.get("extra_requests", {}),
+        "iterations_skipped": k6.get("iterations_skipped"),
         "hikari_timers": hikari(folder),
         "k6_cpu": k6_cpu(os.path.join(folder, "k6cpu.tsv")),
         "sampler_median_gap_s": sampler_gaps(folder),
