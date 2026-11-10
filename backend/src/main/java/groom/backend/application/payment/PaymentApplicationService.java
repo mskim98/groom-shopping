@@ -752,7 +752,7 @@ public class PaymentApplicationService {
     }
 
     // 취소로 재고를 돌려준다. 원장에 판매가 있는 플래시 상품은 상품 행에 직접 더하지 않고 REVERSAL 을 쓴다(적용 배치가 행에 접어 넣는다)
-    // 같은 취소가 두 번 돌아도 (결제, 상품, 종류) 유일 제약이 REVERSAL 을 한 번으로 막고, Redis 복원은 새로 쓰인 REVERSAL 에만 따른다
+    // 같은 취소가 두 번 돌아도 (결제, 상품, 종류) 유일 제약이 REVERSAL 을 한 번으로 막고, Redis 복원은 새로 쓰인 REVERSAL 이 REDIS 모드로 읽힌 트랜잭션에서 쓰인 경우에만 따른다(reverseSales)
     // Redis 복원은 커밋 뒤에 한다 - 롤백된 취소에 Redis 키만 커지지 않게 한다. 일반 상품은 행 복원뿐이다(Redis 키가 없다)
     private void restoreProductStock(Order order, UUID paymentId) {
         java.util.Set<UUID> inLedger = stockLedgerRepository.findSaleProductIds(paymentId);

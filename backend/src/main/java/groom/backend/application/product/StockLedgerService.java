@@ -22,7 +22,7 @@ import org.springframework.transaction.interceptor.TransactionAspectSupport;
  * 플래시 세일 재고 원장의 트랜잭션 단위 작업. 상품 하나를 한 트랜잭션으로 다룬다.
  * <p>
  * 잠금 순서는 advisory → 상품 행 → 원장 행이다. 결제 경로(TX1 · DB 모드 진입)는 공유 advisory 만 잡고 REDIS 모드에서 상품 행을 잠그지 않는다.
- * 전환 · 복귀는 배타 advisory 로 진행 중인 TX1 을 기다린 뒤 상품 행을 잠근다. 적용 배치는 advisory 를 잡지 않는다 -
+ * 전환 · 복귀는 배타 advisory 로 진행 중인 TX1 을 기다린 뒤(lock-timeout-ms 까지) 상품 행을 잠근다. REVERSAL 기록(reverseSales)도 공유 advisory 아래에서 모드를 읽는다. 적용 배치는 advisory 를 잡지 않는다 -
  * 배치가 도는 동안 들어온 미적용 행은 다음 회차에 적용되고, 남은 재고 = product.stock − SUM(미적용 qty) 은 stock 변경과 적용 표시를
  * 한 트랜잭션으로 커밋하므로 어느 순간에도 성립한다
  */
