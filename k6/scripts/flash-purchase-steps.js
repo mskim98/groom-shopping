@@ -6,6 +6,7 @@ import {Counter, Trend} from 'k6/metrics';
  * 플래시 상품 구매 흐름 단계 측정 - 한 번 실행에 한 단계(목표 요청률 하나)
  *
  * 한 반복 = 장바구니 담기 → 주문 → 결제 확정 (HTTP 요청 3건). 요청률 = nginx 를 지나는 초당 HTTP 요청 수
+ * 주문은 그 반복의 상품 1개만 담는다: 주문 · 확정이 성공으로 끝나지 않으면 항목을 제거하고, 제거도 실패하면 다음 반복 시작에 장바구니를 비운다(추가 요청은 요약의 extra_requests)
  * 열린 모델(ramping-arrival-rate): 응답이 느려져도 도착률은 그대로라 밀린 만큼 dropped_iterations 가 늘고 VU 가 늘어난다
  *
  * 실행 예(run.sh 가 부른다):
@@ -25,6 +26,11 @@ const SUMMARY_FILE = __ENV.SUMMARY_FILE || 'k6-summary.json';
 const REQUESTS_PER_ITERATION = 3;
 const ENDPOINTS = ['cart_add', 'order', 'confirm'];
 const CLASSES = ['2xx', '429', '503', '5xx', 'other4xx', 'fail'];
+
+// 주문이 반복 한 번의 상품 1개만 담게 하려고 보내는 추가 요청(장바구니 항목 제거 · 비우기) - 흐름 3건의 요청률에는 넣지 않고 따로 센다
+const extra = {cart_remove: new Counter('extra_cart_remove'), cart_get: new Counter('extra_cart_get'), cart_clear: new Counter('extra_cart_clear')};
+// VU 별 상태: 앞 반복이 장바구니에 항목을 남겼을 수 있는데 제거도 실패했으면 다음 반복 시작에 장바구니를 비운다(각 VU 는 독립 JS 런타임이라 모듈 변수는 VU 로컬)
+let cartMayHoldItems = false;
 
 // 응답 시간은 유지 구간(램프 뒤)에 시작한 요청만 모은다 - 램프 구간의 낮은 부하가 p95 를 낮추지 않게 한다
 const latency = {};
@@ -127,6 +133,25 @@ function record(ep, r, hold) {
     }
 }
 
+function removeItem(headers, productId) {
+    const r = http.del(BASE_URL + '/cart/remove', JSON.stringify({items: [{productId, quantity: 1}]}),
+        {headers, tags: {name: 'cart_remove'}, responseType: 'none'});
+    extra.cart_remove.add(1);
+    return r.status >= 200 && r.status < 300;
+}
+
+function clearCart(headers) {
+    const cart = http.get(BASE_URL + '/cart', {headers, tags: {name: 'cart_get'}});
+    extra.cart_get.add(1);
+    const items = cart.status === 200 ? (cart.json('items') || []) : [];
+    if (items.length === 0) return cart.status === 200;
+    const r = http.del(BASE_URL + '/cart/remove',
+        JSON.stringify({items: items.map((it) => ({productId: it.productId, quantity: it.quantity}))}),
+        {headers, tags: {name: 'cart_clear'}, responseType: 'none'});
+    extra.cart_clear.add(1);
+    return r.status >= 200 && r.status < 300;
+}
+
 export default function (data) {
     const token = data.tokens[(__VU - 1) % data.tokens.length];
     const hold = Date.now() - exec.scenario.startTime >= RAMP_S * 1000;
@@ -134,20 +159,37 @@ export default function (data) {
     const n = 1 + Math.floor(Math.random() * FLASH_COUNT);
     const productId = 'f1a50000-0000-4000-8000-' + String(n).padStart(12, '0');
 
+    if (cartMayHoldItems) {
+        cartMayHoldItems = !clearCart(headers);
+    }
+
     const add = http.post(BASE_URL + '/cart/add', JSON.stringify({productId, quantity: 1}),
         {headers, tags: {name: 'cart_add'}, responseType: 'none'});
     record('cart_add', add, hold);
-    if (statusClass(add) !== '2xx') return;
+    if (statusClass(add) !== '2xx') {
+        // 담기 응답이 5xx · 시간 초과면 서버에 항목이 들어갔는지 알 수 없다 - 4xx 는 서버가 담지 않은 것이다
+        const unknown = add.status >= 500 || add.status === 0;
+        if (unknown) cartMayHoldItems = !removeItem(headers, productId);
+        return;
+    }
 
+    // 이 반복의 주문은 방금 담은 상품 1개만 담아야 한다 - 주문이나 확정이 성공으로 끝나지 않으면 항목을 바로 빼서 다음 주문에 섞이지 않게 한다
     const order = http.post(BASE_URL + '/order', JSON.stringify({couponId: null}), {headers, tags: {name: 'order'}});
     record('order', order, hold);
-    if (order.status !== 201) return;
+    if (order.status !== 201) {
+        cartMayHoldItems = !removeItem(headers, productId);
+        return;
+    }
 
     const paymentKey = 'lt_pk_' + __VU + '_' + __ITER + '_' + Date.now();
     const confirm = http.post(BASE_URL + '/payment/confirm',
         JSON.stringify({paymentKey, orderId: order.json('orderId'), amount: order.json('totalAmount')}),
         {headers, tags: {name: 'confirm'}, responseType: 'none'});
     record('confirm', confirm, hold);
+    // 200 은 서버가 비동기로 장바구니를 비운다. 202(컨슈머 대기 초과)나 실패는 비우지 않으므로 직접 뺀다
+    if (confirm.status !== 200) {
+        cartMayHoldItems = !removeItem(headers, productId);
+    }
 }
 
 function count(data, name) {
@@ -184,6 +226,8 @@ export function handleSummary(data) {
         iterations: count(data, 'iterations'),
         endpoints,
         errors: {rate: reqHold > 0 ? errHold / reqHold : 1, status: statusTotal, requests_hold: reqHold},
+        // 흐름 3건 밖의 추가 요청(전 구간 합계): 항목 제거 · 장바구니 조회 · 장바구니 비우기
+        extra_requests: {cart_remove: count(data, 'extra_cart_remove'), cart_get: count(data, 'extra_cart_get'), cart_clear: count(data, 'extra_cart_clear')},
     };
     return {
         [SUMMARY_FILE]: JSON.stringify(summary, null, 2),

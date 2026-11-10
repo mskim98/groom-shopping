@@ -106,7 +106,7 @@ sample_stats() {
   while :; do
     local ts; ts="$(date -u +%FT%TZ)"
     docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' | sed "s/^/$ts\t/" >> "$1/stats.tsv"
-    sleep 3
+    sleep 5
   done
 }
 sample_prom() {
@@ -114,12 +114,23 @@ sample_prom() {
     for b in $BACKENDS; do
       local ts; ts="$(date -u +%FT%TZ)"
       docker exec nginx curl -fsS "http://$b:8080/api/actuator/prometheus" 2> /dev/null \
-        | grep -E '^(hikaricp_connections_(active|pending|max|timeout_total)|resilience4j_bulkhead_available_concurrent_calls|process_cpu_usage)[{ ]' \
+        | grep -E '^(hikaricp_connections_(active|pending|max|timeout_total)|hikaricp_connections_(usage|acquire)_seconds_(count|sum|max)|resilience4j_bulkhead_available_concurrent_calls|process_cpu_usage)[{ ]' \
         | sed "s/^/$ts\t$b\t/" >> "$1/prom.tsv" || true
     done
     sleep 5
   done
 }
+
+# 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
+sample_k6_cpu() { # 폴더 · k6 pid
+  while kill -0 "$2" 2> /dev/null; do
+    printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$(ps -o %cpu= -p "$2" | tr -d ' ')" >> "$1/k6cpu.tsv"
+    sleep 5
+  done
+}
+
+# 시험 창(DB 시계) - 주문 시각은 앱이 Asia/Seoul 시각으로 timestamp 열에 쓰므로 같은 기준으로 읽는다
+db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS.US')"; }
 
 run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   local name="$1" rps="$2" vus="$3" dir="$4"
@@ -135,7 +146,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   before_lines="$(docker exec nginx sh -c "wc -l < $NGINX_LOG" 2> /dev/null | tr -d ' ' || true)"
   before_lines="${before_lines:-0}"
   echo "$before_lines" > "$dir/nginx_lines_before.txt"
-  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"
+  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"; : > "$dir/k6cpu.tsv"
+  db_now > "$dir/db_window_start.txt"
   start="$(date -u +%FT%TZ)"
   echo "$start" > "$dir/start.txt"
 
@@ -149,7 +161,12 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   k6 run -q --no-usage-report \
     -e TARGET_RPS="$rps" -e RAMP_S="$RAMP_S" -e HOLD_S="$HOLD_S" -e MAX_VUS="$vus" \
     -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$dir/k6-summary.json" \
-    k6/scripts/flash-purchase-steps.js > "$dir/k6.log" 2>&1 || echo "k6 exit $?" >> "$dir/k6.log"
+    k6/scripts/flash-purchase-steps.js > "$dir/k6.log" 2>&1 &
+  local kpid=$!
+  sample_k6_cpu "$dir" "$kpid" & local p4=$!
+  wait "$kpid" || echo "k6 exit $?" >> "$dir/k6.log"
+  wait "$p4" 2> /dev/null || true
+  db_now > "$dir/db_window_end.txt"
   end="$(date -u +%FT%TZ)"
   echo "$end" > "$dir/end.txt"
 
@@ -178,7 +195,7 @@ max_vus_for() { case "$1" in 2000) echo 1000 ;; 4000) echo 2000 ;; 6000) echo 30
 # 시험 실행은 초당 50 요청 10 초(램프 2 초 뒤 유지 10 초) - 도구가 끝까지 도는지만 본다
 cmd_tiny() { RAMP_S=2; HOLD_S=10; run_step tiny 50 "${MAX_VUS:-50}" "${1:?usage: tiny <out-dir>}/tiny"; }
 cmd_step() { local rps="${1:?usage: step <rps> <out-dir>}" out="${2:?usage: step <rps> <out-dir>}"; run_step "step $rps" "$rps" "${MAX_VUS:-$(max_vus_for "$rps")}" "$out/step-$rps"; }
-cmd_collect() { python3 "$ROOT/k6/loadtest/collect.py" "${1:?usage: collect <out-dir> <result.json>}" "${2:?usage: collect <out-dir> <result.json>}"; }
+cmd_collect() { python3 -B "$ROOT/k6/loadtest/collect.py" "${1:?usage: collect <out-dir> <result.json>}" "${2:?usage: collect <out-dir> <result.json>}"; }
 cmd_down() { $DC down --remove-orphans; }
 
 sub="${1:-}"; shift || true

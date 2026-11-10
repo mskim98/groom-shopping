@@ -2,12 +2,13 @@
 """단계 폴더(run.sh tiny · step 이 만든 <out-dir>/tiny · <out-dir>/step-<rps>)를 result.json 한 개로 모은다
 
 usage: collect.py <out-dir> <result.json>
-표준 라이브러리만 쓴다. 숫자는 폴더 안의 파일에서만 읽는다(k6-summary.json · offsets_*.txt · lag.log · ledger-*.log · nginx.log · pgss.tsv · stats.tsv · prom.tsv)
+표준 라이브러리만 쓴다. 숫자는 폴더 안의 파일에서만 읽는다(k6-summary.json · db_window_*.txt · k6cpu.tsv · offsets_*.txt · lag.log · ledger-*.log · nginx.log · pgss.tsv · stats.tsv · prom.tsv)
 """
 import glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 ENDPOINT_URIS = {"/api/v1/cart/add": "cart_add", "/api/v1/order": "order", "/api/v1/payment/confirm": "confirm"}
@@ -147,6 +148,92 @@ def prom_peak(path):
     return out
 
 
+def orders(folder):
+    """시험 창(db_window_start/end.txt, DB 시계 · Asia/Seoul) 안에 만들어진 주문 수와 그 주문의 order_item 행 수 - 데이터베이스에서 센다"""
+    start = read(os.path.join(folder, "db_window_start.txt")).strip()
+    end = read(os.path.join(folder, "db_window_end.txt")).strip()
+    cached = os.path.join(folder, "orders.json")
+    if not start or not end:
+        try:
+            return json.loads(read(cached))
+        except ValueError:
+            return {}
+    env = {}
+    for line in read(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env")).splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            env[k] = v
+    sql = ("SELECT (SELECT count(*) FROM orders WHERE created_at >= '%(s)s' AND created_at <= '%(e)s'), "
+           "(SELECT count(*) FROM order_item i JOIN orders o ON o.id = i.order_id WHERE o.created_at >= '%(s)s' AND o.created_at <= '%(e)s')") % {"s": start, "e": end}
+    cmd = ["docker", "exec", "db", "psql", "-U", env.get("POSTGRES_USER", ""), "-d", "shop_seed_m1", "-Atc", sql]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60).stdout.strip()
+        created, items = out.split("|")
+        result = {"created": int(created), "items": int(items), "window": [start, end]}
+        with open(cached, "w") as f:
+            json.dump(result, f)
+        return result
+    except (subprocess.SubprocessError, ValueError, OSError):
+        # 컨테이너가 내려간 뒤 폴더만 다시 모을 때는 앞서 센 값(orders.json)을 쓴다
+        try:
+            return json.loads(read(cached))
+        except ValueError:
+            return {}
+
+
+def hikari(folder):
+    """prom.tsv 의 누적 시계열에서 백엔드별 Hikari 대기 · 사용 · 획득 시간 - usage/acquire 는 첫 표본과 마지막 표본의 합 · 횟수 차이로 평균을 낸다"""
+    series = {}
+    for line in read(os.path.join(folder, "prom.tsv")).splitlines():
+        f = line.split("\t", 2)
+        if len(f) != 3:
+            continue
+        m = re.match(r"hikaricp_connections_(usage|acquire)_seconds_(count|sum|max)(\{[^}]*\})?\s+([-\d.eE+]+)$", f[2])
+        if m:
+            series.setdefault(f[1], {}).setdefault(m.group(1) + "_" + m.group(2), []).append(float(m.group(4)))
+    out = {}
+    for backend, d in series.items():
+        o = {}
+        for kind in ("usage", "acquire"):
+            cnt, sm, mx = d.get(kind + "_count", []), d.get(kind + "_sum", []), d.get(kind + "_max", [])
+            if len(cnt) >= 2 and cnt[-1] > cnt[0]:
+                o[kind + "_mean_ms"] = round((sm[-1] - sm[0]) / (cnt[-1] - cnt[0]) * 1000, 2)
+                o[kind + "_count"] = int(cnt[-1] - cnt[0])
+            if mx:
+                o[kind + "_max_s_peak"] = round(max(mx), 3)
+        out[backend] = o
+    return out
+
+
+def k6_cpu(path):
+    vals = []
+    for line in read(path).splitlines():
+        f = line.split("\t")
+        if len(f) == 2:
+            try:
+                vals.append(float(f[1]))
+            except ValueError:
+                pass
+    s = sorted(vals)
+    return {"samples": len(vals), "peak_pct": max(vals) if vals else None, "median_pct": percentile(s, 50) if vals else None}
+
+
+def sampler_gaps(folder):
+    """표본 사이 간격(초)의 중앙값 - 보고서가 표본 주기를 실제 값으로 쓴다"""
+    from datetime import datetime
+    out = {}
+    for name, fn in (("docker_stats", "stats.tsv"), ("prometheus", "prom.tsv"), ("k6_cpu", "k6cpu.tsv")):
+        ts = sorted({l.split("\t")[0] for l in read(os.path.join(folder, fn)).splitlines() if l})
+        t = [datetime.strptime(x, "%Y-%m-%dT%H:%M:%SZ").timestamp() for x in ts if re.match(r"\d{4}-", x)]
+        gaps = sorted(b - a for a, b in zip(t, t[1:]))
+        out[name] = percentile(gaps, 50) if gaps else None
+    ts = [l[3:] for l in read(os.path.join(folder, "lag.log")).splitlines() if re.match(r"## \d{4}-", l)]
+    t = [datetime.strptime(x, "%Y-%m-%dT%H:%M:%SZ").timestamp() for x in ts]
+    gaps = sorted(b - a for a, b in zip(t, t[1:]))
+    out["consumer_lag"] = percentile(gaps, 50) if gaps else None
+    return out
+
+
 def collect_step(folder, target):
     k6 = json.loads(read(os.path.join(folder, "k6-summary.json"), "{}") or "{}")
     before, after = offsets(os.path.join(folder, "offsets_before.txt")), offsets(os.path.join(folder, "offsets_after.txt"))
@@ -168,6 +255,11 @@ def collect_step(folder, target):
         "ledger_apply_ms": ledger(folder),
         "pgss_top": pgss(os.path.join(folder, "pgss.tsv")),
         "docker_stats": stats_peak(os.path.join(folder, "stats.tsv")),
+        "orders": orders(folder),
+        "extra_requests": k6.get("extra_requests", {}),
+        "hikari_timers": hikari(folder),
+        "k6_cpu": k6_cpu(os.path.join(folder, "k6cpu.tsv")),
+        "sampler_median_gap_s": sampler_gaps(folder),
         "backend_metrics": prom_peak(os.path.join(folder, "prom.tsv")),
         "waits": dict(l.split("=", 1) for l in read(os.path.join(folder, "wait.txt")).split() if "=" in l),
         "setup": {"logins": int(m.group(1)), "carts_cleared": int(m.group(2)), "extra_requests": int(m.group(3))} if m else None,
