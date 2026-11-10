@@ -22,9 +22,11 @@ public class StockLedgerApplyJob {
     // initialDelay 도 주기와 같게 둔다 - 시험 컨텍스트가 기동 직후 다른 시험의 원장 행을 먼저 접어 넣지 않게 한다
     @Scheduled(fixedDelayString = "${stock.ledger.apply-interval-ms:1000}", initialDelayString = "${stock.ledger.apply-interval-ms:1000}")
     public void apply() {
-        int applied = applyOnce();
-        if (applied > 0) {
-            log.debug("[STOCK_LEDGER_APPLY] 적용 행 수 - {}", applied);
+        long startNanos = System.nanoTime();
+        int[] cycle = applyCycle();
+        if (cycle[1] > 0) {
+            // 회차 시간은 부하 측정이 원장 적용 지연을 읽는 유일한 값이라 적용한 회차마다 INFO 로 남긴다
+            log.info("[STOCK_LEDGER_APPLY] products={} rows={} elapsedMs={}", cycle[0], cycle[1], (System.nanoTime() - startNanos) / 1_000_000);
         }
     }
 
@@ -34,14 +36,24 @@ public class StockLedgerApplyJob {
      * @return 적용한 원장 행 수
      */
     public int applyOnce() {
+        return applyCycle()[1];
+    }
+
+    // {적용한 상품 수, 적용한 원장 행 수}
+    private int[] applyCycle() {
+        int products = 0;
         int applied = 0;
         for (UUID productId : ledger.findProductIdsWithUnapplied()) {
             try {
-                applied += service.applyProduct(productId);
+                int rows = service.applyProduct(productId);
+                applied += rows;
+                if (rows > 0) {
+                    products++;
+                }
             } catch (Exception e) {
                 log.error("[STOCK_LEDGER_APPLY_FAILED] 다음 회차에 다시 시도 - ProductId: {}, Error: {}", productId, e.getMessage(), e);
             }
         }
-        return applied;
+        return new int[] {products, applied};
     }
 }
