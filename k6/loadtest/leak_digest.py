@@ -19,6 +19,9 @@ LEAK = re.compile(r"Connection leak detection triggered for (\S+) on thread (.+?
 UNLEAKED = re.compile(r"Previously reported leaked connection (\S+) on thread (.+?) was returned to the pool \(unleaked\)")
 FRAME = re.compile(r"^\s+at (.+)$")
 APP_PREFIX = "groom.backend."
+PROXY = re.compile(r"\$\$SpringCGLIB\$\$\d+")
+# 요청 · 메시지 · 작업의 진입점이 되는 클래스 이름
+ENTRY = re.compile(r"(Controller|Consumer|Listener|Job|Scheduler|Runner|Publisher)[.$]")
 
 # 위에서부터 처음 맞는 규칙이 이긴다
 WAITING = (
@@ -46,7 +49,17 @@ def _waiting_index(frames):
 
 
 def _first_app(frames, start=0):
-    return next((f for f in frames[start:] if f.startswith(APP_PREFIX)), None)
+    """start 부터 처음 만나는 groom.backend 프레임. 스프링 프록시 프레임(`X$$SpringCGLIB$$0.m(<generated>)`)은 줄 번호가 없어
+    프록시가 감싼 메서드 이름을 앞에 적고 그 다음 실제 프레임(호출한 쪽)을 쓴다"""
+    proxied = None
+    for f in frames[start:]:
+        if not f.startswith(APP_PREFIX):
+            continue
+        if PROXY.search(f):
+            proxied = proxied or PROXY.sub("", f.split("(")[0])
+            continue
+        return (proxied + " <- " if proxied else "") + f
+    return proxied
 
 
 def _ts(line):
@@ -80,7 +93,8 @@ def parse(lines):
 def _group_key_waiting(frames):
     i = _waiting_index(frames)
     if i is None:
-        outer = next((f for f in reversed(frames) if f.startswith(APP_PREFIX)), None)
+        app = [f for f in frames if f.startswith(APP_PREFIX) and not PROXY.search(f)]
+        outer = next((f for f in reversed(app) if ENTRY.search(f)), app[-1] if app else None)
         return "(no waiting frame) @ " + (outer or "(no groom.backend frame)")
     return "%s @ %s" % (waiting_kind([frames[i]]), _first_app(frames, i) or "(no groom.backend frame)")
 

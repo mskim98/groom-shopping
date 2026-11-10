@@ -141,9 +141,10 @@ sample_prom() {
   done
 }
 
-# pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션을 1 초마다 한 번 읽는다. 컨테이너 안에서 psql 을 반복해(docker exec 를 매번 새로 치면 간격이 1.3 초 넘게 늘어난다)
-# 표본 하나의 비용은 psql 연결 1 회 + pg_stat_activity 한 번 읽기(수 ms)이고, 활동 행이 없는 시각에도 빈 행 하나를 남겨 표본 시각이 끊기지 않게 한다
-# 컨테이너 안 반복은 docker exec 를 죽여도 남으므로 멈춤 파일(/tmp/pg-sample.stop)이 생기면 끝나고, 멈춤 신호를 놓쳐도 3600 번째에 끝난다
+# pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션을 1 초마다 읽는다. 컨테이너 안에서 psql 연결 하나를 열어 두고 \watch 1 로 같은 문장을 되풀이한다
+# (매번 docker exec · psql 을 새로 치면 CPU 가 찬 때 표본 간격이 1.3 초 넘게 늘어난다 - 첫 시험에서 중앙값 1.32 초 · 최대 4.6 초). 표본 하나의 비용은
+# pg_stat_activity 한 번 읽기(수 ms)와 측정 DB 에 붙은 연결 1 개이고, 활동 행이 없는 시각에도 빈 행 하나를 남겨 표본 시각이 끊기지 않게 한다
+# 연결은 application_name r120-pg-sample 로 구분하고 stop_pg_sample 이 pg_terminate_backend 로 끊는다(docker exec 를 죽여도 컨테이너 안 psql 은 남는다)
 PG_SAMPLE_SQL="WITH n AS (SELECT statement_timestamp() AS t)
 SELECT to_char(n.t AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), coalesce(a.pid::text, ''), coalesce(a.state, ''), coalesce(a.wait_event_type, ''), coalesce(a.wait_event, ''),
   coalesce(round(extract(epoch FROM n.t - a.xact_start) * 1000)::bigint::text, ''), coalesce(round(extract(epoch FROM n.t - a.query_start) * 1000)::bigint::text, ''),
@@ -152,15 +153,10 @@ FROM n LEFT JOIN pg_stat_activity a ON a.datname = current_database() AND a.pid 
 
 sample_pg() { # 출력 폴더
   printf 'sample_time\tpid\tstate\twait_event_type\twait_event\txact_age_ms\tquery_age_ms\tblocking_pids\tquery\n' > "$1/pg-activity.tsv"
-  docker exec db rm -f /tmp/pg-sample.stop
-  docker exec -e SQL="$PG_SAMPLE_SQL" -e PGPASSWORD="$SEED_PG_PASSWORD" db sh -c '
-    i=0
-    while [ ! -e /tmp/pg-sample.stop ] && [ "$i" -lt 3600 ]; do
-      psql -U "'"$SEED_PG_USER"'" -d '"$SEED_DB"' -X -q -At -F "$(printf "\t")" -c "$SQL"
-      i=$((i + 1)); sleep 1
-    done' >> "$1/pg-activity.tsv" 2> /dev/null || true
+  docker exec -e SQL="$PG_SAMPLE_SQL" -e PGPASSWORD="$SEED_PG_PASSWORD" -e PGAPPNAME=r120-pg-sample db sh -c '
+    printf "%s\n\\\\watch i=1\n" "$SQL" | psql -U "'"$SEED_PG_USER"'" -d '"$SEED_DB"' -X -q -At -F "$(printf "\t")"' >> "$1/pg-activity.tsv" 2> /dev/null || true
 }
-stop_pg_sample() { docker exec db touch /tmp/pg-sample.stop 2> /dev/null || true; }
+stop_pg_sample() { psql_db postgres -Atc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'r120-pg-sample'" > /dev/null 2>&1 || true; }
 
 # 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
 sample_k6_cpu() { # 폴더 · k6 pid
