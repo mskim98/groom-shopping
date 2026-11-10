@@ -241,6 +241,10 @@ def collect_step(folder, target):
     msgs = [a - b for a, b in zip(after, before)]
     be, nginx_status, unknown = backend_requests(folder)
     m = re.search(r"setup: logins=(\d+) carts_cleared=(\d+) extra_requests=(\d+)", read(os.path.join(folder, "k6.log")))
+    # 포화로 한 요청도 끝내지 못한 엔드포인트는 결과다 - 건수 0 · p95 · p99 는 값 없음(null)으로 쓴다(R119-11)
+    for ep in k6.get("endpoints", {}).values():
+        if ep.get("count", 0) == 0:
+            ep["p95"] = ep["p99"] = None
     step = {
         "target_rps": target,
         "achieved_rps": k6.get("achieved_rps"),
