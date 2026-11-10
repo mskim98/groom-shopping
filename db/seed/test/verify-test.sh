@@ -54,5 +54,21 @@ while IFS='|' read -r check sql; do
   fi
 done < <(breaks)
 
+# 허용 오차: scale < 1 은 ± max(1 %, 3행), scale >= 1 은 목표 300 이상이면 ceil(1 %), 300 미만이면 정확히 같아야 한다
+# scale 1 규칙은 SEED_VERIFY_TOL_SCALE=1 로 작은 DB(0.01) 위에서 시험한다 — 목표 값은 0.01 배수 그대로(보상 12 · 쿠폰 4 · 플래시 1)
+note "== tolerance: one compensation row missing (target 12, holds 11)"
+seed_drop_db "$WORK"
+seed_psql postgres -c "CREATE DATABASE $WORK TEMPLATE $BASE" > /dev/null
+seed_psql "$WORK" -c "DELETE FROM payment_compensation WHERE id = (SELECT id FROM payment_compensation WHERE status = 'SUCCEEDED' LIMIT 1)" > /dev/null
+if ! out="$(bash "$SEED/verify.sh" "$WORK" 0.01 2>&1)"; then fail "[tolerance scale<1] 11 of 12 must pass under the 3-row floor"; printf '%s\n' "$out" | grep '^FAIL' || true; fi
+set +e
+out="$(SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$WORK" 0.01 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "[tolerance scale>=1] exit $code, want 1 (target below 300 must be exact)"
+printf '%s\n' "$out" | grep -q "^FAIL counts:.*payment_compensation=11/12" || fail "[tolerance scale>=1] no 'FAIL counts' line naming payment_compensation=11/12"
+# 같은 규칙에서 깨끗한 DB 는 통과한다(목표 300 이상은 ceil(1 %) 안, 300 미만은 정확히 일치)
+SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$BASE" 0.01 > /dev/null || fail "[tolerance scale>=1] clean $BASE must pass"
+
 if [ "$FAILS" -ne 0 ]; then note "verify-test: $FAILS failure(s)"; exit 1; fi
 note "verify-test: OK"
