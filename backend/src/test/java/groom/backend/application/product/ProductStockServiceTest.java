@@ -1,6 +1,5 @@
 package groom.backend.application.product;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -33,33 +32,29 @@ class ProductStockServiceTest {
     private final UUID productId = UUID.randomUUID();
 
     @Test
-    void decreaseWithOptimisticLock_프록시를_거쳐_decreaseOnce에_위임한다() {
+    void increaseWithOptimisticLock_프록시를_거쳐_increaseOnce에_위임한다() {
         ProductStockService proxy = mock(ProductStockService.class);
         given(selfProvider.getObject()).willReturn(proxy);
-        given(proxy.decreaseOnce(productId, 2)).willReturn(7);
 
-        int remaining = productStockService.decreaseWithOptimisticLock(productId, 2);
+        productStockService.increaseWithOptimisticLock(productId, 2);
 
-        assertThat(remaining).isEqualTo(7);
-        then(proxy).should().decreaseOnce(productId, 2);
+        then(proxy).should().increaseOnce(productId, 2);
     }
 
     @Test
-    void decreaseOnce_재고를_차감하고_차감후_재고를_반환한다() {
+    void increaseOnce_재고를_증가시키고_저장한다() {
         Product product = mock(Product.class);
         given(productRepository.findById(productId)).willReturn(Optional.of(product));
-        given(productRepository.save(product)).willReturn(product);
-        given(product.getStock()).willReturn(8);
 
-        int remaining = productStockService.decreaseOnce(productId, 2);
+        productStockService.increaseOnce(productId, 2);
 
-        then(product).should().decreaseStock(2);
-        assertThat(remaining).isEqualTo(8);
+        then(product).should().increaseStock(2);
+        then(productRepository).should().save(product);
     }
 
     @Test
-    void recover_재시도_소진시_재고_충돌_예외로_변환한다() {
-        assertThatThrownBy(() -> productStockService.recover(
+    void recoverIncrease_재시도_소진시_재고_충돌_예외로_변환한다() {
+        assertThatThrownBy(() -> productStockService.recoverIncrease(
                 new ObjectOptimisticLockingFailureException("conflict", new RuntimeException()), productId, 1))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
