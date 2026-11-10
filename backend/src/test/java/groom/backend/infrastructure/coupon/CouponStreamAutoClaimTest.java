@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.application.coupon.CouponStreamFixture;
@@ -192,6 +195,29 @@ class CouponStreamAutoClaimTest {
         assertThat(couponIssueRepository.countByCoupon_IdAndUserId(couponId, freshUser)).isEqualTo(1L);
         assertThat(fixture.status(freshRequestId)).isEqualTo("SUCCESS");
         assertThat(fixture.pendingCount(couponId)).as("살아 있는 컨슈머의 항목만 남는다").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("가져온 항목이 여럿이어도 배달 횟수 조회는 한 번의 파이프라인(왕복 한 번)이고 결과는 항목별로 그대로다")
+    void pollCoupon_가져온_배치의_배달횟수는_한번의_파이프라인으로_읽는다() {
+        for (int i = 0; i < 2; i++) {
+            stockRepository.enqueue(couponId, fixture.user(), fixture.requestId());
+        }
+        // 죽은 컨슈머가 둘을 더 읽는다. 첫 항목은 배달 횟수를 한도(3) 위로 올린다
+        assertThat(fixture.readAs(couponId, "dead-instance-1")).hasSize(2);
+        String poisonId = ownerEntryIds().get(0);
+        for (int i = 0; i < 3; i++) {
+            fixture.claimAs(couponId, "dead-instance-1", poisonId);
+        }
+        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        clearInvocations(redis);
+
+        int handled = consumer.pollCoupon(couponId);
+
+        verify(redis, times(1)).executePipelined(any(RedisCallback.class));
+        assertThat(handled).isEqualTo(3);
+        assertThat(redis.opsForStream().size(CouponStockRedisRepository.dlqKey(couponId))).as("한도를 넘긴 항목만 DLQ").isEqualTo(1L);
+        assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(2L);
     }
 
     private List<String> ownerEntryIds() {
