@@ -5,6 +5,7 @@ import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.payment.dto.TossPaymentConfirmRequest;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
+import groom.backend.infrastructure.resilience.SharedCircuitFlag;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -33,12 +34,16 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     private final RestTemplate restTemplate;
     // 취소 전용(응답 한도 30s · 별도 풀). 승인 템플릿(5s)과 갈라 두는 이유는 RestTemplateConfig 참고
     private final RestTemplate cancelRestTemplate;
+    // 다른 인스턴스가 연 회로를 읽는다 - 키가 살아 있으면 Toss 를 부르지 않는다
+    private final SharedCircuitFlag sharedCircuitFlag;
 
     // Lombok @RequiredArgsConstructor 는 @Qualifier 를 생성자 파라미터로 복사하지 않아 직접 쓴다
     public TossPaymentClientImpl(RestTemplate restTemplate,
-                                 @Qualifier("tossCancelRestTemplate") RestTemplate cancelRestTemplate) {
+                                 @Qualifier("tossCancelRestTemplate") RestTemplate cancelRestTemplate,
+                                 SharedCircuitFlag sharedCircuitFlag) {
         this.restTemplate = restTemplate;
         this.cancelRestTemplate = cancelRestTemplate;
+        this.sharedCircuitFlag = sharedCircuitFlag;
     }
 
     @Value("${payment.toss.secret-key}")
@@ -55,6 +60,7 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     @Retry(name = "toss")
     @Override
     public TossPaymentResponse confirmPayment(TossPaymentConfirmRequest request, String idempotencyKey) {
+        sharedCircuitFlag.failFastIfOpen("toss");
         String url = apiUrl + "/v1/payments/confirm";
 
         HttpHeaders headers = createHeaders(idempotencyKey);
@@ -145,6 +151,7 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     @CircuitBreaker(name = "toss-cancel", fallbackMethod = "cancelPaymentFallback")
     @Override
     public TossPaymentResponse cancelPayment(String paymentKey, String cancelReason, String idempotencyKey) {
+        sharedCircuitFlag.failFastIfOpen("toss-cancel");
         return doCancel(paymentKey, cancelReason, idempotencyKey);
     }
 
