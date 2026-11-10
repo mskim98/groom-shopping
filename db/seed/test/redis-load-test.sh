@@ -7,6 +7,7 @@
 # trap 이 지우는 키: t2:keep · coupon:issue:status:t2keep · refresh:t2keep(패턴 밖 보존 확인용) · product:stock:00000000-0000-4000-8000-000000000000 ·
 #   coupon:{777777}:stock · coupon:{777777}:issued_users · coupon:{777777}:req · coupon:{777777}:dlq(소유 패턴 묵은 키 삭제 확인용)
 # 템플릿 shop_seed_t2a 가 템플릿이 아니면 scale 0.01 로 새로 만든다
+# 마지막 케이스는 Redis 의 maxmemory 를 1 · maxmemory-policy 를 noeviction 으로 바꿔 SET 이 거절되게 한다 — trap 이 시작 때 값으로 되돌린다
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED="$(dirname "$HERE")"
@@ -16,7 +17,14 @@ TPL=shop_seed_t2a
 CLONE=shop_seed_t2b
 FAILS=0
 TMP="$(mktemp -d)"
-trap 'seed_drop_db "$CLONE"; seed_rcli DEL t2:keep coupon:issue:status:t2keep refresh:t2keep product:stock:00000000-0000-4000-8000-000000000000 "coupon:{777777}:stock" "coupon:{777777}:issued_users" "coupon:{777777}:req" "coupon:{777777}:dlq" > /dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
+OLD_MAXMEM=""
+OLD_POLICY=""
+# 케이스 도중 죽어도 Redis 설정이 남지 않게 시작 때 값으로 되돌린다(값을 읽기 전이면 아무것도 안 한다)
+restore_redis_conf() {
+  [ -z "$OLD_POLICY" ] || seed_rcli CONFIG SET maxmemory-policy "$OLD_POLICY" > /dev/null 2>&1 || true
+  [ -z "$OLD_MAXMEM" ] || seed_rcli CONFIG SET maxmemory "$OLD_MAXMEM" > /dev/null 2>&1 || true
+}
+trap 'restore_redis_conf; seed_drop_db "$CLONE"; seed_rcli DEL t2:keep coupon:issue:status:t2keep refresh:t2keep product:stock:00000000-0000-4000-8000-000000000000 "coupon:{777777}:stock" "coupon:{777777}:issued_users" "coupon:{777777}:req" "coupon:{777777}:dlq" > /dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 fail() { echo "FAIL(test) $*"; FAILS=$((FAILS + 1)); }
 
 if [ "$(seed_psql postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = '$TPL' AND datistemplate")" != "1" ]; then
@@ -97,6 +105,22 @@ seed_psql "$CLONE" -c "
   UPDATE product SET flash_sale = true, stock = 77 WHERE id = (SELECT id FROM product WHERE flash_sale = false AND stock >= 77 ORDER BY id LIMIT 1)" > /dev/null
 check_db "$CLONE"
 [ "$(seed_rcli EXISTS "product:stock:$flash_id")" = 0 ] || fail "DB-mode flash product has a Redis key"
+
+# Redis 가 적재 명령을 거절하면(maxmemory 1 + noeviction → SET 이 OOM 응답) load-redis.sh 는 exit 1 과 적재 단계 이름을 낸다
+# 소유 키 삭제(UNLINK)는 OOM 에 막히지 않아 스크립트가 거절을 피해 가지 못한다
+echo "== load-redis.sh fails naming the step when Redis rejects a command"
+OLD_MAXMEM="$(seed_rcli CONFIG GET maxmemory | tail -1)"
+OLD_POLICY="$(seed_rcli CONFIG GET maxmemory-policy | tail -1)"
+seed_rcli CONFIG SET maxmemory-policy noeviction > /dev/null
+seed_rcli CONFIG SET maxmemory 1 > /dev/null
+set +e
+out="$(bash "$SEED/load-redis.sh" "$TPL" 2>&1)"
+code=$?
+set -e
+restore_redis_conf
+[ "$code" -eq 1 ] || fail "[redis rejects] exit $code, want 1"
+printf '%s\n' "$out" | grep -q 'while loading product' || { fail "[redis rejects] no message naming the step 'while loading product'"; printf '%s\n' "$out" | tail -5; }
+[ "$(seed_rcli CONFIG GET maxmemory | tail -1)" = "$OLD_MAXMEM" ] || fail "[redis rejects] maxmemory was not restored"
 
 if [ "$FAILS" -ne 0 ]; then echo "redis-load-test: $FAILS failure(s)"; exit 1; fi
 echo "redis-load-test: OK"
