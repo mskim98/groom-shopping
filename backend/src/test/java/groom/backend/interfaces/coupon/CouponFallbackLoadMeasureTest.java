@@ -1,7 +1,10 @@
-package groom.backend.application.coupon;
+package groom.backend.interfaces.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import groom.backend.application.coupon.CouponAsyncIssueService;
+import groom.backend.application.coupon.CouponStockRedisRepository;
+import groom.backend.application.coupon.CouponStreamFixture;
 import groom.backend.application.coupon.strategy.CouponIssueResult;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
@@ -27,6 +30,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  *
  * <p>접수 진입점에 도착률로 요청을 넣고 컨슈머 루프가 스트림을 비우는 시간과 발급 수를 잰다.
  * 합격선은 두 가지다 - 도착률이 목표의 ±5% 안이고, 발급 수가 발행 수량과 같다
+ *
+ * <p>이 클래스는 쿠폰 시험 묶음({@code groom.backend.application.coupon.*})에 들지 않도록 이 패키지에 둔다 -
+ * 환경 변수가 없으면 건너뛴 결과 파일이 남아 묶음 판정이 건너뜀 수 때문에 실패한다
  *
  * <p>평소 테스트 실행에서는 돌지 않는다. 사용자 1 만 명을 만들고 수십 초가 걸린다
  * {@code MEASURE_FALLBACK_LOAD=1 ./gradlew test --rerun --tests '*CouponFallbackLoadMeasureTest'}
