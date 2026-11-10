@@ -61,6 +61,7 @@ class SharedCircuitFlagTest {
     static void props(DynamicPropertyRegistry registry) {
         registry.add("payment.toss.api-url", WIRE_MOCK::baseUrl);
         registry.add("payment.toss.secret-key", () -> "test_sk_dummy");
+        registry.add("circuit.shared.names", () -> "toss,toss-cancel,db-ledger");
         registry.add("spring.kafka.streams.auto-startup", () -> "false");
         registry.add("payment.consumer.auto-startup", () -> "false");
         // 배경 보상 배치가 시험 행을 가져가지 않게 늦추고, 시험이 retryPendingCompensations 를 직접 부른다
