@@ -77,6 +77,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     image: groom-backend
+    # 기동 러너가 Redis · Kafka 연결 전에 죽어도(r119 backend3 가 Redis 연결 전에 내려감) 사람이 다시 띄우지 않게 한다 - 정상 종료(0)는 되살리지 않는다
+    # 횟수 5 : 의존 서비스가 몇 분 안에 안 올라오는 진짜 장애면 무한 재시작으로 CPU 를 쓰지 않고 멈춰 둔다
+    restart: on-failure:5
     environment: &backend-env
       SPRING_PROFILES_ACTIVE: dev
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
