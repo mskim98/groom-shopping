@@ -19,6 +19,11 @@ import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +35,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Redis 에서 선점한 결제가 TX1 에 닿기 전에 상품이 DB 모드로 바뀌면 TX1 이 조건부 차감으로 다시 판정하는지 본다
 @SpringBootTest
@@ -55,6 +61,8 @@ class FailoverInFlightRecheckTest {
     private PaymentApplicationService paymentApplicationService;
     @Autowired
     private StockLedgerService stockLedgerService;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
     @Autowired
     private ProductStockRedisRepository productStockRedisRepository;
     @Autowired
@@ -124,5 +132,50 @@ class FailoverInFlightRecheckTest {
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
         assertThat(fixture.stockOf(productId)).isZero();
         assertThat(fixture.ledgerRows(payment.getId())).as("TX1 이 롤백돼 원장 행이 없다").isEmpty();
+    }
+
+    @Test
+    @DisplayName("TX1 이 열려 있는 동안 전환은 기다리고, TX1 이 커밋되면 끝나며 그 TX1 이 쓴 행을 접어 넣는다")
+    void switchToDb_진행중인_TX1이_끝나길_기다렸다가_그_행을_접어_넣는다() throws Exception {
+        productId = fixture.flashProduct(10);
+        payment = fixture.payment(productId, 1);
+        CountDownLatch recorded = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> tx1 = pool.submit(() -> transactionTemplate.execute(status -> {
+                stockLedgerService.recordSale(payment.getId(), productId, 1);
+                recorded.countDown();
+                awaitQuietly(release);
+                return null;
+            }));
+            assertThat(recorded.await(10, TimeUnit.SECONDS)).isTrue();
+            Future<?> switching = pool.submit(() -> stockLedgerService.switchToDb(productId));
+
+            Thread.sleep(500);
+            assertThat(switching.isDone()).as("TX1 이 열려 있는 동안 전환은 끝나지 않는다").isFalse();
+            assertThat(fixture.stockModeOf(productId)).isEqualTo("REDIS");
+
+            release.countDown();
+            tx1.get(10, TimeUnit.SECONDS);
+            switching.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(fixture.stockModeOf(productId)).isEqualTo("DB");
+        assertThat(fixture.stockOf(productId)).as("TX1 이 쓴 행이 재고에 접혀 들어갔다").isEqualTo(9);
+        assertThat(fixture.unappliedSumOf(productId)).isZero();
+        assertThat(fixture.ledgerRows(payment.getId())).hasSize(1)
+                .allSatisfy(r -> assertThat(r).containsEntry("applied", true));
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }
