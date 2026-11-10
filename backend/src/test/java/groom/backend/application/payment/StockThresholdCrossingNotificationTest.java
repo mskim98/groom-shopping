@@ -71,12 +71,16 @@ class StockThresholdCrossingNotificationTest {
 
     @AfterEach
     void tearDown() {
+        // 준비가 중간에 실패했을 수 있다 - 만들어진 것만 지워 첫 실패가 가려지지 않게 한다
+        if (productId == null) {
+            return;
+        }
         jdbc.update("DELETE FROM notifications WHERE product_id = ?", productId);
         jdbc.update("DELETE FROM cart_item WHERE product_id = ?", productId);
-        for (int i = 0; i < payments.size() - 1; i++) {
-            fixture.cleanupPaymentOnly(payments.get(i));
+        for (Payment payment : payments) {
+            fixture.cleanupPaymentOnly(payment);
         }
-        fixture.cleanup(payments.get(payments.size() - 1), productId);
+        fixture.deleteProduct(productId);
     }
 
     @Test
