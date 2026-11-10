@@ -12,9 +12,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 // Outbox 폴러: PENDING 이벤트를 주기적으로 읽어 Kafka 로 발행하고 PUBLISHED 로 전이한다.
 // 발행 성공 후 상태 전이가 실패하면 다음 주기에 재발행되므로(at-least-once), 컨슈머가 Payment 상태로 멱등 처리한다.
+// 인스턴스가 여럿이어도 같은 행을 동시에 발행하지 않는다 - 행을 FOR UPDATE SKIP LOCKED 로 집고 그 잠금을 PUBLISHED 표시 커밋까지 쥔다
+// 대가: 발행하는 동안(정상이면 수 ms, Kafka 장애면 send 상한 40초) 한 커넥션을 쥔다
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -34,6 +37,7 @@ public class PaymentEventPublisher {
     // @Scheduled(fixedDelay) : 이전 실행이 끝난 뒤 poll-delay 만큼 쉬고 다시 실행 (스캔 주기)
     // 기본 200ms - 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦는다
     @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:200}")
+    @Transactional
     public void publishPending() {
         List<PaymentOutbox> batch = outboxRepository.findPendingBatch(BATCH_SIZE);
         if (batch.isEmpty()) {

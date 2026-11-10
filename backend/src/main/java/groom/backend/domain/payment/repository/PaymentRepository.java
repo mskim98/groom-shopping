@@ -25,7 +25,8 @@ public interface PaymentRepository {
 
     boolean existsByOrderId(UUID orderId);
 
-    // READY 인데 updated_at 이 cutoff 보다 오래된 결제를 오래된 순으로 limit 건. READY 에 멈춘 결제 대사용
+    // READY 인데 updated_at 이 cutoff 보다 오래된 결제를 오래된 순으로 limit 건 집는다. READY 에 멈춘 결제 대사용
+    // 집는 즉시 updated_at 을 갱신하므로 같은 결제를 여러 인스턴스가 동시에 집지 않는다(다음 stale 기준 시간 동안 다시 나오지 않는다)
     List<Payment> findStaleReady(LocalDateTime cutoff, int limit);
 
     void delete(Payment payment);
