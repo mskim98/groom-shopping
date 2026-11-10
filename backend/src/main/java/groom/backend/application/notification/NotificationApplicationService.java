@@ -205,24 +205,16 @@ public class NotificationApplicationService {
     }
 
     /**
-     * 여러 제품 ID를 받아 재고가 임계값 이하인 제품에 대해 알림을 생성하고 SSE로 전송합니다.
-     * 각 제품의 재고가 thresholdValue(기본값 10) 이하인지 확인하고, 조건을 만족하는 제품에 대해서만 알림을 발송합니다.
+     * 여러 제품 중 이번 차감이 재고를 임계값 위에서 이하로 넘긴 제품에만 알림을 생성하고 SSE로 전송합니다.
+     * 이미 임계값 이하였던 재고를 더 낮춘 차감은 알리지 않습니다 - 결제마다 장바구니 사용자 전원에게 같은 알림이 반복됩니다.
      *
      * @param productIds 제품 ID 목록
-     */
-    public void createAndSendNotificationsForProducts(List<UUID> productIds) {
-        createAndSendNotificationsForProducts(productIds, null, null);
-    }
-
-    /**
-     * 여러 제품 ID를 받아 재고가 임계값 이하인 제품에 대해 알림을 생성하고 SSE로 전송합니다.
-     * 차감 후 재고량이 제공되면 그 값을 사용하고, 없으면 제품을 조회해서 사용합니다.
-     *
-     * @param productIds 제품 ID 목록
-     * @param productStockMap 제품 ID와 차감 후 재고량 맵 (null 가능)
+     * @param productStockMap 제품 ID와 차감 후 재고량 맵
+     * @param stockBeforeMap 제품 ID와 차감 전 재고량 맵
      * @param excludeUserId 제외할 사용자 ID (주문한 사용자 등, null 가능)
      */
-    public void createAndSendNotificationsForProducts(List<UUID> productIds, Map<UUID, Integer> productStockMap, Long excludeUserId) {
+    public void createAndSendNotificationsForProducts(List<UUID> productIds, Map<UUID, Integer> productStockMap,
+            Map<UUID, Integer> stockBeforeMap, Long excludeUserId) {
         long startTime = System.currentTimeMillis();
         log.info("[BATCH_NOTIFICATION_START] productIds={}, count={}, timestamp={}", 
                 productIds, productIds.size(), startTime);
@@ -251,40 +243,24 @@ public class NotificationApplicationService {
                     continue;
                 }
 
-                // 2. 재고와 임계값 확인
-                // 차감 후 재고량이 제공되면 그 값을 사용 (결제 경로에서 전달된 정확한 값)
-                // 없으면 제품을 조회해서 사용 (다른 경로에서 호출된 경우)
-                Integer currentStock;
-                if (productStockMap != null && productStockMap.containsKey(productId)) {
-                    currentStock = productStockMap.get(productId);
-                    log.info("[BATCH_NOTIFICATION_STOCK_FROM_MAP] productId={}, stockFromMap={}, productStock={}", 
-                            productId, currentStock, product.getStock());
-                } else {
-                    currentStock = product.getStock();
-                    log.info("[BATCH_NOTIFICATION_STOCK_FROM_DB] productId={}, stockFromDB={}", 
-                            productId, currentStock);
-                }
-                
+                // 2. 차감 전 · 후 재고와 임계값 확인 (결제 경로가 넘긴 값 - 조회 시점의 재고는 뒤이은 결제로 이미 달라졌을 수 있다)
+                Integer currentStock = productStockMap.get(productId);
+                Integer stockBefore = stockBeforeMap.get(productId);
                 Integer thresholdValue = product.getThresholdValue() != null ? product.getThresholdValue() : 10;
 
-                log.info("[BATCH_NOTIFICATION_CHECK] productId={}, productName={}, currentStock={}, thresholdValue={}", 
-                        productId, product.getName(), currentStock, thresholdValue);
+                log.info("[BATCH_NOTIFICATION_CHECK] productId={}, productName={}, stockBefore={}, currentStock={}, thresholdValue={}",
+                        productId, product.getName(), stockBefore, currentStock, thresholdValue);
 
-                // 3. 재고가 임계값 이하인지 확인
-                if (currentStock != null && currentStock <= thresholdValue) {
-                    // 임계값 이하이면 알림 발송
-                    // currentStock은 이미 차감된 값이어야 하므로 그대로 사용
-                    log.info("[BATCH_NOTIFICATION_THRESHOLD_REACHED] productId={}, currentStock={}, thresholdValue={}", 
-                            productId, currentStock, thresholdValue);
-                    
-                    // 재고 차감 후 값 사용 (제품 조회 시점의 재고량은 이미 차감된 값)
-                    // createAndSendNotifications 내부에서도 currentStock을 그대로 사용하므로
-                    // 차감 후 값이 알림 메시지에 표시됨
+                // 3. 이번 차감이 임계값 위에서 이하로 넘겼을 때만 알린다
+                if (currentStock != null && stockBefore != null
+                        && currentStock <= thresholdValue && thresholdValue < stockBefore) {
+                    log.info("[BATCH_NOTIFICATION_THRESHOLD_REACHED] productId={}, stockBefore={}, currentStock={}, thresholdValue={}",
+                            productId, stockBefore, currentStock, thresholdValue);
                     createAndSendNotifications(productId, currentStock, thresholdValue, excludeUserId);
                     notifiedCount++;
                 } else {
-                    log.info("[BATCH_NOTIFICATION_THRESHOLD_NOT_REACHED] productId={}, currentStock={}, thresholdValue={}", 
-                            productId, currentStock, thresholdValue);
+                    log.info("[BATCH_NOTIFICATION_THRESHOLD_NOT_CROSSED] productId={}, stockBefore={}, currentStock={}, thresholdValue={}",
+                            productId, stockBefore, currentStock, thresholdValue);
                     skippedCount++;
                 }
 

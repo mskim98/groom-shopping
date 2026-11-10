@@ -29,10 +29,12 @@ public class PaymentNotificationService {
     public static class StockReductionResult {
         private final UUID productId;
         private final Integer stockAfter;
+        private final int quantity;
 
-        public StockReductionResult(UUID productId, Integer stockAfter) {
+        public StockReductionResult(UUID productId, Integer stockAfter, int quantity) {
             this.productId = productId;
             this.stockAfter = stockAfter;
+            this.quantity = quantity;
         }
 
         public UUID getProductId() {
@@ -41,6 +43,11 @@ public class PaymentNotificationService {
 
         public Integer getStockAfter() {
             return stockAfter;
+        }
+
+        // 조건부 UPDATE 한 문장이 차감하므로 차감 전 재고는 차감 후 재고 + 수량이다
+        public Integer getStockBefore() {
+            return stockAfter + quantity;
         }
     }
 
@@ -59,17 +66,20 @@ public class PaymentNotificationService {
         try {
             // 제품 ID와 차감 후 재고량 맵 생성
             Map<UUID, Integer> productStockMap = new HashMap<>();
+            Map<UUID, Integer> stockBeforeMap = new HashMap<>();
             for (StockReductionResult result : stockReductions) {
                 productStockMap.put(result.getProductId(), result.getStockAfter());
-                log.info("[NOTIFICATION_STOCK_MAP] productId={}, stockAfter={}", 
-                        result.getProductId(), result.getStockAfter());
+                stockBeforeMap.put(result.getProductId(), result.getStockBefore());
+                log.info("[NOTIFICATION_STOCK_MAP] productId={}, stockBefore={}, stockAfter={}",
+                        result.getProductId(), result.getStockBefore(), result.getStockAfter());
             }
 
-            // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
+            // 차감 전 · 후 재고량을 함께 전달해 임계값을 넘긴 차감만 알리고, 알림에는 차감 후 값이 표시되도록 함
             // 주문한 사용자는 알림에서 제외
             notificationApplicationService.createAndSendNotificationsForProducts(
                     stockReductions.stream().map(StockReductionResult::getProductId).collect(Collectors.toList()),
                     productStockMap,
+                    stockBeforeMap,
                     orderUserId
             );
 
