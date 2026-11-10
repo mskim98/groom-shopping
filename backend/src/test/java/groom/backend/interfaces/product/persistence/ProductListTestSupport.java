@@ -66,14 +66,18 @@ public final class ProductListTestSupport {
     /**
      * 저장소가 낸 SQL 의 ? 자리를 values 로 차례로 채워 enable_seqscan=off 로 EXPLAIN 한 계획 전체를 돌려준다
      * ? 개수가 values 개수와 다르면 SQL 이 바뀐 것이므로 시험이 실패한다
+     * alsoOff 로 받은 계획 설정(enable_sort 등)도 같은 트랜잭션 안에서만 끈다
      */
-    public static String explainWithoutSeqScan(JdbcTemplate jdbc, String sql, List<Object> values) {
+    public static String explainWithoutSeqScan(JdbcTemplate jdbc, String sql, List<Object> values, String... alsoOff) {
         String filled = fill(sql, values);
         return jdbc.execute((ConnectionCallback<String>) con -> {
             boolean auto = con.getAutoCommit();
             con.setAutoCommit(false);
             try (var st = con.createStatement()) {
                 st.execute("SET LOCAL enable_seqscan = off");
+                for (String setting : alsoOff) {
+                    st.execute("SET LOCAL " + setting + " = off");
+                }
                 StringBuilder plan = new StringBuilder();
                 try (var rs = st.executeQuery("EXPLAIN " + filled)) {
                     while (rs.next()) {
