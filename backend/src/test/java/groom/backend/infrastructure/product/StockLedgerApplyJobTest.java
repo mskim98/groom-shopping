@@ -170,4 +170,28 @@ class StockLedgerApplyJobTest {
         assertThat(stock()).isEqualTo(960);
         assertThat(unappliedCount()).isZero();
     }
+
+    @Test
+    @DisplayName("미적용 SALE 합이 재고보다 크면 그 상품만 실패하고 재고 · 행은 그대로이며 같은 회차의 다른 상품은 적용된다 (Ruling R117-3)")
+    void applyOnce_미적용합이_재고보다_크면_그_상품만_실패하고_다른_상품은_적용된다() {
+        UUID other = UUID.randomUUID();
+        productRepository.save(ProductJpaEntity.builder().id(other).name("ledger-job-other").price(1000)
+                .stock(10).isActive(true).category("GENERAL").status("AVAILABLE").flashSale(true).build());
+        try {
+            product(2);
+            ledger("SALE", 3);
+            jdbc.update("INSERT INTO stock_ledger (payment_id, product_id, qty, kind, applied) VALUES (?, ?, 4, 'SALE', false)",
+                    UUID.randomUUID(), other);
+
+            job.applyOnce();
+
+            assertThat(stock()).as("실패한 상품의 재고").isEqualTo(2);
+            assertThat(unappliedCount()).as("실패한 상품의 행은 미적용으로 남는다").isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT stock FROM product WHERE id = ?", Integer.class, other))
+                    .as("다른 상품은 적용된다").isEqualTo(6);
+        } finally {
+            jdbc.update("DELETE FROM stock_ledger WHERE product_id = ?", other);
+            productRepository.deleteById(other);
+        }
+    }
 }
