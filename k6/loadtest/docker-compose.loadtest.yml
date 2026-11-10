@@ -1,0 +1,41 @@
+# 3대 부하 측정용 덧씌우기 - 사용: docker compose -p r119-measure -f docker-compose.yml -f k6/loadtest/docker-compose.loadtest.yml …
+# 상대 경로는 첫 파일(docker-compose.yml)의 폴더 기준이다
+x-loadtest-env: &loadtest-env
+  # 시드 DB 하나만 바꾼다 - 이름이 shop_seed 로 시작하는 DB (run.sh seed 가 만든다)
+  SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/shop_seed_m1
+  PAYMENT_TOSS_API_URL: http://wiremock:8080
+  # 힙 상한 1.5 GB - 상한이 없으면 컨테이너 3개가 Docker 메모리 12.5 GB 를 힙 기본값(전체의 1/4)으로 나눠 가져 단계마다 GC 크기가 달라진다
+  JAVA_TOOL_OPTIONS: "-Xmx1536m"
+  # dev 프로파일은 groom.backend 와 org.springframework.web 을 DEBUG 로 콘솔 · 파일에 요청마다 쓴다 - 초당 수천 요청에서는 로그 쓰기가 측정 대상이 되므로 INFO 로 올린다
+  LOGGING_LEVEL_GROOM_BACKEND: INFO
+  LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB: INFO
+  SPRING_OUTPUT_ANSI_ENABLED: never
+
+services:
+  wiremock:
+    image: wiremock/wiremock:3.9.2
+    container_name: wiremock
+    # 기본 컨테이너 스레드(25)로는 백엔드 3대의 Toss 호출 동시 150 건을 받지 못해 PG 쪽 지연이 측정에 섞인다
+    command: ["--global-response-templating", "--container-threads", "200"]
+    ports:
+      - "18089:8080"
+    volumes:
+      - ./k6/wiremock/healthy:/home/wiremock:ro
+    networks:
+      - app-network
+
+  backend1:
+    environment: *loadtest-env
+  backend2:
+    environment: *loadtest-env
+  backend3:
+    environment: *loadtest-env
+
+  nginx:
+    volumes:
+      - ./nginx/nginx.loadtest.conf:/etc/nginx/nginx.conf:ro
+    # 프런트엔드는 띄우지 않는다 - 측정은 /api/v1/ 만 쓴다
+    depends_on: !override
+      - backend1
+      - backend2
+      - backend3
