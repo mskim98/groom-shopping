@@ -25,10 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>{@code save()} 가 detached 엔티티를 넘겨 {@code em.merge()} 를 타지만 <b>추가 SELECT 는 없다.</b>
  * 같은 트랜잭션에서 {@code findById} 가 이미 엔티티를 영속성 컨텍스트에 올려 뒀고,
  * {@code merge} 는 식별자로 컨텍스트를 먼저 뒤져 찾으면 DB 를 다시 조회하지 않기 때문이다
- * ({@code ProductStockService.decreaseOnce} 가 findById → decreaseStock → save 순서다).
+ * ({@code ProductStockService.increaseOnce} 가 findById → increaseStock → save 순서다).
  *
  * <p>이 테스트가 지키는 것 : 차감 경로에 조회가 하나 더 끼어드는 변경을 막는다.
- * 예를 들어 {@code decreaseOnce} 밖에서 상품을 다시 읽거나, {@code save} 를 트랜잭션 밖으로
+ * 예를 들어 {@code increaseOnce} 밖에서 상품을 다시 읽거나, {@code save} 를 트랜잭션 밖으로
  * 옮기면 merge 가 컨텍스트에서 못 찾아 SELECT 를 한 번 더 낸다.
  */
 @SpringBootTest

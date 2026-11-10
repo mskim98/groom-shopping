@@ -65,10 +65,9 @@ class StockLedgerPolicyTest {
     }
 
     @Test
-    @DisplayName("stock.decrease-strategy 키는 없다")
-    void 재고차감_전략_키는_없다() {
-        assertThat(at("stock.decrease-strategy")).isNull();
+    @DisplayName("stock 아래에 차감 전략을 고르는 키는 없고 원장 · 모드 · 대조 · 워밍업 설정만 있다")
+    void 재고_설정에_전략_키는_없다() {
         assertThat(at("stock")).isInstanceOf(Map.class);
-        assertThat(((Map<?, ?>) at("stock")).containsKey("decrease-strategy")).isFalse();
+        assertThat(((Map<?, ?>) at("stock")).keySet()).isSubsetOf("ledger", "mode", "reconcile", "warmup");
     }
 }
