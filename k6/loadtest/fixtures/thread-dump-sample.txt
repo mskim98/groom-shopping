@@ -113,6 +113,7 @@ Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11-LTS mixed mode, sharing):
 	at groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80)
 	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119)
 	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:392)
+	at groom.backend.application.payment.PaymentApplicationService$$SpringCGLIB$$0.confirmPayment(<generated>)
 	at groom.backend.interfaces.cart.CartController.addToCart(CartController.java:79)
 
 "http-nio-8080-exec-8" #54 [54] daemon prio=5 os_prio=0 cpu=10.00ms elapsed=100.00s tid=0x00007f00000036 nid=54 runnable  [0x00007f0000000000]

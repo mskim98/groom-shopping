@@ -44,6 +44,14 @@ class ThreadDigestTest(unittest.TestCase):
         self.assertEqual(rows["application frame | groom.backend.application.cart.CartApplicationService.addToCart(CartApplicationService.java:80) @ " + app], 1)
         self.assertEqual(sum(rows.values()), 10)
 
+    def test_트랜잭션_메서드별_묶음은_바깥쪽_프록시_메서드로_갈리고_종류를_담는다(self):
+        # NOT_SUPPORTED 메서드(confirmPayment)도 트랜잭션 프레임을 거치므로 커넥션을 쥔 쪽과 가르는 키가 필요하다
+        rows = {g["key"]: g for g in load()["by_tx_method"]}
+        cart = rows["groom.backend.interfaces.cart.CartController.addToCart"]
+        confirm = rows["groom.backend.application.payment.PaymentApplicationService.confirmPayment"]
+        self.assertEqual((cart["count"], confirm["count"]), (9, 1))
+        self.assertEqual(confirm["by_kind"], {"Thread.sleep": 1})
+
     def test_보고서_글은_합계와_종류를_담는다(self):
         text = thread_digest.format_report(load())
         self.assertIn("dumps 2", text)
