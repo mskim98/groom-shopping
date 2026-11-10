@@ -59,6 +59,20 @@ class LeakDigestTest(unittest.TestCase):
         self.assertIn("reports 4 · returned 3 · never returned 1", text)
         self.assertRegex(text, r"3\s+3\s+0\s+8100\s+" + AWAIT.replace("(", r"\(").replace(")", r"\)"))
 
+    def test_스프링_프록시_프레임은_건너뛰고_호출한_쪽_프레임을_함께_적는다(self):
+        lines = [
+            "2026-11-11 10:00:05.000 [HikariPool-1:housekeeper] WARN  c.zaxxer.hikari.pool.ProxyLeakTask - Connection leak detection triggered for org.postgresql.jdbc.PgConnection@aa on thread tomcat-handler-1, stack trace follows",
+            "java.lang.Exception: Apparent connection leak detected",
+            "\tat com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:127)",
+            "\tat groom.backend.application.cart.CartApplicationService$$SpringCGLIB$$0.addToCart(<generated>)",
+            "\tat groom.backend.interfaces.cart.CartController.add(CartController.java:41)",
+            "\tat groom.backend.infrastructure.security.JwtAuthenticationFilter.doFilterInternal(JwtAuthenticationFilter.java:137)",
+        ]
+        r = leak_digest.digest(lines)
+        self.assertEqual(r["by_first_app_frame"][0]["key"], "groom.backend.application.cart.CartApplicationService.addToCart <- groom.backend.interfaces.cart.CartController.add(CartController.java:41)")
+        # 기다림 프레임이 없으면 요청의 진입점(컨트롤러 · 소비자 · 작업)을 쓴다 - 보안 필터는 모든 요청의 바깥쪽이라 구별하지 못한다
+        self.assertEqual(r["by_waiting_frame"][0]["key"], "(no waiting frame) @ groom.backend.interfaces.cart.CartController.add(CartController.java:41)")
+
 
 if __name__ == "__main__":
     unittest.main()
