@@ -5,7 +5,7 @@
 #   SEED_TEMPLATE_DB     만들 DB 이름 (shop_seed_template) — shop_seed 로 시작해야 한다
 #   SEED_SCALE           규모 배수 (1) — 1 은 사용자 10만 · 상품 5만 · 주문 30만 · 결제 30만 · 쿠폰 발급 20만 …
 #   SEED_PG_CONTAINER    PostgreSQL 컨테이너 (dev-db) · SEED_PG_USER (dev) · SEED_PG_PASSWORD (dev123)
-#   SEED_MIGRATION_DIR   Flyway 파일 위치 (<저장소>/backend/src/main/resources/db/migration)
+#   SEED_MIGRATION_DIR   Flyway 마이그레이션 파일(V*.sql)의 폴더 (<저장소>/backend/src/main/resources/db/migration) — 이 폴더의 파일을 그대로 적용해 스키마를 만든다. 다른 브랜치 · 워크트리의 마이그레이션으로 만들 때만 지정하고, 그 DB 를 verify.sh 로 검사할 때도 같은 값을 준다
 #   SEED_FLYWAY_IMAGE    Flyway 이미지 (flyway/flyway:8.5.13 — 애플리케이션의 flyway-core 와 같은 버전)
 # 지우는 것: SEED_TEMPLATE_DB 이름의 DB 하나(있으면 세션을 끊고 지운 뒤 다시 만든다). Redis · Kafka 는 건드리지 않는다
 # 끝에 표별 행 수와 걸린 초 · DB 크기를 표준 출력에 찍는다

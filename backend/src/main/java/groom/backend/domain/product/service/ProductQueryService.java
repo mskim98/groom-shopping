@@ -4,7 +4,9 @@ import groom.backend.domain.product.model.Product;
 import groom.backend.infrastructure.cache.ProductDetailCache;
 import groom.backend.domain.product.repository.ProductQueryRepository;
 import groom.backend.interfaces.product.dto.request.ProductSearchRequest;
-import lombok.RequiredArgsConstructor;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -16,14 +18,29 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ProductQueryService {
 
     private final ProductQueryRepository productQueryRepository;
     private final ProductDetailCache detailCache;
+    private final int countCap;
+
+    public ProductQueryService(ProductQueryRepository productQueryRepository, ProductDetailCache detailCache,
+                               @Value("${product.list.count-cap:10000}") int countCap) {
+        this.productQueryRepository = productQueryRepository;
+        this.detailCache = detailCache;
+        this.countCap = countCap;
+    }
+
+    // 시작 위치가 개수 상한 이상인 쪽은 저장소 호출 전에 막는다 - 깊은 OFFSET 은 건너뛴 행만큼 읽는다
+    private void requireWithinCap(Pageable pageable) {
+        if (pageable.isPaged() && pageable.getOffset() >= countCap) {
+            throw new BusinessException(ErrorCode.PRODUCT_LIST_PAGE_TOO_DEEP);
+        }
+    }
 
     public Page<Product> findAllProducts(Pageable pageable) {
+        requireWithinCap(pageable);
         return productQueryRepository.findAll(pageable);
     }
 
@@ -37,6 +54,7 @@ public class ProductQueryService {
     }
 
     public Page<Product> findByCondition(ProductSearchRequest request, Pageable pageable) {
+        requireWithinCap(pageable);
         return productQueryRepository.findByCondition(request.toCreteria(), pageable);
     }
 }

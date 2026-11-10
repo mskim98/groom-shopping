@@ -152,6 +152,13 @@ stock:
     interval-ms: 60000
     batch-size: 1000
 
+# 상품 목록 · 검색
+product:
+  list:
+    # 개수 상한. 목록 · 검색이 세는 행과 허용하는 시작 위치(page x size)의 한도이고, 이 위치 이상의 쪽은 400 이다
+    # 너무 작으면 정상 사용자가 보는 뒤쪽 쪽이 400 이 되고, 너무 크면 count 와 깊은 OFFSET 이 읽는 행이 그만큼 늘어 요청마다 DB 가 오래 읽는다
+    count-cap: 10000
+
 # 쿠폰 워밍업·재고 보정 배치
 coupon:
   issue:

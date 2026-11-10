@@ -70,6 +70,20 @@ printf '%s\n' "$out" | grep -q "^FAIL counts:.*payment_compensation=11/12" || fa
 # 같은 규칙에서 깨끗한 DB 는 통과한다(목표 300 이상은 ceil(1 %) 안, 300 미만은 정확히 일치)
 SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$BASE" 0.01 > /dev/null || fail "[tolerance scale>=1] clean $BASE must pass"
 
+# 목표 300 이상 규칙의 실패 쪽: notifications 목표 1000 → 허용 ceil(1 %) = 10행. 10행 모자라면 통과하고 11행 모자라면 표 이름을 짚어 실패한다
+note "== tolerance: target 300 or more (notifications target 1000, allowed gap ceil(1 %) = 10 rows)"
+seed_drop_db "$WORK"
+seed_psql postgres -c "CREATE DATABASE $WORK TEMPLATE $BASE" > /dev/null
+seed_psql "$WORK" -c "DELETE FROM notifications WHERE id IN (SELECT id FROM notifications ORDER BY id LIMIT 10)" > /dev/null
+SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$WORK" 0.01 > /dev/null || fail "[tolerance target>=300] 990 of 1000 (gap 10 = ceil(1 %)) must pass"
+seed_psql "$WORK" -c "DELETE FROM notifications WHERE id = (SELECT min(id) FROM notifications)" > /dev/null
+set +e
+out="$(SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$WORK" 0.01 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "[tolerance target>=300] 989 of 1000 (gap 11) exit $code, want 1"
+printf '%s\n' "$out" | grep -q "^FAIL counts:.*notifications=989/1000" || fail "[tolerance target>=300] no 'FAIL counts' line naming notifications=989/1000"
+
 # SEED_VERIFY_TOL_SCALE 는 검사를 더 엄격하게만 만든다: tol_scale < scale 이면 exit 2(느슨하게 만드는 길을 막는다)
 note "== guard: tol_scale below scale is refused"
 set +e

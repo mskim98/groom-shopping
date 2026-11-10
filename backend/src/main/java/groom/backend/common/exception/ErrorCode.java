@@ -113,6 +113,8 @@ public enum ErrorCode {
     INSUFFICIENT_STOCK                  (HttpStatus.BAD_REQUEST, "재고가 부족합니다."),
     /** 판매 중지된 제품 */
     PRODUCT_NOT_ACTIVE                  (HttpStatus.BAD_REQUEST, "판매 중지된 제품입니다."),
+    /** 목록 · 검색의 시작 위치가 product.list.count-cap 이상 */
+    PRODUCT_LIST_PAGE_TOO_DEEP          (HttpStatus.BAD_REQUEST, "조회할 수 있는 범위를 넘었습니다. 검색 조건을 좁혀 주세요."),
     /** 장바구니 수량 초과 */
     CART_QUANTITY_EXCEEDED              (HttpStatus.BAD_REQUEST, "장바구니의 제품보다 수량이 큽니다."),
     /** 최소 수량 미달 */
