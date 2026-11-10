@@ -58,7 +58,7 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
 
     /**
      * 검색 조건에 맞춰 검색/정렬/필터링 기능을 제공합니다.
-     * 본문 쿼리는 쪽 크기만큼만 읽고, 개수는 {@link #page} 가 필요할 때만 상한까지 셉니다.
+     * 본문 쿼리는 쪽 크기만큼만 읽고, 개수는 {@link #page} 가 필요할 때만 상한까지 센다
      */
     @Override
     public Page<Product> findByCondition(ProductSearchCondition condition, Pageable pageable) {
@@ -133,7 +133,7 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
     }
 
     /**
-     * 본문을 읽고 Page 로 만든다. 상한(countCap)을 넘는 행은 읽지도 세지도 않는다:
+     * 본문을 읽고 Page 로 만든다 - 상한(countCap)을 넘는 행은 읽지도 세지도 않는다:
      * 본문은 상한 안의 행만 읽고(시작 위치 + 쪽 크기가 상한을 넘으면 그만큼 줄인다), 개수는 첫 쪽이 차지 않았거나
      * 마지막 쪽이면 Spring Data 가 count 를 건너뛰며 그 밖에는 상한까지만 센다
      */
