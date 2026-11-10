@@ -82,9 +82,13 @@ class PaymentOutboxLeaseTest {
     }
 
     private PaymentEventPublisher publisher(KafkaTemplate<String, String> kafka, long sendTimeoutMs) {
+        return publisher(kafka, sendTimeoutMs, LEASE_MS);
+    }
+
+    private PaymentEventPublisher publisher(KafkaTemplate<String, String> kafka, long sendTimeoutMs, long leaseMs) {
         PaymentEventPublisher publisher = new PaymentEventPublisher(outboxRepository, kafka);
         ReflectionTestUtils.setField(publisher, "sendTimeoutMs", sendTimeoutMs);
-        ReflectionTestUtils.setField(publisher, "leaseMs", LEASE_MS);
+        ReflectionTestUtils.setField(publisher, "leaseMs", leaseMs);
         return publisher;
     }
 
@@ -119,58 +123,63 @@ class PaymentOutboxLeaseTest {
     }
 
     @Test
-    @DisplayName("실패한 발행의 행은 PENDING 으로 남고 임대가 지나기 전에는 다시 집히지 않으며 지난 뒤에는 다시 발행된다")
+    @DisplayName("send 가 실패하면 실패한 행과 보내지 못한 행의 임대가 풀려 바로 created_at 순서로 다시 집힌다")
     @SuppressWarnings("unchecked")
-    void publishPending_실패한_행은_임대가_지난_뒤에만_다시_발행된다() throws Exception {
-        UUID failing = seedPending(1).get(0);
+    void publishPending_실패하면_실패한_행과_못_보낸_행의_임대를_풀어_바로_순서대로_다시_집힌다() {
+        List<UUID> seeded = seedPending(3);
+        UUID failing = seeded.get(0);
         KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
         List<String> sentKeys = Collections.synchronizedList(new ArrayList<>());
-        boolean[] broken = {true};
         doAnswer(invocation -> {
             ProducerRecord<String, String> record = invocation.getArgument(0);
             sentKeys.add(record.key());
-            if (broken[0] && failing.toString().equals(record.key())) {
+            if (failing.toString().equals(record.key())) {
                 throw new IllegalStateException("broker down");
             }
             return CompletableFuture.completedFuture(null);
         }).when(kafka).send(any(ProducerRecord.class));
-        PaymentEventPublisher publisher = publisher(kafka, 200);
 
-        publisher.publishPending();
-        assertThat(statusOf(failing)).isEqualTo("PENDING");
-        assertThat(sentKeys).filteredOn(failing.toString()::equals).hasSize(1);
+        publisher(kafka, 200, 60_000).publishPending();
 
-        publisher.publishPending();
-        assertThat(sentKeys).as("임대가 지나기 전에는 다시 시도하지 않는다").filteredOn(failing.toString()::equals).hasSize(1);
-
-        Thread.sleep(LEASE_MS + 200);
-        broken[0] = false;
-        publisher.publishPending();
-        assertThat(sentKeys).filteredOn(failing.toString()::equals).hasSize(2);
-        assertThat(statusOf(failing)).isEqualTo("PUBLISHED");
+        assertThat(sentKeys).as("첫 실패에서 회차가 끝난다").filteredOn(failing.toString()::equals).hasSize(1);
+        seeded.forEach(aggregate -> assertThat(statusOf(aggregate)).isEqualTo("PENDING"));
+        // 임대 60 초가 남았는데도 바로 집힌다 - 풀지 않았다면 비어 있다
+        assertThat(claimedAggregatesInOrder(100, 60_000)).filteredOn(seeded::contains).containsExactlyElementsOf(seeded);
     }
 
     @Test
-    @DisplayName("send 가 시간 초과로 끝나도 행은 PENDING 으로 남고 임대가 지나면 다시 집힌다")
+    @DisplayName("send 가 시간 초과로 끝나도 그 행과 남은 행의 임대가 풀려 바로 다시 집힌다")
     @SuppressWarnings("unchecked")
-    void publishPending_send_시간초과_행은_PENDING_임대가_지나면_다시_집힌다() throws Exception {
-        UUID stuck = seedPending(1).get(0);
+    void publishPending_send_시간초과도_임대를_풀어_바로_다시_집힌다() {
+        List<UUID> seeded = seedPending(2);
         KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
         doAnswer(invocation -> new CompletableFuture<>()).when(kafka).send(any(ProducerRecord.class));
-        PaymentEventPublisher publisher = publisher(kafka, 100);
 
-        publisher.publishPending();
+        publisher(kafka, 100, 60_000).publishPending();
 
-        assertThat(statusOf(stuck)).isEqualTo("PENDING");
-        assertThat(claimedIds(5)).as("임대 안").doesNotContain(stuck);
+        seeded.forEach(aggregate -> assertThat(statusOf(aggregate)).isEqualTo("PENDING"));
+        assertThat(claimedAggregatesInOrder(100, 60_000)).filteredOn(seeded::contains).containsExactlyElementsOf(seeded);
+    }
+
+    @Test
+    @DisplayName("임대를 풀지 못한 행(폴러가 집은 뒤 죽은 경우)은 임대가 지나기 전에는 집히지 않고 지난 뒤에 집힌다")
+    void claimPendingBatch_풀리지_않은_임대는_지난_뒤에만_다시_집힌다() throws Exception {
+        UUID stuck = seedPending(1).get(0);
+        // 죽은 폴러: 집기만 하고 발행도 임대 해제도 하지 않았다
+        assertThat(claimedAggregatesInOrder(100, LEASE_MS)).contains(stuck);
+
+        assertThat(claimedAggregatesInOrder(100, LEASE_MS)).as("임대 안").doesNotContain(stuck);
         Thread.sleep(LEASE_MS + 200);
-        assertThat(claimedIds(100)).as("임대가 지난 뒤").contains(stuck);
+        assertThat(claimedAggregatesInOrder(100, LEASE_MS)).as("임대가 지난 뒤").contains(stuck);
+    }
+
+    // 집힌 행의 결제 id 를 집힌 순서(created_at)대로 돌려준다
+    private List<UUID> claimedAggregatesInOrder(int limit, long leaseMs) {
+        return outboxRepository.claimPendingBatch(limit, leaseMs).stream().map(PaymentOutbox::getAggregateId).toList();
     }
 
     private Set<UUID> claimedIds(int limit) {
-        Set<UUID> ids = new HashSet<>();
-        outboxRepository.claimPendingBatch(limit, LEASE_MS).forEach(o -> ids.add(o.getAggregateId()));
-        return ids;
+        return new HashSet<>(claimedAggregatesInOrder(limit, LEASE_MS));
     }
 
     @Test
