@@ -35,6 +35,8 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -67,6 +69,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED_PREFIX = "FAILED:";
     private static final int PAGE_SIZE = 500;
+    private static final long DLQ_MAX_LENGTH = 10_000L;
 
     /**
      * 스트림 항목 하나. 필드는 접수 Lua 가 쓴 {@code userId}, {@code requestId} 다
@@ -454,7 +457,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
             dlqFields.put("reason", "max-deliveries-exceeded");
             dlqFields.put("deliveries", String.valueOf(entry.getValue()));
             dlqFields.put("originalId", stream.id());
-            redis.opsForStream().add(CouponStockRedisRepository.dlqKey(couponId), dlqFields);
+            addToDlq(couponId, dlqFields);
             if (stream.readable()) {
                 stockRepository.rollbackIssue(couponId, stream.userId());
                 statuses.put(stream.requestId(), STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name());
@@ -465,6 +468,13 @@ public class CouponStreamConsumer implements SmartLifecycle {
         stockRepository.setStatuses(statuses);
         committedUsers.forEach(this::evictMyCouponCache);
         ack(couponId, poison.keySet().stream().map(StreamEntry::id).toList());
+    }
+
+    // DLQ 스트림은 길이를 제한한다 - 독 항목이 몰려도 Redis(noeviction)의 메모리를 끝없이 채우지 않는다
+    // MAXLEN ~ : 정확한 길이가 아니라 덩어리 단위로 잘라 비용이 싸다
+    private void addToDlq(Long couponId, Map<String, String> fields) {
+        redis.opsForStream().add(StreamRecords.newRecord().in(CouponStockRedisRepository.dlqKey(couponId)).ofMap(fields),
+                XAddOptions.maxlen(DLQ_MAX_LENGTH).approximateTrimming(true));
     }
 
     // ---- 확정 ----
@@ -484,7 +494,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
             Map<String, String> dlqFields = new LinkedHashMap<>(entry.fields());
             dlqFields.put("reason", "unreadable-entry");
             dlqFields.put("originalId", entry.id());
-            redis.opsForStream().add(CouponStockRedisRepository.dlqKey(couponId), dlqFields);
+            addToDlq(couponId, dlqFields);
             log.error("[COUPON_STREAM_UNREADABLE_ENTRY] couponId={}, entryId={}, fields={}",
                     couponId, entry.id(), entry.fields());
         }

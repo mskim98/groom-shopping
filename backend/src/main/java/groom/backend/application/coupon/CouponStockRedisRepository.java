@@ -71,7 +71,7 @@ public class CouponStockRedisRepository {
      *
      * <p>통과한 요청만 스트림과 상태 키에 쓴다. 거절된 요청은 아무것도 남기지 않는다
      */
-    // shortcut: 상태 키가 쿠폰 해시 슬롯 밖이라 Redis Cluster 에서는 CROSSSLOT 이다, Cluster 로 옮길 때 상태를 스트림 응답으로 바꾼다
+    // shortcut: status 키는 {couponId} 슬롯이 아님 - 단일 Redis 에서만 한 스크립트로 동작, 클러스터로 가면 status SET 을 스크립트 밖으로 뺀다
     private static final RedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>(
             """
                     if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
