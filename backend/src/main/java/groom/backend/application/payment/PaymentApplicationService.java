@@ -52,7 +52,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 승인 흐름: {@link #confirmPayment} 가 (플래시 세일 상품이면 Redis 선점, Redis 가 실패하면 DB 모드 예약) → Toss 승인 → Payment READY +
  * {@code PaymentApproved} Outbox 행 + 플래시 상품의 재고 원장 SALE 행을 한 트랜잭션으로 남기면({@link #recordApprovedInTx}),
  * Outbox 폴러가 payment-events 로 발행하고 PaymentEventConsumer 가 {@link #applyApprovedEvent} 로 후처리(DONE · 주문 확정 · 티켓 발급 ·
- * 플래시가 아닌 상품의 재고 차감)를 끝낸다. 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다.
+ * 플래시가 아닌 상품의 재고 차감 · 주문한 수량의 장바구니 비우기)를 끝낸다. 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다.
  * {@code confirmPayment} 는 후처리 결과를 대기 상한까지 기다려 DONE 이면 DONE 을, 상한을 넘으면 READY 를 돌려준다.
  */
 // @Slf4j : log 객체 생성.
@@ -75,6 +75,7 @@ public class PaymentApplicationService {
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
+    private final CartApplicationService cartApplicationService; // 승인 트랜잭션이 주문한 수량을 장바구니에서 뺀다
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 승인(PaymentApproved) 이벤트 Outbox 적재
     private final ProductStockService productStockService; // 취소 복원(increase) 경로 전용 - 낙관적 락 + 재시도
@@ -337,7 +338,8 @@ public class PaymentApplicationService {
 
         try {
             // 프록시 경유 호출이라야 @Transactional 경계가 새로 열린다
-            selfProvider.getObject().applyApprovedPaymentInTx(event.orderId(), event.tossResponse());
+            selfProvider.getObject().applyApprovedPaymentInTx(event.orderId(), event.tossResponse(),
+                    event.reservedItems() != null ? event.reservedItems() : List.of());
         } catch (Exception dbError) {
             handlePostProcessFailure(event, dbError);
         }
@@ -392,7 +394,7 @@ public class PaymentApplicationService {
                 .toList();
     }
 
-    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림·장바구니 비우기를 남기지 않게 한다.
+    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림을 남기지 않게 한다.
     // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
     private void runAfterCommit(String name, Runnable task) {
         Runnable safe = () -> {
@@ -419,7 +421,10 @@ public class PaymentApplicationService {
      * 모두 하나의 커밋 단위에서 실행된다. 일반 상품의 차감({@link ConditionalUpdateStockDecrementer#decrease})이 이 트랜잭션에 합류하므로
      * 후처리가 실패하면 DB 재고도 같은 롤백으로 되돌아온다. 플래시 세일 상품은 상품 행을 쓰지 않는다 - 판매는 TX1 이 남긴 원장 행이
      * 들고 있고(원장 REVERSAL · Redis 선점 복원은 호출자 {@link #applyApprovedEvent} 의 실패 처리가 맡는다), product.stock 은 적용 배치가 낮춘다.
-     * 알림 · 장바구니 비우기는 커밋 뒤에만 나간다
+     * 주문한 수량을 장바구니에서 빼는 일도 같은 트랜잭션이라 DONE 과 비워진 장바구니가 함께 커밋되고 함께 롤백된다.
+     * 재고 알림은 커밋 뒤에만 나간다 - 일반 상품은 위 차감 결과로, 플래시 상품은 예약이 남긴 재고({@code reservedItems})로 임계값 통과를 가린다
+     *
+     * @param reservedItems 이 결제의 플래시 예약 항목(없으면 빈 목록). 플래시 알림에 쓴다
      */
     // propagation = REQUIRES_NEW : 결제 상태 변경 + 주문 확정 + 재고 차감 + 티켓 발급을 항상
     // '독립된 새 트랜잭션'으로 묶어, 중간에 하나라도 실패하면 전부 롤백한다(All-or-Nothing).
@@ -427,7 +432,8 @@ public class PaymentApplicationService {
     // ✅ 자기호출 함정 해결: applyApprovedEvent() 가 selfProvider.getObject() 로 프록시를 거쳐 호출.
     // ✅ readOnly 합류 방지: REQUIRES_NEW 라 바깥 트랜잭션 유무와 무관하게 항상 read-write 새 트랜잭션 생성.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Payment applyApprovedPaymentInTx(UUID orderId, TossPaymentResponse response) {
+    public Payment applyApprovedPaymentInTx(UUID orderId, TossPaymentResponse response,
+                                            List<PaymentApprovedEvent.ReservedItem> reservedItems) {
         Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
 
@@ -471,17 +477,19 @@ public class PaymentApplicationService {
         List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order, payment.getId());
         processTicketProducts(order);
 
-        // 성공 로그 · 알림 · 장바구니 비우기는 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한
-        // 200건에도 성공 로그와 장바구니 비우기가 나가 사용자 장바구니만 비워진다
-        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 비울 항목)을 지금 평범한 값으로 만들어 넘긴다.
+        // 장바구니 비우기는 결제 DONE 과 같은 커밋에 든다 - 커밋 뒤 비동기로 미루면 DONE 응답이 먼저 나가 다음 주문이 옛 항목을 집어 간다
+        cartApplicationService.clearOrderedItems(order.getUserId(), cartItemsOf(order));
+
+        // 성공 로그 · 알림은 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한 200건에도 성공 로그와 알림이 나간다
+        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 알림 대상)을 지금 평범한 값으로 만들어 넘긴다.
         // order 엔티티를 넘기면 지연 로딩 필드를 읽는 순간 LazyInitializationException 이다
         UUID paymentId = payment.getId();
         Long orderUserId = order.getUserId();
-        List<CartApplicationService.CartItemToRemove> cartItems = cartItemsOf(order);
+        List<PaymentNotificationService.StockReductionResult> alerts = new java.util.ArrayList<>(stockReductions);
+        alerts.addAll(flashReductionsOf(reservedItems));
         runAfterCommit("PAYMENT_CONFIRM_SUCCESS", () -> {
             log.info("[PAYMENT_CONFIRM_SUCCESS] Payment confirmed - PaymentId: {}, OrderId: {}", paymentId, orderId);
-            paymentNotificationService.sendStockReducedNotifications(stockReductions, orderUserId);
-            paymentNotificationService.clearCartItems(orderUserId, orderId, cartItems);
+            paymentNotificationService.sendStockReducedNotifications(alerts, orderUserId);
         });
 
         return payment;
@@ -559,8 +567,8 @@ public class PaymentApplicationService {
         // 주문한 사용자는 알림에서 제외
         paymentNotificationService.sendStockReducedNotifications(stockReductions, order.getUserId());
 
-        // 비동기로 장바구니 비우기 (응답 시간에 영향 없음)
-        paymentNotificationService.clearCartItems(order.getUserId(), orderId, cartItemsOf(order));
+        // 장바구니 비우기는 이 @Transactional 안에서 한다 - 승인 후처리와 같은 규칙이다
+        cartApplicationService.clearOrderedItems(order.getUserId(), cartItemsOf(order));
 
         return payment;
     }
@@ -723,6 +731,23 @@ public class PaymentApplicationService {
                 return null;
             }
         }
+    }
+
+    // 플래시 항목의 알림용 차감 결과. 예약이 남긴 재고(stockAfter)와 수량으로 차감 전 재고를 구해 일반 상품과 같은 임계값 통과 검사에 싣는다
+    // 값이 없는 항목(옛 outbox payload)은 통과로 보지 않고 알리지 않는다
+    // shortcut: 예약 시점의 재고라서, 임계값을 넘기는 예약 A(12→9)가 Toss 승인에 실패해 풀리는 동안 이어진 예약 B(9→6)가 승인되면
+    // 실제로 12→9 로 넘었는데도 B 의 차감 전 재고(9)가 임계값 아래라 아무도 알리지 않는다. 승인 시점의 재고로 다시 가리면 같은 통과를 두 번 알릴 수 있어 두지 않는다
+    private List<PaymentNotificationService.StockReductionResult> flashReductionsOf(
+            List<PaymentApprovedEvent.ReservedItem> reservedItems) {
+        List<PaymentNotificationService.StockReductionResult> results = new java.util.ArrayList<>();
+        for (PaymentApprovedEvent.ReservedItem item : reservedItems) {
+            if (item.stockAfter() == null) {
+                log.info("[FLASH_ALERT_SKIP] 예약이 남긴 재고가 없어 알리지 않음 - ProductId: {}", item.productId());
+                continue;
+            }
+            results.add(new PaymentNotificationService.StockReductionResult(item.productId(), item.stockAfter(), item.quantity()));
+        }
+        return results;
     }
 
     // 판매가 원장에 기록되지 않은 항목(플래시가 아닌 상품)만 조건부 UPDATE 로 낮춘다. 원장이 들고 있는 항목은 상품 행을 쓰지 않는다

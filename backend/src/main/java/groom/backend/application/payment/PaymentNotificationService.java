@@ -1,7 +1,5 @@
 package groom.backend.application.payment;
 
-import groom.backend.application.cart.CartApplicationService;
-import groom.backend.application.cart.CartApplicationService.CartItemToRemove;
 import groom.backend.application.notification.NotificationApplicationService;
 import java.util.HashMap;
 import java.util.List;
@@ -21,7 +19,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class PaymentNotificationService {
     private final NotificationApplicationService notificationApplicationService;
-    private final CartApplicationService cartApplicationService;
 
     /**
      * 재고 차감 결과를 담는 내부 클래스
@@ -92,35 +89,6 @@ public class PaymentNotificationService {
             log.error(
                     "[NOTIFICATION_ASYNC_FAILED] Failed to send stock reduced notifications - Count: {}, Error: {}",
                     stockReductions.size(), e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 결제 완료 후 장바구니를 비동기로 비우는 메서드 - notificationExecutor 스레드풀에서 실행 - 장바구니 비우기가 실패해도 결제 응답에 영향 없음
-     * 주문 항목을 기반으로 장바구니에서 해당 상품들을 제거한다
-     *
-     * @param userId 주문한 사용자 id
-     * @param orderId 결제 완료된 주문 id (로그용)
-     * @param itemsToRemove 비울 상품·수량. 호출자가 트랜잭션 안에서 만든 값이라 이 스레드에서 엔티티를 읽지 않는다
-     */
-    @Async("notificationExecutor")
-    public void clearCartItems(Long userId, UUID orderId, List<CartItemToRemove> itemsToRemove) {
-        log.info("[CART_CLEAR_ASYNC_START] Clearing cart items - UserId: {}, OrderId: {}, ItemCount: {}",
-                userId, orderId, itemsToRemove.size());
-
-        try {
-            // 장바구니에서 제거
-            cartApplicationService.removeCartItems(userId, itemsToRemove);
-
-            log.info(
-                    "[CART_CLEAR_ASYNC_SUCCESS] Cart items cleared successfully - UserId: {}, OrderId: {}, ItemCount: {}",
-                    userId, orderId, itemsToRemove.size());
-
-        } catch (Exception e) {
-            // 장바구니 비우기 실패는 로그만 남기고 예외를 전파하지 않음
-            // 결제는 이미 성공했으므로 장바구니 비우기 실패가 영향을 주면 안됨
-            log.error("[CART_CLEAR_ASYNC_FAILED] Failed to clear cart items - UserId: {}, OrderId: {}, Error: {}",
-                    userId, orderId, e.getMessage(), e);
         }
     }
 }

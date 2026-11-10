@@ -80,7 +80,7 @@ class PaymentPostProcessRollbackTest {
         }).when(stockDecrementer).decrease(any(), anyInt());
 
         assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
-                payment.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE)))
+                payment.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE), java.util.List.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("post-process down");
 
@@ -92,7 +92,7 @@ class PaymentPostProcessRollbackTest {
     @DisplayName("후처리가 정상 종료되면 DB 재고가 주문 수량만큼 차감되고 결제는 DONE 이다")
     void 후처리성공_정상경로_DB재고가_차감된다() {
         paymentApplicationService.applyApprovedPaymentInTx(
-                payment.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE));
+                payment.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE), java.util.List.of());
 
         assertThat(fixture.stockOf(productId)).as("커밋 뒤 DB 재고").isEqualTo(INITIAL_STOCK - 1);
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
@@ -112,7 +112,7 @@ class PaymentPostProcessRollbackTest {
         Payment twoItems = fixture.payment(first, 1, second, 1);
         try {
             assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
-                    twoItems.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE * 2)))
+                    twoItems.getOrderId(), PaymentFixture.tossResponse("pk-" + UUID.randomUUID(), PaymentFixture.PRICE * 2), java.util.List.of()))
                     .isInstanceOf(BusinessException.class);
 
             assertThat(fixture.stockOf(first)).as("먼저 차감된 상품의 재고").isEqualTo(INITIAL_STOCK);

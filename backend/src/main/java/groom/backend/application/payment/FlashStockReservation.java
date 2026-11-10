@@ -4,7 +4,7 @@ import groom.backend.application.payment.event.PaymentApprovedEvent.ReservedItem
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.StockLedgerRepository;
 import groom.backend.application.product.StockLedgerService;
-import groom.backend.application.product.StockLedgerService.DbReservation;
+import groom.backend.application.product.StockLedgerService.DbReserved;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.model.OrderItem;
@@ -29,6 +29,7 @@ import org.springframework.stereotype.Component;
  * Redis 가 예외 · 서킷 OPEN · 키 없음(-2)이면 상품을 DB 모드로 전환해 조건부 UPDATE 로 예약한다. DB 모드면 Redis 를 건드리지 않는다
  * 복귀 직후 오래된 키로 선점한 요청이 새 키를 모르는 미적용 SALE 을 남기는 일을 막기 위해서다.
  * 플래시가 아닌 상품은 Redis 도 원장도 쓰지 않는다(컨슈머가 조건부 UPDATE 로 낮춘다)
+ * 예약이 남긴 판매 재고(REDIS: 선점 결과, DB: 조건부 UPDATE 결과)는 {@code ReservedItem.stockAfter} 로 승인까지 실려 가 임계값 통과 알림에 쓰인다
  */
 @Slf4j
 @Component
@@ -86,7 +87,8 @@ public class FlashStockReservation {
             if (ledger.readMode(productId) == StockMode.REDIS) {
                 long result = reserveInRedis(productId, quantity);
                 if (result >= 0) {
-                    return Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS));
+                    // result 는 이 선점이 남긴 Redis 재고다 - 승인 뒤 임계값 알림이 차감 전 · 후 재고를 이 값으로 구한다
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS, (int) result));
                 }
                 if (result == -1L) {
                     log.info("[STOCK_RESERVE_OUT] ProductId: {}, Quantity: {}", productId, quantity);
@@ -95,10 +97,10 @@ public class FlashStockReservation {
                 // 키 없음(-2) 또는 Redis 사용 불가 - 재고 검사를 건너뛰지 않고 DB 모드로 넘어간다
                 ledgerService.switchToDb(productId);
             }
-            DbReservation result = ledgerService.reserveInDb(paymentId, productId, quantity);
-            switch (result) {
+            DbReserved reserved = ledgerService.reserveInDbWithStock(paymentId, productId, quantity);
+            switch (reserved.result()) {
                 case RESERVED -> {
-                    return Optional.of(new ReservedItem(productId, quantity, StockMode.DB));
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.DB, reserved.stockAfter()));
                 }
                 case DUPLICATE -> {
                     return Optional.empty();
