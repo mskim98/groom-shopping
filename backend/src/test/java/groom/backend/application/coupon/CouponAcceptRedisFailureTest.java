@@ -48,7 +48,7 @@ class CouponAcceptRedisFailureTest {
         // 최소 호출 수 2 · 실패율 50% - 두 번 실패하면 열린다
         circuit = new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 2, 2, 60_000L);
         service = new CouponAsyncIssueService(couponRepository, redisTemplate, stockRepository, recovery, dbLock,
-                circuit);
+                circuit, mock(MyCouponCacheEvictor.class));
         given(dbLock.issueFor(anyLong(), anyLong())).willReturn(CouponIssueResult.success(1L));
     }
 

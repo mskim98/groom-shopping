@@ -148,7 +148,8 @@ class CouponRecoveryWiringTest {
         CouponAsyncIssueService service = new CouponAsyncIssueService(
                 couponRepository, mock(RedisTemplate.class), stockRepository, recoveryService,
                 mock(DbLockIssueStrategy.class),
-                new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L));
+                new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L),
+                mock(MyCouponCacheEvictor.class));
 
         assertThat(service.enqueue(1L, 100L).status()).isEqualTo(CouponIssueResult.Status.UNAVAILABLE);
         verify(stockRepository, never()).enqueue(anyLong(), anyLong(), anyString());

@@ -5,15 +5,10 @@ import groom.backend.application.coupon.strategy.DbLockIssueStrategy;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.config.RedisConfig;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -44,12 +39,8 @@ public class CouponAsyncIssueService {
     private final CouponStockRecoveryService couponStockRecoveryService;
     private final DbLockIssueStrategy dbLockIssueStrategy;
     private final CouponRedisCircuit redisCircuit;
-
-    // 내 쿠폰 목록 캐시(userId 키). DB 경로로 발급한 사용자의 목록을 비운다 -
-    // 스트림 경로는 컨슈머가 확정 뒤에 비운다. 캐시를 끈 구성처럼 없을 수도 있어 선택 주입이다
-    @Autowired(required = false)
-    @Qualifier("couponCacheManager")
-    private CacheManager couponCacheManager;
+    // DB 경로로 발급한 사용자의 목록 캐시를 비운다 - 스트림 경로는 컨슈머가 확정 뒤에 비운다
+    private final MyCouponCacheEvictor myCouponCacheEvictor;
 
     /**
      * 접수 - 판정하고 스트림에 싣는다. 여기서 기다리는 일이 없어야 한다
@@ -105,24 +96,9 @@ public class CouponAsyncIssueService {
     private CouponIssueResult issueThroughDb(Long couponId, Long userId) {
         CouponIssueResult result = dbLockIssueStrategy.issueFor(couponId, userId);
         if (result.status() == CouponIssueResult.Status.SUCCESS) {
-            evictMyCouponCache(userId);
+            myCouponCacheEvictor.evict(userId);
         }
         return result;
-    }
-
-    // 행이 커밋된 사용자의 목록 캐시를 비운다. 비우지 못하면 TTL 이 지날 때까지 목록이 낡을 뿐이다
-    private void evictMyCouponCache(Long userId) {
-        if (couponCacheManager == null) {
-            return;
-        }
-        try {
-            Cache cache = couponCacheManager.getCache(RedisConfig.COUPON_LIST_CACHE_NAME);
-            if (cache != null) {
-                cache.evict(userId);
-            }
-        } catch (Exception e) {
-            log.warn("[COUPON_MY_LIST_CACHE_EVICT_FAILED] userId={}, error={}", userId, e.toString());
-        }
     }
 
     /**
