@@ -176,10 +176,12 @@ sample_threads() { # 간격 초 · 램프 초 · 유지 초 · k6 로그
   return 0
 }
 
-# 컨테이너 로그에서 스레드 덤프만 자른다 - `Full thread dump` 줄부터 `JNI global refs` 줄까지(그 뒤의 Heap 요약은 버린다)
-cut_thread_dumps() { # 시작 시각 · 컨테이너 · 출력 파일
-  docker logs --since "$1" "$2" 2>&1 | awk '/Full thread dump/ {on = 1} on {print} /^JNI global refs/ {on = 0}' > "$3"
+# 컨테이너 로그를 따라가며 스레드 덤프만 파일에 쓴다 - `Full thread dump` 줄부터 `JNI global refs` 줄까지(그 뒤의 Heap 요약은 버린다)
+# 단계가 끝난 뒤 docker logs 로 자르지 않는 이유: Docker 로그 드라이버(local)는 컨테이너당 100 MB(20 MB x 5)만 남겨 덤프 한 장이 4 MB 넘는 부하 중에는 최근 15 장만 남는다(첫 두 실행)
+follow_thread_dumps() { # 시작 시각 · 컨테이너 · 출력 파일
+  docker logs -f --since "$1" "$2" 2>&1 | awk '/Full thread dump/ {on = 1} on {print} /^JNI global refs/ {on = 0}' > "$3"
 }
+stop_follow_thread_dumps() { pkill -f "docker logs -f --since .* ${PROJECT}-" 2> /dev/null || true; sleep 1; }
 
 # 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
 sample_k6_cpu() { # 폴더 · k6 pid
@@ -217,7 +219,10 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_prom "$dir" & local p3=$!
   sample_pg "$out" & local p5=$!
   local p6=""
-  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!; fi
+  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then
+    for b in $BACKENDS; do follow_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt" & done
+    sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!
+  fi
   trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
 
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
@@ -238,6 +243,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   echo "lag_wait_after_s=$(wait_lag_zero)" >> "$dir/wait.txt"
   echo "lag_after=$(lag_total)" >> "$dir/wait.txt"
   sleep 6
+  stop_follow_thread_dumps
   stop_pg_sample
   kill $p1 $p2 $p3 $p6 2> /dev/null || true
   wait $p1 $p2 $p3 $p5 $p6 2> /dev/null || true
@@ -255,7 +261,6 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   python3 -B k6/loadtest/leak_digest.py --threshold-ms "${LEAK_THRESHOLD_MS:-2000}" "$out"/backend*.log > "$out/leak-digest.txt" || true
   python3 -B k6/loadtest/pg_activity_digest.py "$out/pg-activity.tsv" > "$out/pg-digest.txt" || true
   if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then
-    for b in $BACKENDS; do cut_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt"; done
     python3 -B k6/loadtest/thread_digest.py "$out"/threads-backend*.txt > "$out/thread-digest.txt" || true
   fi
   sleep 1
