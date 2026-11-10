@@ -1,0 +1,36 @@
+2026-11-11 10:00:01.000 [main] INFO  groom.backend.BackendApplication - Started BackendApplication in 12.3 seconds
+2026-11-11 10:00:05.000 [HikariPool-1 housekeeper] WARN  com.zaxxer.hikari.pool.ProxyLeakTask - Connection leak detection triggered for org.postgresql.jdbc.PgConnection@1a2b3c4d on thread http-nio-8080-exec-7, stack trace follows
+java.lang.Exception: Apparent connection leak detected
+	at java.base/java.lang.Thread.sleep(Native Method)
+	at groom.backend.application.payment.PaymentApplicationService.awaitResult(PaymentApplicationService.java:250)
+	at groom.backend.application.payment.PaymentApplicationService.confirmPayment(PaymentApplicationService.java:180)
+	at groom.backend.interfaces.payment.PaymentController.confirm(PaymentController.java:64)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2026-11-11 10:00:05.800 [http-nio-8080-exec-1] WARN  groom.backend.common.GlobalExceptionHandler - unrelated warning between two reports
+2026-11-11 10:00:06.500 [http-nio-8080-exec-7] INFO  com.zaxxer.hikari.pool.ProxyLeakTask - Previously reported leaked connection org.postgresql.jdbc.PgConnection@1a2b3c4d on thread http-nio-8080-exec-7 was returned to the pool (unleaked)
+2026-11-11 10:00:07.200 [HikariPool-1 housekeeper] WARN  com.zaxxer.hikari.pool.ProxyLeakTask - Connection leak detection triggered for org.postgresql.jdbc.PgConnection@2c3d4e5f on thread http-nio-8080-exec-8, stack trace follows
+java.lang.Exception: Apparent connection leak detected
+	at java.base/java.lang.Thread.sleep(Native Method)
+	at groom.backend.application.payment.PaymentApplicationService.awaitResult(PaymentApplicationService.java:250)
+	at groom.backend.application.payment.PaymentApplicationService.confirmPayment(PaymentApplicationService.java:180)
+	at groom.backend.interfaces.payment.PaymentController.confirm(PaymentController.java:64)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2026-11-11 10:00:08.000 [http-nio-8080-exec-2] INFO  com.zaxxer.hikari.pool.ProxyLeakTask - Previously reported leaked connection org.postgresql.jdbc.PgConnection@99999999 on thread http-nio-8080-exec-2 was returned to the pool (unleaked)
+2026-11-11 10:00:10.400 [http-nio-8080-exec-8] INFO  com.zaxxer.hikari.pool.ProxyLeakTask - Previously reported leaked connection org.postgresql.jdbc.PgConnection@2c3d4e5f on thread http-nio-8080-exec-8 was returned to the pool (unleaked)
+2026-11-11 10:00:20.000 [HikariPool-1 housekeeper] WARN  com.zaxxer.hikari.pool.ProxyLeakTask - Connection leak detection triggered for org.postgresql.jdbc.PgConnection@1a2b3c4d on thread http-nio-8080-exec-9, stack trace follows
+java.lang.Exception: Apparent connection leak detected
+	at java.base/java.lang.Thread.sleep(Native Method)
+	at groom.backend.application.payment.PaymentApplicationService.awaitResult(PaymentApplicationService.java:250)
+	at groom.backend.application.payment.PaymentApplicationService.confirmPayment(PaymentApplicationService.java:180)
+	at groom.backend.interfaces.payment.PaymentController.confirm(PaymentController.java:64)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2026-11-11 10:00:26.100 [http-nio-8080-exec-9] INFO  com.zaxxer.hikari.pool.ProxyLeakTask - Previously reported leaked connection org.postgresql.jdbc.PgConnection@1a2b3c4d on thread http-nio-8080-exec-9 was returned to the pool (unleaked)
+2026-11-11 10:00:30.000 [HikariPool-1 housekeeper] WARN  com.zaxxer.hikari.pool.ProxyLeakTask - Connection leak detection triggered for org.postgresql.jdbc.PgConnection@3e4f5a6b on thread stock-ledger-apply-1, stack trace follows
+java.lang.Exception: Apparent connection leak detected
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:127)
+	at org.hibernate.engine.jdbc.connections.internal.DatasourceConnectionProviderImpl.getConnection(DatasourceConnectionProviderImpl.java:122)
+	at groom.backend.application.product.StockLedgerRepository.applyDecrement(StockLedgerRepository.java:104)
+	at groom.backend.application.product.StockLedgerApplyJob.runCycle(StockLedgerApplyJob.java:77)
+	at groom.backend.application.product.StockLedgerApplyJob.run(StockLedgerApplyJob.java:51)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2026-11-11 10:00:40.000 [http-nio-8080-exec-3] INFO  groom.backend.application.order.OrderApplicationService - end of fixture
