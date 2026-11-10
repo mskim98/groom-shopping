@@ -98,7 +98,7 @@ def format_report(result):
     out = ["pg_stat_activity samples %d" % result["samples"], "", "== lock waits (waiting statement -> blocking statement)",
            "%6s %8s %11s  %-28s %-20s  %s" % ("count", "samples", "longest_ms", "wait event", "blocker state", "waiting -> blocking")]
     for g in result["lock_waits"]:
-        out.append("%6d %8d %11d  %-28s %-20s  %s -> %s" % (g["count"], g["samples"], g["longest_ms"], g["wait_event_type"] + "/" + g["wait_event"], g["blocker_state"], g["waiting"], g["blocking"]))
+        out.append("%6d %8d %11d  %-28s %-20s  %s -> %s" % (g["count"], g["samples"], g["longest_ms"], (g["wait_event_type"] + "/" + g["wait_event"]) if g["wait_event"] else "(wait ended before snapshot)", g["blocker_state"], g["waiting"], g["blocking"]))
     out += ["", "== idle in transaction >= %d ms (last statement)" % result["min_idle_ms"], "%6s %11s  %s" % ("count", "longest_ms", "last statement")]
     for g in result["idle_in_transaction"]:
         out.append("%6d %11d  %s" % (g["count"], g["longest_ms"], g["query"]))
