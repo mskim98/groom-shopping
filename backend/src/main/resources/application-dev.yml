@@ -119,6 +119,10 @@ payment:
   # Outbox 폴러 주기. 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦다
   outbox:
     poll-delay-ms: 200
+    lease-ms: 60000              # 집은 행의 임대 시간. send 상한(40초)보다 짧으면 발행 중인 행을 다른 폴러가 가로채 중복 발행하고, 너무 길면 실패한 행이 그만큼 늦게 다시 발행된다
+    retention-hours: 24          # PUBLISHED 행 보관 시간. 너무 짧으면 READY 대사가 보는 발행 기록이 사라지고, 너무 길면 표와 인덱스가 커진다
+    purge-batch-size: 1000       # 삭제 한 문장의 행 수. 너무 크면 한 트랜잭션의 잠금 · 로그가 커지고, 너무 작으면 삭제가 끝나는 데 오래 걸린다
+    purge-interval-ms: 600000    # 삭제 배치 주기. 너무 짧으면 지울 행이 없는 조회만 반복하고, 너무 길면 한 번에 지울 행이 쌓인다
   # READY 에 멈춘 결제 대사(PaymentReadyReconciler). 컨슈머가 끝내지 못한 결제(DLQ · 긴 Kafka 장애 · FAILED 기록 유실)를 되찾는다
   reconcile:
     delay-ms: 60000              # 대사 주기. 이보다 짧아도 stale 기준(5분)이 먼저라 얻는 것이 없다
@@ -148,6 +152,8 @@ stock:
   mode:
     # DB 모드로 이만큼 머문 뒤에야 REDIS 모드로 복귀한다. Toss 응답 한도(http.client.toss.response-timeout 60초)보다 길어야 옛 Redis 에서 선점한 결제가 모두 TX1 에 닿았거나 실패한 뒤다
     min-db-dwell-ms: 70000
+    # 전환 · 복귀가 배타 advisory 잠금을 기다리는 상한. 너무 작으면 TX1 이 조금만 길어도 전환이 실패하고(사용자는 재시도), 너무 크면 열린 TX1 하나가 전환 · 복귀 스레드를 그만큼 붙잡는다
+    lock-timeout-ms: 3000
     # 복귀 배치가 대기 시간이 지난 DB 모드 상품이 있는지 보는 주기(Redis PING 은 후보가 있을 때만 보낸다)
     recovery-interval-ms: 10000
   reconcile:
@@ -167,6 +173,7 @@ coupon:
     batch-size: ${COUPON_ISSUE_BATCH_SIZE:500}
     # coupon.issue.stream.* 는 코드 기본값을 쓴다(시험이 덮어쓸 수 있게 여기 두지 않는다)
     #   claim-min-idle-ms 30000 · claim-interval-ms (claim-min-idle-ms 의 절반) · max-deliveries 3 · block-ms 1000 · refresh-ms 5000 · enabled true
+    #   consumer-retire-idle-ms 3600000 (대기 0 인 다른 컨슈머 이름을 이만큼 쉰 뒤에 지운다 - 너무 짧으면 잠깐 쉰 살아 있는 인스턴스의 이름을 지워 다시 만들고, 너무 길면 재기동마다 늘어난 이름이 오래 남는다)
     #   circuit.failure-rate-threshold 50 · circuit.minimum-calls 10 · circuit.window-size 20 · circuit.wait-open-ms 5000
   warmup:
     batch-size: 1000

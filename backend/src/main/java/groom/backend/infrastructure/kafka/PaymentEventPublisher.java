@@ -12,12 +12,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
-// Outbox 폴러: PENDING 이벤트를 주기적으로 읽어 Kafka 로 발행하고 PUBLISHED 로 전이한다.
-// 발행 성공 후 상태 전이가 실패하면 다음 주기에 재발행되므로(at-least-once), 컨슈머가 Payment 상태로 멱등 처리한다.
-// 인스턴스가 여럿이어도 같은 행을 동시에 발행하지 않는다 - 행을 FOR UPDATE SKIP LOCKED 로 집고 그 잠금을 PUBLISHED 표시 커밋까지 쥔다
-// 대가: 발행하는 동안(정상이면 수 ms, Kafka 장애면 send 상한 40초) 한 커넥션을 쥔다
+// Outbox 폴러: PENDING 이벤트를 주기적으로 집어 Kafka 로 발행하고 PUBLISHED 로 표시한다.
+// 트랜잭션 없이 돈다 - 집기(임대 설정)와 PUBLISHED 표시가 각자 한 문장짜리 짧은 트랜잭션이라 send 를 기다리는 동안(Kafka 장애면 최대 40초) DB 커넥션을 쥐지 않는다
+// 인스턴스가 여럿이어도 같은 행을 동시에 발행하지 않는다 - 집은 행은 lease-ms 동안 임대돼 다른 폴러가 건너뛴다
+// 발행 성공 뒤 PUBLISHED 표시가 실패하거나 폴러가 죽으면 임대가 지난 뒤 다시 발행된다(at-least-once). 컨슈머가 outbox-id 헤더와 Payment 상태로 멱등 처리한다
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -31,15 +30,19 @@ public class PaymentEventPublisher {
     @Value("${payment.outbox.send-timeout-ms:40000}")
     private long sendTimeoutMs = 40000;
 
+    // 집은 행의 임대 시간. send 상한(40초)보다 길어야 발행 중인 행을 다른 폴러가 가로채 중복 발행하지 않고,
+    // 너무 길면 폴러가 죽거나 send 가 실패한 행(과 같은 회차에 집힌 남은 행)이 그만큼 늦게 다시 발행된다
+    @Value("${payment.outbox.lease-ms:60000}")
+    private long leaseMs = 60000;
+
     private static final String TOPIC = "payment-events";
     private static final int BATCH_SIZE = 100;
 
     // @Scheduled(fixedDelay) : 이전 실행이 끝난 뒤 poll-delay 만큼 쉬고 다시 실행 (스캔 주기)
     // 기본 200ms - 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦는다
     @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:200}")
-    @Transactional
     public void publishPending() {
-        List<PaymentOutbox> batch = outboxRepository.findPendingBatch(BATCH_SIZE);
+        List<PaymentOutbox> batch = outboxRepository.claimPendingBatch(BATCH_SIZE, leaseMs);
         if (batch.isEmpty()) {
             return;
         }
@@ -54,11 +57,10 @@ public class PaymentEventPublisher {
                 // 멱등 식별자: outbox.id 를 헤더로 실어 컨슈머가 중복을 거른다.
                 record.headers().add("outbox-id", outbox.getId().toString().getBytes(StandardCharsets.UTF_8));
 
-                // 발행 결과를 확인(get)해 성공한 건만 PUBLISHED 로 전이
+                // 발행 결과를 확인(get)해 성공한 건만 PUBLISHED 로 표시
                 paymentEventKafkaTemplate.send(record).get(sendTimeoutMs, TimeUnit.MILLISECONDS);
 
-                outbox.markPublished();
-                outboxRepository.save(outbox);
+                outboxRepository.markPublished(outbox.getId());
                 log.info("[OUTBOX_PUBLISHED] outboxId={}, aggregateId={}", outbox.getId(), outbox.getAggregateId());
             } catch (InterruptedException e) {
                 // 인터럽트는 플래그를 복원하고 즉시 중단
@@ -66,7 +68,7 @@ public class PaymentEventPublisher {
                 log.error("[OUTBOX_PUBLISH_FAILED] interrupted, outboxId={}", outbox.getId());
                 return;
             } catch (Exception e) {
-                // 실패 건은 PENDING 으로 남겨 다음 주기에 재시도 (at-least-once)
+                // 실패 건은 PENDING 으로 남아 임대가 지난 뒤 다시 집힌다 (at-least-once)
                 // 이 회차는 여기서 끝낸다 - Kafka 장애는 건별이 아니라 브로커 전체라 남은 행도 같은 시간 초과를 겪는다(100건 x 40초)
                 log.error("[OUTBOX_PUBLISH_FAILED] outboxId={}, error={}", outbox.getId(), e.getMessage());
                 return;
