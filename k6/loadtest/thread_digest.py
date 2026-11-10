@@ -88,8 +88,19 @@ def first_app_frame(frames):
     return next((f for f in frames if f.startswith(APP_PREFIX)), "(no groom.backend frame)")
 
 
+PROXY = re.compile(r"\$\$SpringCGLIB\$\$\d+")
+
+
+def tx_method(frames):
+    """가장 바깥쪽 트랜잭션 프레임보다 바깥에서 처음 만나는 groom.backend 프레임의 메서드(스프링 프록시 접미사 제거).
+    NOT_SUPPORTED 메서드도 트랜잭션 프레임을 거치지만 커넥션을 쥐지 않으므로, 읽는 쪽이 이 키로 가른다"""
+    last = max((i for i, f in enumerate(frames) if TX.search(f)), default=-1)
+    app = next((f for f in frames[last + 1:] if f.startswith(APP_PREFIX)), None)
+    return PROXY.sub("", app.split("(")[0]) if app else "(no groom.backend frame)"
+
+
 def digest(lines):
-    per_dump, by_state, by_kind, by_frame = [], Counter(), Counter(), Counter()
+    per_dump, by_state, by_kind, by_frame, by_method = [], Counter(), Counter(), Counter(), {}
     for dump in parse(lines):
         kinds = Counter()
         threads = [t for t in dump if in_transaction(t)]
@@ -97,6 +108,9 @@ def digest(lines):
             kind = kind_of(t)
             kinds[kind] += 1
             by_state[(t["state"] or "UNKNOWN")] += 1
+            m = by_method.setdefault(tx_method(t["frames"]), {"count": 0, "by_kind": Counter()})
+            m["count"] += 1
+            m["by_kind"][kind] += 1
             by_frame["%s | %s @ %s" % (kind, t["frames"][0] if t["frames"] else "(no frame)", first_app_frame(t["frames"]))] += 1
         by_kind.update(kinds)
         per_dump.append({"tx_threads": len(threads), "by_kind": dict(kinds)})
@@ -107,6 +121,7 @@ def digest(lines):
         "by_state": dict(by_state),
         "by_kind": dict(by_kind),
         "by_innermost_frame": [{"key": k, "count": n} for k, n in by_frame.most_common()],
+        "by_tx_method": sorted(({"key": k, "count": v["count"], "by_kind": dict(v["by_kind"])} for k, v in by_method.items()), key=lambda g: -g["count"]),
     }
 
 
@@ -119,6 +134,8 @@ def format_report(r):
     out += ["%6d %5.1f%%  %s" % (n, 100.0 * n / total, k) for k, n in sorted(r["by_kind"].items(), key=lambda kv: -kv[1])]
     out += ["", "== by innermost frame (kind | innermost frame @ first groom.backend frame)"]
     out += ["%6d  %s" % (g["count"], g["key"]) for g in r["by_innermost_frame"]]
+    out += ["", "== by transaction method (outermost transactional proxy method; NOT_SUPPORTED methods hold no connection)"]
+    out += ["%6d  %s  [%s]" % (g["count"], g["key"], ", ".join("%s %d" % kv for kv in sorted(g["by_kind"].items(), key=lambda kv: -kv[1]))) for g in r["by_tx_method"]]
     out += ["", "== per dump (index: threads · kinds)"]
     for i, d in enumerate(r["per_dump"], 1):
         out.append("%4d: %3d  %s" % (i, d["tx_threads"], ", ".join("%s %d" % kv for kv in sorted(d["by_kind"].items(), key=lambda kv: -kv[1]))))
