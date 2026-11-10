@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 
 import groom.backend.application.product.StockLedgerRepository;
+import groom.backend.application.product.StockLedgerService;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.UUID;
@@ -26,6 +27,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 원장 적용 배치가 미적용 행을 SKIP LOCKED 로 집어 재고를 낮추고 같은 트랜잭션에서 적용 표시를 하는지 본다
 @SpringBootTest
@@ -44,6 +46,10 @@ class StockLedgerApplyJobTest {
 
     @Autowired
     private StockLedgerApplyJob job;
+    @Autowired
+    private StockLedgerService stockLedgerService;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
     @Autowired
     private SpringDataProductRepository productRepository;
     @Autowired
@@ -192,6 +198,45 @@ class StockLedgerApplyJobTest {
         } finally {
             jdbc.update("DELETE FROM stock_ledger WHERE product_id = ?", other);
             productRepository.deleteById(other);
+        }
+    }
+
+    @Test
+    @DisplayName("다른 트랜잭션이 같은 상품의 TX1 원장 기록을 열어 둔 채여도 applyOnce 는 그 상품의 나머지 미적용 행을 적용한다 (건너뛰지도 막히지도 않는다)")
+    void applyOnce_TX1이_열려_있어도_같은_상품의_나머지_행을_적용한다() throws Exception {
+        product(10);
+        ledger("SALE", 3);
+        CountDownLatch recorded = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            // TX1 이 상품 P 의 SALE 을 기록하고 커밋하지 않은 채 열려 있다
+            Future<?> tx1 = pool.submit(() -> transactionTemplate.execute(status -> {
+                stockLedgerService.recordSale(UUID.randomUUID(), productId, 1);
+                recorded.countDown();
+                awaitQuietly(release);
+                return null;
+            }));
+            assertThat(recorded.await(10, TimeUnit.SECONDS)).isTrue();
+
+            pool.submit(() -> job.applyOnce()).get(10, TimeUnit.SECONDS);
+
+            assertThat(stock()).as("커밋된 SALE 3 만 접어 넣는다").isEqualTo(7);
+            release.countDown();
+            tx1.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        assertThat(unappliedCount()).as("TX1 이 커밋한 행은 다음 회차 몫이라 미적용으로 남는다").isEqualTo(1);
+        assertThat(remaining()).as("남은 재고 = stock − 미적용 합").isEqualTo(6);
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }
