@@ -52,7 +52,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 승인 흐름: {@link #confirmPayment} 가 (플래시 세일 상품이면 Redis 선점, Redis 가 실패하면 DB 모드 예약) → Toss 승인 → Payment READY +
  * {@code PaymentApproved} Outbox 행 + 플래시 상품의 재고 원장 SALE 행을 한 트랜잭션으로 남기면({@link #recordApprovedInTx}),
  * Outbox 폴러가 payment-events 로 발행하고 PaymentEventConsumer 가 {@link #applyApprovedEvent} 로 후처리(DONE · 주문 확정 · 티켓 발급 ·
- * 플래시가 아닌 상품의 재고 차감 · 주문한 수량의 장바구니 비우기)를 끝낸다. 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다.
+ * 플래시가 아닌 상품의 재고 차감 · 주문한 수량의 장바구니 비우기)를 끝낸다. 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다
  * {@code confirmPayment} 는 후처리 결과를 대기 상한까지 기다려 DONE 이면 DONE 을, 상한을 넘으면 READY 를 돌려준다.
  */
 // @Slf4j : log 객체 생성.
@@ -394,7 +394,7 @@ public class PaymentApplicationService {
                 .toList();
     }
 
-    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림을 남기지 않게 한다.
+    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림을 남기지 않게 한다
     // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
     private void runAfterCommit(String name, Runnable task) {
         Runnable safe = () -> {
@@ -421,7 +421,7 @@ public class PaymentApplicationService {
      * 모두 하나의 커밋 단위에서 실행된다. 일반 상품의 차감({@link ConditionalUpdateStockDecrementer#decrease})이 이 트랜잭션에 합류하므로
      * 후처리가 실패하면 DB 재고도 같은 롤백으로 되돌아온다. 플래시 세일 상품은 상품 행을 쓰지 않는다 - 판매는 TX1 이 남긴 원장 행이
      * 들고 있고(원장 REVERSAL · Redis 선점 복원은 호출자 {@link #applyApprovedEvent} 의 실패 처리가 맡는다), product.stock 은 적용 배치가 낮춘다.
-     * 주문한 수량을 장바구니에서 빼는 일도 같은 트랜잭션이라 DONE 과 비워진 장바구니가 함께 커밋되고 함께 롤백된다.
+     * 주문한 수량을 장바구니에서 빼는 일도 같은 트랜잭션이라 DONE 과 비워진 장바구니가 함께 커밋되고 함께 롤백된다
      * 재고 알림은 커밋 뒤에만 나간다 - 일반 상품은 위 차감 결과로, 플래시 상품은 예약이 남긴 재고({@code reservedItems})로 임계값 통과를 가린다
      *
      * @param reservedItems 이 결제의 플래시 예약 항목(없으면 빈 목록). 플래시 알림에 쓴다
@@ -481,7 +481,7 @@ public class PaymentApplicationService {
         cartApplicationService.clearOrderedItems(order.getUserId(), cartItemsOf(order));
 
         // 성공 로그 · 알림은 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한 200건에도 성공 로그와 알림이 나간다
-        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 알림 대상)을 지금 평범한 값으로 만들어 넘긴다.
+        // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 알림 대상)을 지금 평범한 값으로 만들어 넘긴다
         // order 엔티티를 넘기면 지연 로딩 필드를 읽는 순간 LazyInitializationException 이다
         UUID paymentId = payment.getId();
         Long orderUserId = order.getUserId();
