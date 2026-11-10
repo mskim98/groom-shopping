@@ -60,8 +60,9 @@ class KafkaMetricsBindingTest {
     void producerFactories_모두_Micrometer_리스너가_있다() {
         Map<String, ProducerFactory> factories = context.getBeansOfType(ProducerFactory.class);
 
-        // 쿠폰 발급 · 재고 임계 · 쿠폰 지연 · 결제 · 추첨 - 한 곳이 빠지면 개수가 줄어 여기서 걸린다
-        assertThat(factories).hasSizeGreaterThanOrEqualTo(5);
+        // 재고 임계 · 쿠폰 지연 · 결제 · 추첨 - 한 곳이 빠지면 개수가 줄어 여기서 걸린다
+        // 쿠폰 발급 프로듀서는 발급이 Redis Stream 으로 옮겨가며 없어졌다
+        assertThat(factories).hasSizeGreaterThanOrEqualTo(4);
         factories.forEach((name, factory) ->
                 assertThat(((DefaultKafkaProducerFactory<?, ?>) factory).getListeners())
                         .as("프로듀서 팩토리 %s 의 리스너", name)
