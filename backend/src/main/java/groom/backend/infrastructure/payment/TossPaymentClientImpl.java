@@ -6,6 +6,8 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.infrastructure.payment.dto.TossPaymentConfirmRequest;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
 import groom.backend.infrastructure.resilience.SharedCircuitFlag;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -56,6 +58,9 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     //   이후 호출은 실제 API 로 가지 않고 fallbackMethod 로 즉시 빠진다(fast-fail) → Cascading Failure 방지.
     // @Retry : 일시적 실패(timeout·5xx 등)는 짧게 재시도. 회로 OPEN(CallNotPermittedException)은 재시도 제외(yml).
     // 두 어노테이션은 Spring AOP 프록시 기반이라 다른 빈(PaymentApplicationService)에서 호출돼야 적용된다.
+    // @Bulkhead : 동시 호출을 세마포어로 제한한다(max-wait 0 - 기다리지 않고 거절). Resilience4j 적용 순서는 Retry > CircuitBreaker > Bulkhead 라
+    //   한도 초과(BulkheadFullException)는 회로 안에서 무시 예외로 빠지고(회로 실패로 세지 않음) fallback 이 TossBulkheadFullException 으로 바꿔 던져 재시도도 건너뛴다
+    @Bulkhead(name = "toss")
     @CircuitBreaker(name = "toss", fallbackMethod = "confirmPaymentFallback")
     @Retry(name = "toss")
     @Override
@@ -93,6 +98,10 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     // 시험이 직접 호출하도록 package-private 으로 둔다(리플렉션 탐색은 가시성과 무관하다)
     TossPaymentResponse confirmPaymentFallback(
             TossPaymentConfirmRequest request, String idempotencyKey, Throwable t) {
+        if (t instanceof BulkheadFullException) {
+            log.warn("[BULKHEAD_FULL] Toss 동시 호출 한도 초과, 호출하지 않음 - PaymentKey: {}", request.getPaymentKey());
+            throw new TossBulkheadFullException();
+        }
         if (t instanceof CallNotPermittedException) {
             // 회로 OPEN - 외부 API 를 아예 호출하지 않고 사용자에게 빠른 실패 안내
             log.warn("[CB_FALLBACK_OPEN] Circuit OPEN, fast-fail - PaymentKey: {}", request.getPaymentKey());
