@@ -21,9 +21,14 @@ fail() { echo "FAIL(test) $*"; FAILS=$((FAILS + 1)); }
 
 stop_backend() {
   [ -n "$BOOT_PID" ] || return 0
-  # gradle 이 낳은 자식(JVM)까지 같은 프로세스 그룹이므로 그룹째 끈다
+  # gradlew 클라이언트와 그 그룹을 끈 뒤, Gradle 데몬이 따로 띄운 JVM 은 이 작업 폴더의 클래스 경로로 찾아 끈다
   kill -TERM -- "-$BOOT_PID" 2>/dev/null || kill -TERM "$BOOT_PID" 2>/dev/null || true
-  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$BOOT_PID" 2>/dev/null || break; sleep 1; done
+  pkill -TERM -f "$ROOT/backend/build/classes/java/main" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$ROOT/backend/build/classes/java/main" > /dev/null 2>&1 || break
+    sleep 1
+  done
+  pkill -KILL -f "$ROOT/backend/build/classes/java/main" 2>/dev/null || true
   kill -KILL -- "-$BOOT_PID" 2>/dev/null || true
   BOOT_PID=""
 }
@@ -33,11 +38,20 @@ echo "== reset $TGT from ${SEED_TEMPLATE_DB:-shop_seed_template} and load Redis 
 bash "$SEED/reset.sh" "$TGT"
 bash "$SEED/load-redis.sh" "$TGT"
 
+# 사본에서만: 기동하자마자 outbox 폴러가 PENDING 행을 dev-kafka 로 보내고 보상 배치가 Toss 취소를 부르지 않게 해당 행을 닫는다
+# (시드 템플릿은 그대로다 — 측정 라운드는 이 행들이 PENDING 인 채로 쓴다)
+seed_psql "$TGT" -c "
+  UPDATE payment_outbox SET status = 'PUBLISHED', published_at = now() WHERE status = 'PENDING';
+  UPDATE payment_compensation SET next_retry_at = now() + interval '1 day' WHERE status IN ('PENDING', 'FAILED');
+  UPDATE payment_compensation SET updated_at = now() WHERE status = 'PROCESSING'" > /dev/null
+
 echo "== boot backend on :$PORT"
 set -m
 SPRING_DATASOURCE_URL="jdbc:postgresql://localhost:5432/$TGT" \
 SPRING_DATA_REDIS_PORT="$SEED_REDIS_PORT" \
 SERVER_PORT="$PORT" \
+PAYMENT_RECONCILE_DELAY_MS=3600000 \
+PAYMENT_COMPENSATION_RETRY_DELAY_MS=3600000 \
   "$ROOT/backend/gradlew" -p "$ROOT/backend" bootRun > "$LOG" 2>&1 &
 BOOT_PID=$!
 set +m

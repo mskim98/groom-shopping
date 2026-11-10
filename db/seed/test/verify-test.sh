@@ -26,9 +26,9 @@ breaks() {
   cat <<'LIST'
 counts|DELETE FROM notifications WHERE id % 5 = 0
 flyway|DELETE FROM flyway_schema_history WHERE version = '23'
-refs|UPDATE payment_outbox SET aggregate_id = gen_random_uuid() WHERE id = (SELECT min(id) FROM payment_outbox)
+refs|UPDATE payment_outbox SET aggregate_id = gen_random_uuid() WHERE id = (SELECT id FROM payment_outbox LIMIT 1)
 enums|UPDATE users SET grade = 'NORMAL' WHERE id = (SELECT min(id) FROM users WHERE email LIKE 'seed\_%')
-amounts|UPDATE orders SET sub_total = sub_total + 1 WHERE id = (SELECT min(id) FROM orders)
+amounts|UPDATE orders SET sub_total = sub_total + 1 WHERE id = (SELECT id FROM orders LIMIT 1)
 flash-stock|UPDATE stock_ledger SET qty = qty + 100000000 WHERE id = (SELECT min(id) FROM stock_ledger WHERE applied = false AND kind = 'SALE')
 coupon-quota|UPDATE coupon SET quantity = 1 WHERE id = (SELECT max(id) FROM coupon)
 sequences|SELECT setval('users_id_seq', 1)
