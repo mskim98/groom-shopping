@@ -195,4 +195,20 @@ class SharedCircuitFlagTest {
 
         verify(compensationService, times(1)).acquireRetryableBatch();
     }
+
+    @Test
+    @DisplayName("회로를 reset 하거나 CLOSED 로 돌리면 키를 지운다 - 다음 확인이 남은 열림 시각에 막히지 않는다")
+    void reset과_CLOSED_전이는_키를_지운다() {
+        CircuitBreaker breaker = circuitBreakerRegistry.circuitBreaker("toss");
+        breaker.transitionToOpenState();
+        assertThat(redis.opsForValue().get(SharedCircuitFlag.key("toss"))).isNotNull();
+
+        breaker.reset();
+        assertThat(redis.opsForValue().get(SharedCircuitFlag.key("toss"))).as("reset 뒤").isNull();
+
+        breaker.transitionToOpenState();
+        breaker.transitionToHalfOpenState();
+        breaker.transitionToClosedState();
+        assertThat(redis.opsForValue().get(SharedCircuitFlag.key("toss"))).as("CLOSED 뒤").isNull();
+    }
 }

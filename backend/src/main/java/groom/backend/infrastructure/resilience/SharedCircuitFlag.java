@@ -48,11 +48,24 @@ public class SharedCircuitFlag {
 
     private void subscribe(CircuitBreaker breaker) {
         breaker.getEventPublisher().onStateTransition(event -> {
-            if (event.getStateTransition().getToState() == CircuitBreaker.State.OPEN) {
+            CircuitBreaker.State to = event.getStateTransition().getToState();
+            if (to == CircuitBreaker.State.OPEN) {
                 long waitMs = breaker.getCircuitBreakerConfig().getWaitIntervalFunctionInOpenState().apply(1);
                 publishOpen(breaker.getName(), waitMs);
+            } else if (to == CircuitBreaker.State.CLOSED) {
+                clear(breaker.getName());
             }
         });
+        // reset 은 상태 전이 이벤트 없이 CLOSED 로 돌린다 - 운영자가 회로를 되돌렸으면 다른 인스턴스도 열린 채 두지 않는다
+        breaker.getEventPublisher().onReset(event -> clear(breaker.getName()));
+    }
+
+    private void clear(String name) {
+        try {
+            redis.delete(key(name));
+        } catch (RuntimeException e) {
+            logOnce("[CB_FLAG_WRITE_FAILED] name={} cause={}", name, e.toString());
+        }
     }
 
     /** OPEN 으로 바뀐 회로의 열림 종료 시각을 같은 만료로 쓴다. Redis 가 실패해도 던지지 않는다 */
