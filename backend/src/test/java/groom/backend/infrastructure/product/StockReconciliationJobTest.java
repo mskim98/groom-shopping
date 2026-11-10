@@ -73,7 +73,7 @@ class StockReconciliationJobTest {
         StockReconciliationJob.ReconcileResult result = job.reconcileOnce();
 
         assertThat(result.over()).isEqualTo(1);
-        assertThat(result.missingKey()).isEqualTo(1);
+        assertThat(result.missingKey()).as("플래시가 아닌 상품은 Redis 키가 없는 것이 정상이라 부재로 세지 않는다").isZero();
         assertThat(meterRegistry.get("stock_drift_over").gauge().value()).isEqualTo(1.0);
     }
 
@@ -148,5 +148,20 @@ class StockReconciliationJobTest {
         doReturn(Map.of(plain, 3)).when(stockLedgerRepository).sumUnappliedByProduct(anyList());
 
         assertThat(job.reconcileOnce().over()).as("일반 상품의 미적용 합은 쓰지 않는다").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("REDIS 모드 플래시 상품의 Redis 키 부재는 계수하고, 플래시가 아닌 상품의 부재는 계수하지 않는다")
+    void 키_부재는_REDIS모드_플래시_상품만_계수한다() {
+        UUID flash = new UUID(0L, 14L);
+        UUID plain = new UUID(0L, 15L);
+        onePage(List.of(flashEntity(flash, 10, "REDIS"), entity(plain, 10)));
+        doReturn(Arrays.asList(null, null)).when(stockRedisRepository).getStocks(anyList());
+        doReturn(Map.of()).when(stockLedgerRepository).sumUnappliedByProduct(anyList());
+
+        StockReconciliationJob.ReconcileResult result = job.reconcileOnce();
+
+        assertThat(result.missingKey()).isEqualTo(1);
+        assertThat(meterRegistry.get("stock_drift_missing_key").gauge().value()).isEqualTo(1.0);
     }
 }
