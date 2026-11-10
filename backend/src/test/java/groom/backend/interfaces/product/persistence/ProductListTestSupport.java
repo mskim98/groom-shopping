@@ -45,6 +45,23 @@ public final class ProductListTestSupport {
     }
 
     /**
+     * 표가 작으면 플래너가 id 정렬용 기본키 인덱스를 훑는 계획을 골라 이름 인덱스가 계획에 안 나타난다 - 실제 규모처럼 보이게 채우고 통계를 갱신한다.
+     * 이름은 "<prefix>-<md5>"(16진수라 u 가 없다)이라 시험이 찾는 키워드와 겹치지 않는다. 시험이 끝나면 {@link #dropFiller} 로 지운다
+     */
+    public static void fillProductTable(JdbcTemplate jdbc, String prefix, int rows) {
+        jdbc.update("INSERT INTO product (id, name, description, price, stock, is_active, category, status, threshold_value,"
+                + " created_at, updated_at, version, flash_sale, stock_mode)"
+                + " SELECT gen_random_uuid(), ? || '-' || md5(g::text), 'd', 1000 + (g % 500), 10, true, 'GENERAL', 'AVAILABLE', 10,"
+                + " now(), now(), 0, false, 'REDIS' FROM generate_series(1, ?) g", prefix, rows);
+        jdbc.execute("ANALYZE product");
+    }
+
+    public static void dropFiller(JdbcTemplate jdbc, String prefix) {
+        jdbc.update("DELETE FROM product WHERE name LIKE ?", prefix + "-%");
+        jdbc.execute("ANALYZE product");
+    }
+
+    /**
      * 저장소가 낸 SQL 의 ? 자리를 values 로 차례로 채워 enable_seqscan=off 로 EXPLAIN 한 계획 전체를 돌려준다.
      * ? 개수가 values 개수와 다르면 SQL 이 바뀐 것이므로 시험이 실패한다
      */

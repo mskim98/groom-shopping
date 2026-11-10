@@ -55,6 +55,7 @@ class ProductNameSearchIndexTest {
     private MockMvc mockMvc;
     private int price;
     private List<UUID> ids;
+    private String filler;
 
     @BeforeEach
     void setUp() {
@@ -68,6 +69,9 @@ class ProductNameSearchIndexTest {
     @AfterEach
     void tearDown() {
         productRepository.deleteAllById(ids);
+        if (filler != null) {
+            ProductListTestSupport.dropFiller(jdbc, filler);
+        }
     }
 
     private org.springframework.test.web.servlet.ResultActions search(String keyword) throws Exception {
@@ -118,6 +122,8 @@ class ProductNameSearchIndexTest {
 
     /** 검색 한 번이 낸 목록 SELECT 를 가로채 그대로 EXPLAIN 한다 */
     private String explainOfSearch(String keyword) throws Exception {
+        filler = "zzfill-" + UUID.randomUUID();
+        ProductListTestSupport.fillProductTable(jdbc, filler, 5000);
         RecordingStatementInspector.clear();
         search(keyword).andExpect(status().isOk());
         List<String> selects = RecordingStatementInspector.productListSelects();
