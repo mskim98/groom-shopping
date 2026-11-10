@@ -11,7 +11,6 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -27,13 +26,8 @@ public class PaymentEventConsumer {
 
     private final PaymentApplicationService paymentApplicationService;
     private final ObjectMapper objectMapper;
-    // db-ledger 회로. 없으면(단위 시험) 회로 없이 바로 처리한다
-    private DbLedgerCircuit dbLedgerCircuit;
-
-    @Autowired(required = false)
-    public void setDbLedgerCircuit(DbLedgerCircuit dbLedgerCircuit) {
-        this.dbLedgerCircuit = dbLedgerCircuit;
-    }
+    // 필수 의존성 - 빠지면 기동이 실패해야 한다(선택 주입이면 db-ledger 보호가 조용히 꺼진다)
+    private final DbLedgerCircuit dbLedgerCircuit;
 
     @KafkaListener(
             id = DbLedgerCircuit.LISTENER_ID,
@@ -48,10 +42,6 @@ public class PaymentEventConsumer {
             throw new PaymentEventParseException("PaymentApproved 레코드를 읽지 못했다: key=" + record.key(), e);
         }
         log.info("[PAYMENT_EVENT_CONSUMED] key={}, paymentId={}", record.key(), event.paymentId());
-        if (dbLedgerCircuit == null) {
-            paymentApplicationService.applyApprovedEvent(event);
-            return;
-        }
         try {
             dbLedgerCircuit.run(() -> paymentApplicationService.applyApprovedEvent(event));
         } catch (CallNotPermittedException e) {

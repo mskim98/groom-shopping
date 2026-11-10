@@ -3,6 +3,7 @@ package groom.backend.infrastructure.config;
 import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import groom.backend.infrastructure.kafka.StockThresholdEvent;
 import groom.backend.infrastructure.kafka.stream.CouponDelayEvent;
+import groom.backend.infrastructure.resilience.DbLedgerPauseErrorHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -328,7 +329,7 @@ public class KafkaConfig {
                 // partition -1 → 브로커가 파티션을 배정
                 (record, ex) -> new TopicPartition("payment-events-dlq", -1));
         // db-ledger 회로가 열려 보류한 레코드는 재시도 · DLQ 로 세지 않고 되감아 컨테이너를 멈춘다(DbLedgerPauseErrorHandler)
-        DefaultErrorHandler errorHandler = new groom.backend.infrastructure.resilience.DbLedgerPauseErrorHandler(recoverer, backOff);
+        DefaultErrorHandler errorHandler = new DbLedgerPauseErrorHandler(recoverer, backOff);
         // payload 파싱 실패는 다시 읽어도 같으므로 백오프(약 31초)로 파티션을 막지 않고 첫 실패에서 곧장 DLQ 로 보낸다
         errorHandler.addNotRetryableExceptions(PaymentEventParseException.class);
         factory.setCommonErrorHandler(errorHandler);

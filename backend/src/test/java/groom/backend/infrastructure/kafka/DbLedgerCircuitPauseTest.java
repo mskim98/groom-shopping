@@ -104,8 +104,7 @@ class DbLedgerCircuitPauseTest {
             return null;
         }).when(service).applyApprovedEvent(any());
 
-        PaymentEventConsumer consumer = new PaymentEventConsumer(service, mapper);
-        consumer.setDbLedgerCircuit(circuit);
+        PaymentEventConsumer consumer = new PaymentEventConsumer(service, mapper, circuit);
 
         Map<String, Object> props = KafkaTestUtils.consumerProps(GROUP, "false", broker);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");

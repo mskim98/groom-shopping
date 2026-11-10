@@ -3,7 +3,9 @@ package groom.backend.infrastructure.kafka;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -12,6 +14,7 @@ import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.payment.event.PaymentEventParseException;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
+import groom.backend.infrastructure.resilience.DbLedgerCircuit;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -29,12 +32,20 @@ class PaymentEventConsumerTest {
     @Mock
     private PaymentApplicationService paymentApplicationService;
 
+    @Mock
+    private DbLedgerCircuit dbLedgerCircuit;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private PaymentEventConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new PaymentEventConsumer(paymentApplicationService, objectMapper);
+        // 회로는 닫힌 상태로 둔다 - 넘겨받은 작업을 그대로 실행
+        lenient().doAnswer(call -> {
+            ((Runnable) call.getArgument(0)).run();
+            return null;
+        }).when(dbLedgerCircuit).run(any());
+        consumer = new PaymentEventConsumer(paymentApplicationService, objectMapper, dbLedgerCircuit);
     }
 
     @Test
