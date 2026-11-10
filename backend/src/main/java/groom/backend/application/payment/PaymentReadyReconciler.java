@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 // READY 에 멈춘 결제의 안전망. confirm 이 READY + Outbox 를 남긴 뒤 컨슈머가 후처리를 끝내지 못하면(DLQ 로 간 레코드 · 오래 이어진
 // Kafka 장애 · 보상은 남겼는데 FAILED 기록이 유실) 결제는 Toss 승인만 된 채 주문도 환불도 없이 READY 로 남는다. 이를 되찾는다
 // 한 결제의 처리는 각자 짧은 트랜잭션(저장소 호출 · REQUIRES_NEW 서비스 메서드)이라 한 건의 실패가 다른 건을 롤백하지 않는다
-// shortcut: 인스턴스가 여럿이면 같은 결제를 동시에 대사할 수 있다(보상은 payment_id 유일 제약이 막고 재발행 횟수는 한 번 더 오를 수 있다), 다중 인스턴스 배포 때 분산 잠금을 둔다
+// 인스턴스가 여럿이어도 같은 결제를 동시에 대사하지 않는다 - findStaleReady 가 FOR UPDATE SKIP LOCKED 로 집는 즉시 updated_at 을 갱신해 다른 회차가 못 집는다
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -34,6 +34,7 @@ public class PaymentReadyReconciler {
     private final PaymentCompensationRepository paymentCompensationRepository;
     private final PaymentCompensationService paymentCompensationService;
     private final PaymentApplicationService paymentApplicationService;
+    private final FlashStockReservation flashStockReservation;
     private final ObjectMapper objectMapper;
 
     // 이만큼 READY 로 머문 결제만 본다. 확정 대기 상한(10초)보다 훨씬 길어야 대기 중인 요청의 결제를 건드리지 않는다
@@ -97,7 +98,7 @@ public class PaymentReadyReconciler {
         // ④ 재발행 상한에 닿았거나 outbox 행이 없다 - Toss 승인은 됐는데 후처리가 영영 안 끝난다. 환불 의도를 남기고 FAILED 로 닫는다
         log.error("[PAYMENT_READY_RECONCILE] branch=COMPENSATE, 후처리 미완료로 환불 의도 기록 - PaymentId: {}, OutboxExists: {}",
                 payment.getId(), outbox.isPresent());
-        // 순서: ① 보상 의도 기록(돈이 걸린 일) → ② Redis 선점 복원 → ③ FAILED 기록 (다른 실패 경로와 같다)
+        // 순서: ① 보상 의도 기록(돈이 걸린 일) → ② 원장 REVERSAL · Redis 선점 복원 → ③ FAILED 기록 (다른 실패 경로와 같다)
         paymentCompensationService.compensate(payment.getId(), payment.getPaymentKeyValue(), payment.getAmountValue(),
                 "대사: 후처리 미완료(READY 로 " + staleAfterMs + "ms 이상 머묾)");
         releaseReservation(payment, outbox);
@@ -105,28 +106,31 @@ public class PaymentReadyReconciler {
                 "대사: 후처리 미완료로 환불 처리");
     }
 
-    // confirmPayment 가 선점한 Redis 재고를 outbox payload 의 reservedItems 로 되돌린다. 복원하지 않으면 대사로 닫은 결제마다
-    // Redis 관문 재고만 영구히 줄어든다(DB 재고는 차감된 적이 없다). 실패는 환불 의도 기록과 FAILED 를 막지 않게 삼키고 로그만 남긴다
+    // 승인 트랜잭션이 남긴 원장 SALE 을 REVERSAL 로 되돌리고, outbox payload 의 reservedItems 로 Redis 선점도 되돌린다
+    // 되돌리지 않으면 대사로 닫은 결제마다 재고가 영구히 줄어든다(원장 SALE 이 적용 배치로 product.stock 에 반영된다)
+    // 원장 되돌림은 outbox 행이 없어도 한다(결제 id 로 SALE 을 찾는다). 실패는 환불 의도 기록과 FAILED 를 막지 않게 삼키고 로그만 남긴다
     private void releaseReservation(Payment payment, Optional<PaymentOutbox> outbox) {
-        if (outbox.isEmpty()) {
-            log.warn("[PAYMENT_READY_RECONCILE] no outbox row → Redis reservation unknown - PaymentId: {}", payment.getId());
-            return;
-        }
-        // findStaleReady 뒤 컨슈머가 같은 결제를 DONE 으로 끝냈을 수 있다 - 그 결제는 DB 재고가 이미 차감돼 선점분을 돌려주면
-        // Redis 관문 재고만 실제보다 커진다. 복원 직전 상태를 다시 읽어 READY 가 아니면 건드리지 않는다(보상은 SUPERSEDED 로 끝난다)
+        // findStaleReady 뒤 컨슈머가 같은 결제를 DONE 으로 끝냈을 수 있다 - 그 결제를 되돌리면 판매된 재고가 되살아난다
+        // 되돌림 직전 상태를 다시 읽어 READY 가 아니면 건드리지 않는다(보상은 SUPERSEDED 로 끝난다)
         PaymentStatus current = paymentRepository.findById(payment.getId()).map(Payment::getStatus).orElse(null);
         if (current != PaymentStatus.READY) {
             log.info("[PAYMENT_READY_RECONCILE] 복원 생략, 결제가 더는 READY 가 아님 - PaymentId: {}, Status: {}", payment.getId(), current);
             return;
         }
-        try {
-            PaymentApprovedEvent event = objectMapper.readValue(outbox.get().getPayload(), PaymentApprovedEvent.class);
-            if (event.reservedItems() != null) {
-                paymentApplicationService.releaseStock(event.reservedItems());
+        List<PaymentApprovedEvent.ReservedItem> items = List.of();
+        if (outbox.isPresent()) {
+            try {
+                PaymentApprovedEvent event = objectMapper.readValue(outbox.get().getPayload(), PaymentApprovedEvent.class);
+                if (event.reservedItems() != null) {
+                    items = event.reservedItems();
+                }
+            } catch (Exception e) {
+                log.error("[PAYMENT_READY_RECONCILE] payload 를 읽지 못해 Redis 복원 생략(StockReconciliationJob 이 되맞춰야 함) - PaymentId: {}, Error: {}",
+                        payment.getId(), e.getMessage(), e);
             }
-        } catch (Exception e) {
-            log.error("[PAYMENT_READY_RECONCILE] Redis 선점 복원 실패(StockReconciliationJob 이 되맞춰야 함) - PaymentId: {}, Error: {}",
-                    payment.getId(), e.getMessage(), e);
+        } else {
+            log.warn("[PAYMENT_READY_RECONCILE] no outbox row → Redis reservation unknown - PaymentId: {}", payment.getId());
         }
+        flashStockReservation.releaseAfterRecord(payment.getId(), items);
     }
 }

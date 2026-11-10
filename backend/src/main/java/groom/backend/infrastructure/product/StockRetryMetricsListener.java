@@ -26,10 +26,8 @@ public class StockRetryMetricsListener implements RetryListener {
 
     @Override
     public <T, E extends Throwable> void close(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
-        // 차감/증가 경로를 op 태그로 구분(@Retryable 메서드 라벨 기반).
-        String label = String.valueOf(context.getAttribute(RetryContext.NAME));
-        String op = label.contains("increase") ? "increase" : "decrease";
+        // 재시도 대상은 증가(복원) 경로뿐이다
         // 호출당 재시도 횟수를 기록 → 평균/분포 산출 가능.
-        meterRegistry.summary(SUMMARY_NAME, "op", op).record(context.getRetryCount());
+        meterRegistry.summary(SUMMARY_NAME, "op", "increase").record(context.getRetryCount());
     }
 }
