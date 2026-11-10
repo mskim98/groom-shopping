@@ -120,6 +120,22 @@ class CouponStreamAutoClaimTest {
     }
 
     @Test
+    @DisplayName("연속 두 번 부르면 유휴 항목 스캔은 한 번만 돌고 간격이 지나면 다시 돈다")
+    void pollCoupon_연속_두번이면_스캔은_한번이다() {
+        long before = consumer.claimScans();
+
+        consumer.pollCoupon(couponId);
+        consumer.pollCoupon(couponId);
+
+        // 시험 설정 claim-min-idle-ms = 200 이므로 기본 스캔 간격은 그 절반(100ms)이다
+        assertThat(consumer.claimScans() - before).isEqualTo(1L);
+        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            consumer.pollCoupon(couponId);
+            assertThat(consumer.claimScans() - before).isEqualTo(2L);
+        });
+    }
+
+    @Test
     @DisplayName("컨슈머 이름은 호스트 이름과 프로세스 번호로 만든다")
     void consumerName_호스트와_pid로_만든다() {
         assertThat(consumer.consumerName()).endsWith("-" + ProcessHandle.current().pid());
