@@ -58,7 +58,9 @@ public final class ProductListTestSupport {
 
     public static void dropFiller(JdbcTemplate jdbc, String prefix) {
         jdbc.update("DELETE FROM product WHERE name LIKE ?", prefix + "-%");
-        jdbc.execute("ANALYZE product");
+        // 지운 행의 흔적으로 표와 인덱스가 부풀면(40행짜리 인덱스가 2.6MB) 인덱스 읽기 비용이 커져 다른 시험의 EXPLAIN 이 달라진다
+        // 일반 VACUUM 은 인덱스를 줄이지 못하므로 FULL 로 표와 인덱스를 다시 쓴다
+        jdbc.execute("VACUUM (FULL, ANALYZE) product");
     }
 
     /**
