@@ -245,8 +245,15 @@ def collect_step(folder, target):
     for ep in k6.get("endpoints", {}).values():
         if ep.get("count", 0) == 0:
             ep["p95"] = ep["p99"] = None
+    try:
+        cond = json.loads(read(os.path.join(folder, "condition.json"), "{}") or "{}")
+    except ValueError:
+        cond = {}
     step = {
         "target_rps": target,
+        "threads": cond.get("threads"),
+        "leak_detection": cond.get("leak_detection"),
+        "condition": cond,
         "achieved_rps": k6.get("achieved_rps"),
         "dropped_iterations": k6.get("dropped_iterations"),
         "iterations": k6.get("iterations"),
