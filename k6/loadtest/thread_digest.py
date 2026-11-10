@@ -5,7 +5,7 @@ usage: thread_digest.py <threads-backend*.txt>...
 입력 = 덤프가 여러 개 이어진 파일(컨테이너 로그에서 잘라낸 것이면 사이사이 로그 줄이 섞여도 된다). 파일마다 `Full thread dump` 줄로 덤프를 나눈다
 대상 = 이름이 `http-nio-` 로 시작하고 스택에 `TransactionInterceptor` 나 `TransactionAspectSupport` 프레임이 있는 스레드(= 스프링 트랜잭션 안에서 요청을 처리하는 스레드)
 기다림 종류 = 가장 안쪽 프레임부터 첫 `groom.backend` · 트랜잭션 프레임 앞까지(= 라이브러리 · JDK 구간)를 위에서부터 처음 맞는 규칙으로 가른다
-Hikari pool wait(커넥션 대기 - 이 스레드는 아직 커넥션이 없다) · monitor wait · logging · JDBC socket read · LockSupport.park · application frame(구간이 비어 있음) · other
+Hikari pool wait(커넥션 대기 - 이 스레드는 아직 커넥션이 없다) · monitor wait · logging · Thread.sleep · JDBC socket read · LockSupport.park · application frame(구간이 비어 있음) · other
 묶음 두 가지: 스레드 상태(첫 낱말) · `종류 | 가장 안쪽 프레임 @ 처음 만나는 groom.backend 프레임`
 한계: 덤프 한 장은 한 순간이라 기다림이 얼마나 이어졌는지는 모른다 - 같은 스레드가 연속한 덤프에서 같은 곳에 있는지는 덤프 간 비교로만 본다
 표준 라이브러리만 쓴다
@@ -25,7 +25,8 @@ TX = re.compile(r"TransactionInterceptor|TransactionAspectSupport")
 KINDS = (
     ("Hikari pool wait", re.compile(r"com\.zaxxer\.hikari\.(pool\.HikariPool\.getConnection|util\.ConcurrentBag\.borrow)")),
     ("logging", re.compile(r"ch\.qos\.logback\.|org\.slf4j\.|org\.apache\.logging\.log4j\.")),
-    ("JDBC socket read", re.compile(r"(SocketDispatcher\.read|NioSocketImpl\.(read|park)|SocketInputStream\.socketRead|VisibleBufferedInputStream\.)")),
+    ("Thread.sleep", re.compile(r"java\.lang\.Thread\.sleep")),
+    ("JDBC socket read", re.compile(r"(SocketDispatcher\.read|NioSocketImpl\.(read|park)|sun\.nio\.ch\.Net\.poll|SocketInputStream\.socketRead|VisibleBufferedInputStream\.)")),
     ("LockSupport.park", re.compile(r"(LockSupport\.park|Unsafe\.park)")),
 )
 
@@ -73,7 +74,7 @@ def _inner_span(frames):
 
 def kind_of(t):
     span = _inner_span(t["frames"])
-    if t["state"] == "BLOCKED" or (span and span[0].removeprefix("java.base/").startswith("java.lang.Object.wait")):
+    if t["state"] == "BLOCKED" or (span and "java.lang.Object.wait" in span[0]):
         return "monitor wait"
     if not span:
         return "application frame"
