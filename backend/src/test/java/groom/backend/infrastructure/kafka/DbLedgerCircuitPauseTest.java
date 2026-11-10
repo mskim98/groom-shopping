@@ -79,6 +79,8 @@ class DbLedgerCircuitPauseTest {
     @BeforeEach
     void setUp() {
         broker = new EmbeddedKafkaKraftBroker(1, 1, "payment-events");
+        // 기본값이면 시스템 속성 spring.kafka.bootstrap-servers 에 내장 브로커 주소를 적어, 뒤에 뜨는 다른 시험의 컨텍스트가 이미 내려간 이 브로커로 붙는다
+        broker.brokerListProperty("db-ledger-test.kafka.brokers");
         broker.afterPropertiesSet();
 
         CircuitBreakerRegistry registry = CircuitBreakerRegistry.ofDefaults();
