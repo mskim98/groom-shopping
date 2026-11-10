@@ -11,8 +11,9 @@
 #   down                      스택의 컨테이너를 멈추고 지운다 - 볼륨은 지우지 않는다
 # tiny · step 은 <out-dir> 자체에 진단 파일도 쓴다(같은 <out-dir> 로 두 단계를 돌리면 뒤의 단계가 덮어쓴다): pg-activity.tsv(pg_stat_activity 1 초 표본) ·
 #   backend<N>.log(단계 구간의 백엔드 로그 전체) · leak-digest.txt · pg-digest.txt(leak_digest.py · pg_activity_digest.py 의 요약)
+#   THREAD_DUMP_EVERY_S 가 0 보다 크면 유지 구간 동안 그 간격(초)마다 백엔드마다 SIGQUIT 를 보내 JVM 이 컨테이너 로그에 찍은 스레드 덤프를 threads-backend<N>.txt 로 자르고 thread-digest.txt 를 쓴다(thread_digest.py)
 # 지우는 것: down 이 이 프로젝트의 컨테이너와 네트워크만. 볼륨 · dev-* 컨테이너 · 다른 DB 는 건드리지 않는다. seed 는 shop_seed_template · shop_seed_m1 두 DB 를 다시 만든다
-# 환경 변수(기본값): LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
+# 환경 변수(기본값): LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
@@ -141,7 +142,7 @@ sample_prom() {
   done
 }
 
-# pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션을 1 초마다 읽는다. 컨테이너 안에서 psql 연결 하나를 열어 두고 \watch 1 로 같은 문장을 되풀이한다
+# pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션(유휴라도 xact_start 가 찍힌 것은 포함)을 1 초마다 읽는다. 컨테이너 안에서 psql 연결 하나를 열어 두고 \watch 1 로 같은 문장을 되풀이한다
 # (매번 docker exec · psql 을 새로 치면 CPU 가 찬 때 표본 간격이 1.3 초 넘게 늘어난다 - 첫 시험에서 중앙값 1.32 초 · 최대 4.6 초). 표본 하나의 비용은
 # pg_stat_activity 한 번 읽기(수 ms)와 측정 DB 에 붙은 연결 1 개이고, 활동 행이 없는 시각에도 빈 행 하나를 남겨 표본 시각이 끊기지 않게 한다
 # 연결은 application_name r120-pg-sample 로 구분하고 stop_pg_sample 이 pg_terminate_backend 로 끊는다(docker exec 를 죽여도 컨테이너 안 psql 은 남는다)
@@ -149,7 +150,7 @@ PG_SAMPLE_SQL="WITH n AS (SELECT statement_timestamp() AS t)
 SELECT to_char(n.t AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), coalesce(a.pid::text, ''), coalesce(a.state, ''), coalesce(a.wait_event_type, ''), coalesce(a.wait_event, ''),
   coalesce(round(extract(epoch FROM n.t - a.xact_start) * 1000)::bigint::text, ''), coalesce(round(extract(epoch FROM n.t - a.query_start) * 1000)::bigint::text, ''),
   CASE WHEN a.pid IS NULL THEN '' ELSE pg_blocking_pids(a.pid)::text END, coalesce(left(regexp_replace(a.query, '\\s+', ' ', 'g'), 200), '')
-FROM n LEFT JOIN pg_stat_activity a ON a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.backend_type = 'client backend' AND a.state IS DISTINCT FROM 'idle'"
+FROM n LEFT JOIN pg_stat_activity a ON a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.backend_type = 'client backend' AND (a.state IS DISTINCT FROM 'idle' OR a.xact_start IS NOT NULL)"
 
 sample_pg() { # 출력 폴더
   printf 'sample_time\tpid\tstate\twait_event_type\twait_event\txact_age_ms\tquery_age_ms\tblocking_pids\tquery\n' > "$1/pg-activity.tsv"
@@ -157,6 +158,30 @@ sample_pg() { # 출력 폴더
     printf "%s\n\\\\watch i=1\n" "$SQL" | psql -U "'"$SEED_PG_USER"'" -d '"$SEED_DB"' -X -q -At -F "$(printf "\t")"' >> "$1/pg-activity.tsv" 2> /dev/null || true
 }
 stop_pg_sample() { psql_db postgres -Atc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'r120-pg-sample'" > /dev/null 2>&1 || true; }
+
+# 유지 구간 동안 every 초마다 백엔드마다 SIGQUIT 를 보낸다 - JVM 이 멈추지 않고 전체 스레드 덤프를 표준 출력(컨테이너 로그)에 찍는다
+# k6 의 준비 단계(setup, 로그인 천 건)가 끝난 줄이 k6 로그에 찍힌 뒤 램프 초를 기다려 유지 구간에 맞춘다
+# 부하 중에는 docker kill 한 번이 2 초 넘게 걸려(첫 실행: 덤프 간격 3~4 초, 백엔드당 15 장) 보내는 일을 기다리지 않고 시각표(시작 + n x every 초)대로 백그라운드로 보낸다
+sample_threads() { # 간격 초 · 램프 초 · 유지 초 · k6 로그
+  local every="$1" t0 end n=0 d b waited=0
+  until grep -q 'setup:' "$4" 2> /dev/null || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
+  sleep "$2"
+  t0="$(date +%s)"; end=$((t0 + $3))
+  while [ "$(date +%s)" -lt "$end" ]; do
+    for b in $BACKENDS; do docker kill --signal=QUIT "${PROJECT}-$b-1" > /dev/null 2>&1 & done
+    n=$((n + 1)); d=$((t0 + n * every - $(date +%s)))
+    [ "$d" -gt 0 ] && sleep "$d"
+  done
+  wait || true
+  return 0
+}
+
+# 컨테이너 로그를 따라가며 스레드 덤프만 파일에 쓴다 - `Full thread dump` 줄부터 `JNI global refs` 줄까지(그 뒤의 Heap 요약은 버린다)
+# 단계가 끝난 뒤 docker logs 로 자르지 않는 이유: Docker 로그 드라이버(local)는 컨테이너당 100 MB(20 MB x 5)만 남겨 덤프 한 장이 4 MB 넘는 부하 중에는 최근 15 장만 남는다(첫 두 실행)
+follow_thread_dumps() { # 시작 시각 · 컨테이너 · 출력 파일
+  docker logs -f --since "$1" "$2" 2>&1 | awk '/Full thread dump/ {on = 1} on {print} /^JNI global refs/ {on = 0}' > "$3"
+}
+stop_follow_thread_dumps() { pkill -f "docker logs -f --since .* ${PROJECT}-" 2> /dev/null || true; sleep 1; }
 
 # 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
 sample_k6_cpu() { # 폴더 · k6 pid
@@ -184,7 +209,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   before_lines="$(docker exec nginx sh -c "wc -l < $NGINX_LOG" 2> /dev/null | tr -d ' ' || true)"
   before_lines="${before_lines:-0}"
   echo "$before_lines" > "$dir/nginx_lines_before.txt"
-  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"; : > "$dir/k6cpu.tsv"
+  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"; : > "$dir/k6cpu.tsv"; : > "$dir/k6.log"
   db_now > "$dir/db_window_start.txt"
   start="$(date -u +%FT%TZ)"
   echo "$start" > "$dir/start.txt"
@@ -193,7 +218,12 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_stats "$dir" & local p2=$!
   sample_prom "$dir" & local p3=$!
   sample_pg "$out" & local p5=$!
-  trap 'stop_pg_sample; kill $p1 $p2 $p3 2> /dev/null || true' EXIT
+  local p6=""
+  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then
+    for b in $BACKENDS; do follow_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt" & done
+    sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!
+  fi
+  trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
 
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
   # 종료 코드는 임계값 실패 등 k6 자체 판정이다 - 측정값은 요약 파일에서 읽으므로 여기서 멈추지 않는다
@@ -213,9 +243,10 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   echo "lag_wait_after_s=$(wait_lag_zero)" >> "$dir/wait.txt"
   echo "lag_after=$(lag_total)" >> "$dir/wait.txt"
   sleep 6
+  stop_follow_thread_dumps
   stop_pg_sample
-  kill $p1 $p2 $p3 2> /dev/null || true
-  wait $p1 $p2 $p3 $p5 2> /dev/null || true
+  kill $p1 $p2 $p3 $p6 2> /dev/null || true
+  wait $p1 $p2 $p3 $p5 $p6 2> /dev/null || true
   trap - EXIT
 
   end_offsets > "$dir/offsets_after.txt"
@@ -229,6 +260,9 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   for b in $BACKENDS; do docker logs --since "$start" "${PROJECT}-$b-1" > "$out/$b.log" 2>&1 || true; done
   python3 -B k6/loadtest/leak_digest.py --threshold-ms "${LEAK_THRESHOLD_MS:-2000}" "$out"/backend*.log > "$out/leak-digest.txt" || true
   python3 -B k6/loadtest/pg_activity_digest.py "$out/pg-activity.tsv" > "$out/pg-digest.txt" || true
+  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then
+    python3 -B k6/loadtest/thread_digest.py "$out"/threads-backend*.txt > "$out/thread-digest.txt" || true
+  fi
   sleep 1
   docker exec nginx tail -n +"$((before_lines + 1))" "$NGINX_LOG" > "$dir/nginx.log"
   echo "== $name done: $(tail -1 "$dir/k6.log")"
