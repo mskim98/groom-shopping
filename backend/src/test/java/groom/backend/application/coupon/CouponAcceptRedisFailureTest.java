@@ -1,79 +1,58 @@
 package groom.backend.application.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import groom.backend.common.exception.BusinessException;
-import groom.backend.common.exception.ErrorCode;
-import groom.backend.common.exception.GlobalExceptionHandler;
-import java.time.Duration;
+import groom.backend.application.coupon.strategy.CouponIssueResult;
+import groom.backend.application.coupon.strategy.DbLockIssueStrategy;
+import groom.backend.domain.coupon.repository.CouponRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.redisson.api.RedissonClient;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.http.HttpStatus;
-import org.springframework.kafka.core.KafkaTemplate;
 
 /**
- * 접수 경로의 Redis 장애는 500 이 아니라 503 이다
+ * 접수 경로의 Redis 오류 처리 (Redis 는 가짜)
  *
- * <p>500 은 "서버가 고장났다" 로 읽혀 클라이언트가 재시도하지 않고, 503 은 잠시 뒤 다시 시도하라는 뜻이다
- * 재고 판정을 Redis 한 곳에서 하므로 Redis 가 끊기면 판정 자체가 불가능하다 - 통과시킬 수도 없다
+ * <p>접수 스크립트의 연결 실패 · 시간 초과는 503 으로 바뀌지 않고 DB 경로로 넘어간다.
+ * 연속 실패가 임계를 넘으면 {@code redis-coupon} 회로가 열려 이후 요청은 Redis 를 부르지 않는다
  */
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("쿠폰 접수 Redis 장애")
 class CouponAcceptRedisFailureTest {
 
-    @Mock
-    private groom.backend.domain.coupon.repository.CouponRepository couponRepository;
-    @Mock
-    private groom.backend.domain.coupon.repository.CouponIssueRepository couponIssueRepository;
-    @Mock
-    private CouponIssueBatchWriter couponIssueBatchWriter;
-    @Mock
-    private CouponStockRedisRepository couponStockRedisRepository;
-    @Mock
-    private RedisTemplate<String, String> redisTemplate;
-    @Mock
-    private ValueOperations<String, String> valueOps;
-    @Mock
-    private KafkaTemplate<String, String> couponIssueKafkaTemplate;
-    @Mock
-    private RedissonClient redissonClient;
-    @Mock
-    private CouponStockRecoveryService couponStockRecoveryService;
+    private final CouponRepository couponRepository = mock(CouponRepository.class);
+    @SuppressWarnings("unchecked")
+    private final RedisTemplate<String, String> redisTemplate = mock(RedisTemplate.class);
+    private final CouponStockRedisRepository stockRepository = mock(CouponStockRedisRepository.class);
+    private final CouponStockRecoveryService recovery = mock(CouponStockRecoveryService.class);
+    private final DbLockIssueStrategy dbLock = mock(DbLockIssueStrategy.class);
 
+    private CouponRedisCircuit circuit;
     private CouponAsyncIssueService service;
 
     @BeforeEach
     void setUp() {
-        service = new CouponAsyncIssueService(
-                couponRepository, couponIssueRepository, couponIssueBatchWriter,
-                couponStockRedisRepository, redisTemplate, couponIssueKafkaTemplate,
-                new ObjectMapper(), redissonClient, couponStockRecoveryService);
+        // 최소 호출 수 2 · 실패율 50% - 두 번 실패하면 열린다
+        circuit = new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 2, 2, 60_000L);
+        service = new CouponAsyncIssueService(couponRepository, redisTemplate, stockRepository, recovery, dbLock,
+                circuit);
+        given(dbLock.issueFor(anyLong(), anyLong())).willReturn(CouponIssueResult.success(1L));
     }
 
-    static Stream<Throwable> redisFailures() {
+    static Stream<RuntimeException> redisFailures() {
         return Stream.of(
                 new RedisConnectionFailureException("Unable to connect to Redis"),
                 new QueryTimeoutException("Redis command timed out"));
@@ -81,52 +60,31 @@ class CouponAcceptRedisFailureTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("redisFailures")
-    @DisplayName("게이트의 Redis 오류는 COUPON_ISSUE_UNAVAILABLE(503) 으로 바뀐다")
-    void enqueue_Redis오류는_503으로_바뀐다(Throwable failure) {
-        given(couponStockRedisRepository.tryIssue(1L, 100L)).willThrow((RuntimeException) failure);
+    @DisplayName("접수 스크립트의 Redis 오류는 503 이 아니라 DB 경로 발급으로 이어진다")
+    void enqueue_Redis오류는_DB경로로_넘어간다(RuntimeException failure) {
+        given(stockRepository.enqueue(eq(1L), eq(100L),
+                anyString())).willThrow(failure);
 
-        assertThatThrownBy(() -> service.enqueue(1L, 100L))
-                .isInstanceOfSatisfying(BusinessException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
-                    assertThat(e.getErrorCode().getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-                    // 전역 핸들러를 거치면 실제 응답 코드가 503 이다
-                    assertThat(new GlobalExceptionHandler().handleBusinessException(e).getStatusCode())
-                            .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-                });
-        // 판정하지 못한 요청은 브로커에 싣지 않는다
-        verify(couponIssueKafkaTemplate, never()).send(anyString(), anyString(), anyString());
+        CouponIssueResult result = service.enqueue(1L, 100L);
+
+        assertThat(result.status()).isEqualTo(CouponIssueResult.Status.SUCCESS);
+        verify(dbLock).issueFor(1L, 100L);
     }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("redisFailures")
-    @DisplayName("게이트를 통과한 뒤 상태 키 기록이 Redis 오류로 실패하면 예약을 반납하고 503 으로 바꾼다")
-    void enqueue_게이트_통과_뒤_상태_기록_실패는_반납하고_503이다(Throwable failure) {
-        given(couponStockRedisRepository.tryIssue(1L, 100L))
-                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
-        given(redisTemplate.opsForValue()).willReturn(valueOps);
-        doThrow((RuntimeException) failure).when(valueOps).set(anyString(), anyString(), any(Duration.class));
+    @Test
+    @DisplayName("연속 실패로 회로가 열리면 이후 요청은 Redis 를 부르지 않고 DB 경로로 간다")
+    void enqueue_회로가_열리면_redis를_건너뛴다() {
+        given(stockRepository.enqueue(eq(1L), eq(100L),
+                anyString())).willThrow(new RedisConnectionFailureException("down"));
 
-        assertThatThrownBy(() -> service.enqueue(1L, 100L))
-                .isInstanceOfSatisfying(BusinessException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.COUPON_ISSUE_UNAVAILABLE));
+        service.enqueue(1L, 100L);
+        service.enqueue(1L, 100L);
+        assertThat(circuit.breaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        service.enqueue(1L, 100L);
 
-        // 게이트가 이미 재고를 깎았다 - 되돌리지 않으면 그 자리는 아무도 받지 못한 채 잠긴다
-        verify(couponStockRedisRepository, times(1)).rollbackIssue(1L, 100L);
-        verify(couponIssueKafkaTemplate, never()).send(anyString(), anyString(), anyString());
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("redisFailures")
-    @DisplayName("반납마저 Redis 오류로 실패해도 예외는 503 이다")
-    void enqueue_반납도_실패하면_그대로_503이다(Throwable failure) {
-        given(couponStockRedisRepository.tryIssue(1L, 100L))
-                .willReturn(CouponStockRedisRepository.IssueResult.SUCCESS);
-        given(redisTemplate.opsForValue()).willReturn(valueOps);
-        doThrow((RuntimeException) failure).when(valueOps).set(anyString(), anyString(), any(Duration.class));
-        doThrow((RuntimeException) failure).when(couponStockRedisRepository).rollbackIssue(1L, 100L);
-
-        assertThatThrownBy(() -> service.enqueue(1L, 100L))
-                .isInstanceOfSatisfying(BusinessException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.COUPON_ISSUE_UNAVAILABLE));
+        // 세 번째 요청은 Redis 를 부르지 않았다 - 호출은 앞의 두 번뿐이다
+        verify(stockRepository, times(2)).enqueue(eq(1L),
+                eq(100L), anyString());
+        verify(dbLock, times(3)).issueFor(1L, 100L);
     }
 }

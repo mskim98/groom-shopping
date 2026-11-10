@@ -3,7 +3,6 @@ package groom.backend.application.coupon;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.kafka.KafkaLagReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
@@ -57,8 +56,6 @@ public class CouponStockReconciliationService {
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
     private final RedissonClient redissonClient;
-    // 고아 판정의 전제 - 요청 토픽에 소비되지 않은 요청이 없어야 "명단에만 있는 예약" 이 정말 고아다
-    private final KafkaLagReader kafkaLagReader;
     private final Counter correctedCounter;
     private final Counter loosenedCounter;
     private final Counter orphanCounter;
@@ -71,13 +68,11 @@ public class CouponStockReconciliationService {
                                             CouponIssueRepository couponIssueRepository,
                                             CouponStockRedisRepository couponStockRedisRepository,
                                             RedissonClient redissonClient,
-                                            KafkaLagReader kafkaLagReader,
                                             MeterRegistry meterRegistry) {
         this.couponRepository = couponRepository;
         this.couponIssueRepository = couponIssueRepository;
         this.couponStockRedisRepository = couponStockRedisRepository;
         this.redissonClient = redissonClient;
-        this.kafkaLagReader = kafkaLagReader;
         this.correctedCounter = Counter.builder("coupon.stock.reconcile.corrected")
                 .description("게이트가 좁아져 재고를 되돌린 횟수").register(meterRegistry);
         this.loosenedCounter = Counter.builder("coupon.stock.reconcile.loosened")
@@ -92,7 +87,7 @@ public class CouponStockReconciliationService {
     /**
      * 주기 실행 진입점. 기본 10분마다({@code coupon.reconcile.fixed-delay}, ISO-8601 기간) 돈다
      * 종료된 쿠폰만 대조하므로 진행 중 요청의 자리를 건드리지 않는다 - 진행 중 쿠폰은 {@link #reconcileCoupon} 이
-     * 처음에 걸러 내고, 종료된 쿠폰의 고아 예약 회수는 요청 토픽의 컨슈머 랙을 가장 먼저 읽어 0 일 때만 한다
+     * 처음에 걸러 내고, 종료된 쿠폰의 고아 예약 회수는 요청 스트림의 길이를 가장 먼저 읽어 0 일 때만 한다
      */
     @Scheduled(fixedDelayString = "${coupon.reconcile.fixed-delay:PT10M}",
             initialDelayString = "${coupon.reconcile.initial-delay-ms:60000}")
@@ -132,17 +127,13 @@ public class CouponStockReconciliationService {
     // 스캔 전체를 한 트랜잭션으로 묶지 않는다 - 락 보유 구간만큼 DB 커넥션을 점유하게 되고,
     // 이 배치는 페이지마다 읽고 Redis 를 고치는 작업이라 하나의 일관된 스냅숏이 필요하지도 않다
     public void reconcileAll() {
-        // 랙은 토픽 · 그룹 단위라 쿠폰마다 읽을 이유가 없다. lagOf 는 호출마다 AdminClient 를 새로 만들고 5 초 제한을 건다
-        // 종료된 쿠폰은 새 게이트 통과가 없으므로 이 실행에서 처음 필요할 때 읽은 값이 실행 내내 유효하다
-        // 값이 0 이 아니면 이번 실행의 모든 쿠폰이 회수를 건너뛰고 다음 주기가 다시 읽는다
-        RunLag runLag = new RunLag();
         long lastId = 0L;
         int scanned = 0;
         List<Coupon> page;
         do {
             page = couponRepository.findAllByIdGreaterThanOrderById(lastId, PageRequest.of(0, batchSize));
             for (Coupon coupon : page) {
-                ReconcileReport report = reconcileCoupon(coupon, runLag);
+                ReconcileReport report = reconcileCoupon(coupon);
                 if (report != null) {
                     scanned++;
                 }
@@ -161,10 +152,6 @@ public class CouponStockReconciliationService {
      * 그래서 이 식은 <b>진행 중인 재고를 되살리지 않는다</b>
      */
     public ReconcileReport reconcileCoupon(Coupon coupon) {
-        return reconcileCoupon(coupon, new RunLag());
-    }
-
-    private ReconcileReport reconcileCoupon(Coupon coupon, RunLag runLag) {
         Long couponId = coupon.getId();
         if (!isFinished(coupon)) {
             // 진행 중이면 손대지 않는다. 게이트를 통과했는데 아직 저장되지 않은 건과
@@ -182,7 +169,7 @@ public class CouponStockReconciliationService {
         long reserved = couponStockRedisRepository.countIssuedUsers(couponId);
         long expected = dbQuantity + confirmed - reserved;
 
-        int orphansRemoved = removeOrphanReservations(couponId, runLag);
+        int orphansRemoved = removeOrphanReservations(couponId);
         if (orphansRemoved > 0) {
             // 고아를 뺐으므로 기대값을 다시 계산한다
             reserved -= orphansRemoved;
@@ -243,15 +230,17 @@ public class CouponStockReconciliationService {
                 || (coupon.getExpireDate() != null && coupon.getExpireDate().isBefore(LocalDate.now()));
     }
 
-    private int removeOrphanReservations(Long couponId, RunLag runLag) {
-        // 랙을 명단과 확정 행보다 먼저 읽는다. 명단과 확정 행을 읽은 뒤에 읽으면, 첫 읽기 때 랙에 있던 요청이 그 사이 커밋되고
-        // 랙이 0 으로 읽혀 "확정 행 목록에 없는 사용자" 가 방금 확정된 사용자인 채 명단에서 지워진다
+    private int removeOrphanReservations(Long couponId) {
+        // 스트림 길이를 명단과 확정 행보다 먼저 읽는다. 명단과 확정 행을 읽은 뒤에 읽으면, 첫 읽기 때 스트림에 있던 요청이 그 사이 커밋되고
+        // 길이가 0 으로 읽혀 "확정 행 목록에 없는 사용자" 가 방금 확정된 사용자인 채 명단에서 지워진다
         // 그러면 게이트가 그를 다시 통과시켜 같은 쿠폰을 한 번 더 받고 DB 유니크가 막으면서 재고가 +1 된다
-        // 랙이 0 이 된 뒤에 읽은 확정 행에는 그 시점까지 커밋된 요청이 모두 들어 있다
-        // 랙을 읽지 못한 경우(-1)도 같다. 건너뛴 회수는 다음 주기 대조가 랙이 0 일 때 한다
-        long lag = runLag.get();
-        if (lag != 0) {
-            runLag.warnSkippedOnce(couponId);
+        // 길이가 0 이 된 뒤에 읽은 확정 행에는 그 시점까지 커밋된 요청이 모두 들어 있다
+        // 확정된 항목은 컨슈머가 ack 와 함께 스트림에서 지우므로 길이가 곧 확정 대기분이다
+        // 건너뛴 회수는 다음 주기 대조가 스트림이 비었을 때 한다
+        long backlog = couponStockRedisRepository.streamLength(couponId);
+        if (backlog != 0) {
+            log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_BACKLOG] couponId={}, backlog={} - 고아 예약 회수를 건너뛴다",
+                    couponId, backlog);
             return 0;
         }
         Set<String> reservedUsers = couponStockRedisRepository.getIssuedUsers(couponId);
@@ -276,28 +265,6 @@ public class CouponStockReconciliationService {
         couponStockRedisRepository.removeIssuedUsers(couponId, orphans);
         orphanCounter.increment(orphans.size());
         return orphans.size();
-    }
-
-    // 한 번의 대조 실행이 공유하는 랙 값. 처음 필요할 때 한 번 읽고, 회수를 건너뛴 사실은 실행당 한 줄만 남긴다
-    private final class RunLag {
-        private Long value;
-        private boolean warned;
-
-        long get() {
-            if (value == null) {
-                value = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC,
-                        CouponAsyncIssueService.CONSUMER_GROUP);
-            }
-            return value;
-        }
-
-        void warnSkippedOnce(Long firstCouponId) {
-            if (!warned) {
-                warned = true;
-                log.warn("[COUPON_RECONCILE_ORPHAN_SKIPPED_LAG] lag={}, firstCouponId={} - 이번 실행의 고아 예약 회수를 건너뛴다",
-                        value, firstCouponId);
-            }
-        }
     }
 
     /** 한 쿠폰 대조 결과. 테스트와 로그 분석에 쓴다 */

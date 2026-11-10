@@ -3,7 +3,6 @@ package groom.backend.application.coupon;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.kafka.KafkaLagReader;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
@@ -12,18 +11,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /**
- * Redis 소실 복구 - 발급 이력과 카프카 랙으로 재고를 되세운다
+ * Redis 소실 복구 - 발급 이력으로 재고를 되세운다
  *
- * <p>Redis 가 통째로 사라지면 재고 키와 발급자 명단이 함께 없어진다
- * 이때 발급 이력만으로 재고를 복원하면 값이 실제보다 많아진다 - 그 오차를 랙으로 메운다
+ * <p>Redis 가 통째로 사라지면 재고 키 · 발급자 명단 · 요청 스트림이 함께 없어진다
+ * 복원값은 {@code quantity − DB 발급 수} 다. 대기 중이던 요청은 같은 Redis 의 스트림에 있다가 재고 키와 함께 사라졌으므로
+ * 따로 뺄 항목이 없고, 그 요청의 자리는 다시 열린다(클라이언트의 상태 키도 함께 사라져 UNKNOWN 으로 보인다)
  *
  * <p>세 겹으로 막는다
  * <ol>
  *   <li>AOF {@code everysec} 로 소실 자체를 최대 1 초치로 줄인다</li>
- *   <li>그래도 사라지면 여기서 랙을 빼서 복원한다</li>
- *   <li>그래도 넘으면 초과 발급 경보가 그 쿠폰의 접수를 막는다</li>
+ *   <li>그래도 사라지면 여기서 DB 발급 수로 복원한다</li>
+ *   <li>복원 뒤 새 접수와 DB 경로 · 스트림 컨슈머의 수량 상한이 {@code quantity} 를 넘는 확정을 막는다</li>
  * </ol>
- * 각 층이 앞 층을 대신하지 않고 뒤를 받친다
  *
  * <p>복구가 도는 동안 접수를 받지 않는다. 재고를 세우는 중에 요청을 받으면
  * 판정 근거가 아직 없는 상태에서 통과 여부를 정하게 된다
@@ -38,7 +37,6 @@ public class CouponStockRecoveryService {
     private final CouponRepository couponRepository;
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository couponStockRedisRepository;
-    private final KafkaLagReader kafkaLagReader;
 
     // 접수 경로가 읽는다. 복구 중에는 게이트를 돌리지 않고 503 으로 돌려보낸다
     private final AtomicBoolean recovering = new AtomicBoolean(false);
@@ -58,7 +56,7 @@ public class CouponStockRecoveryService {
      * 재고 키가 없는 활성 쿠폰이 하나라도 있으면 {@link #recoverAll()} 을 돌린다
      *
      * <p>호출처는 부팅 워밍업과 헬스 체크다. Redis 가 비워진 뒤 재기동 없이도 복구가 돌게 하려는 것이다
-     * 키가 모두 있으면 랙도 읽지 않는다 - 헬스 체크마다 Kafka 관리 클라이언트를 만들 이유가 없다
+     * 키가 모두 있으면 DB 발급 수도 세지 않는다 - 헬스 체크마다 쿠폰 전체의 COUNT 를 돌릴 이유가 없다
      *
      * @return 복구를 돌렸으면 true
      */
@@ -69,7 +67,7 @@ public class CouponStockRecoveryService {
             return false;
         }
         recoverAll();
-        // 랙을 읽지 못해 복원이 멈췄다면 키는 여전히 없다 - 다음 검사가 다시 시도할 때까지 그 사실을 남긴다
+        // 복구가 예외로 끝났다면 키는 여전히 없다 - 다음 검사가 다시 시도할 때까지 그 사실을 남긴다
         stockMissing.set(hasActiveCouponWithoutStock());
         return true;
     }
@@ -101,27 +99,19 @@ public class CouponStockRecoveryService {
             return;
         }
         try {
-            long lag = kafkaLagReader.lagOf(CouponAsyncIssueService.REQUEST_TOPIC,
-                    CouponAsyncIssueService.CONSUMER_GROUP);
-            if (lag < 0) {
-                // 랙을 못 읽었다. 0 으로 치고 복원하면 비행 중인 건수만큼 재고가 많아진다
-                // 재고가 많아지는 것은 곧 초과 발급이므로, 복원하지 않고 멈춘 채 사람을 부른다
-                log.error("[COUPON_RECOVERY_ABORTED] 랙을 읽지 못해 복원값을 계산할 수 없다");
-                return;
-            }
             long lastId = 0L;
             int recovered = 0;
             List<Coupon> page;
             do {
                 page = couponRepository.findActiveByIdGreaterThan(lastId, PageRequest.of(0, PAGE_SIZE));
                 for (Coupon coupon : page) {
-                    if (recoverOne(coupon, lag)) {
+                    if (recoverOne(coupon)) {
                         recovered++;
                     }
                     lastId = coupon.getId();
                 }
             } while (page.size() == PAGE_SIZE);
-            log.info("[COUPON_RECOVERY_DONE] 복원 {}건 (lag={})", recovered, lag);
+            log.info("[COUPON_RECOVERY_DONE] 복원 {}건", recovered);
         } finally {
             recovering.set(false);
         }
@@ -130,7 +120,7 @@ public class CouponStockRecoveryService {
     /**
      * @return 실제로 심었으면 true
      */
-    private boolean recoverOne(Coupon coupon, long lag) {
+    private boolean recoverOne(Coupon coupon) {
         Long couponId = coupon.getId();
         if (couponStockRedisRepository.getStock(couponId) != null) {
             // 살아 있는 카운터다. 덮으면 게이트 통과분이 되살아난다
@@ -138,12 +128,12 @@ public class CouponStockRecoveryService {
         }
         long quantity = coupon.getQuantity() == null ? 0L : coupon.getQuantity();
         long confirmed = couponIssueRepository.countByCoupon_Id(couponId);
-        long remaining = quantity - confirmed - lag;
+        long remaining = quantity - confirmed;
 
         if (remaining < 0) {
             // 이미 넘었다. 0 으로 막고 알린다 - 되돌리는 것은 사람이 정할 문제다
-            log.error("[COUPON_OVER_ISSUED_ON_RECOVERY] couponId={}, quantity={}, confirmed={}, lag={}",
-                    couponId, quantity, confirmed, lag);
+            log.error("[COUPON_OVER_ISSUED_ON_RECOVERY] couponId={}, quantity={}, confirmed={}",
+                    couponId, quantity, confirmed);
             remaining = 0;
         }
         // 명단이 먼저다. 재고 키가 먼저 생기면 명단이 비어 있는 동안 이미 받은 사용자가 게이트를 다시 통과한다
@@ -152,8 +142,8 @@ public class CouponStockRecoveryService {
                 couponIssueRepository.findUserIdsByCouponId(couponId));
         boolean planted = couponStockRedisRepository.initStockIfAbsent(couponId, remaining);
         if (planted) {
-            log.warn("[COUPON_STOCK_RECOVERED] couponId={}, remaining={}, confirmed={}, lag={}",
-                    couponId, remaining, confirmed, lag);
+            log.warn("[COUPON_STOCK_RECOVERED] couponId={}, remaining={}, confirmed={}",
+                    couponId, remaining, confirmed);
         }
         return planted;
     }

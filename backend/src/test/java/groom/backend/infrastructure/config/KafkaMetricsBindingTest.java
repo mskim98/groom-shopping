@@ -45,7 +45,7 @@ class KafkaMetricsBindingTest {
         TestPropertyValues.of("spring.kafka.bootstrap-servers=localhost:9094").applyTo(context);
         context.registerBean(MeterRegistry.class, () -> new SimpleMeterRegistry());
         context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
-        context.register(KafkaConfig.class, CouponIssueKafkaConfig.class);
+        context.register(KafkaConfig.class);
         context.refresh();
     }
 
@@ -60,8 +60,9 @@ class KafkaMetricsBindingTest {
     void producerFactories_모두_Micrometer_리스너가_있다() {
         Map<String, ProducerFactory> factories = context.getBeansOfType(ProducerFactory.class);
 
-        // 쿠폰 발급 · 재고 임계 · 쿠폰 지연 · 결제 · 추첨 - 한 곳이 빠지면 개수가 줄어 여기서 걸린다
-        assertThat(factories).hasSizeGreaterThanOrEqualTo(5);
+        // 재고 임계 · 쿠폰 지연 · 결제 · 추첨 - 한 곳이 빠지면 개수가 줄어 여기서 걸린다
+        // 쿠폰 발급 프로듀서는 발급이 Redis Stream 으로 옮겨가며 없어졌다
+        assertThat(factories).hasSizeGreaterThanOrEqualTo(4);
         factories.forEach((name, factory) ->
                 assertThat(((DefaultKafkaProducerFactory<?, ?>) factory).getListeners())
                         .as("프로듀서 팩토리 %s 의 리스너", name)
@@ -99,13 +100,13 @@ class KafkaMetricsBindingTest {
     }
 
     @Test
-    @DisplayName("Streams 원천 토픽 coupon-delay-events 와 DLQ 토픽 coupon-issue-dlq 의 NewTopic 빈이 있다")
-    void topics_원천_토픽과_DLQ_토픽이_빈으로_있다() {
+    @DisplayName("Streams 원천 토픽 coupon-delay-events 의 NewTopic 빈이 있다")
+    void topics_원천_토픽이_빈으로_있다() {
         Set<String> names = context.getBeansOfType(NewTopic.class).values().stream()
                 .map(NewTopic::name).collect(Collectors.toSet());
 
         // 원천 토픽이 없으면 Streams 가 INCOMPLETE_SOURCE_TOPIC_METADATA 로 스스로 종료하고 모든 kafka_* 지표가 사라진다
-        assertThat(names).contains("coupon-delay-events", "coupon-issue-dlq");
+        assertThat(names).contains("coupon-delay-events");
     }
 
     private static long toLong(Object value) {

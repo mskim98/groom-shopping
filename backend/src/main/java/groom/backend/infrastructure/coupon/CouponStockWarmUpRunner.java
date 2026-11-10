@@ -17,17 +17,16 @@ import org.springframework.stereotype.Component;
 
 // 부팅 시 활성 쿠폰의 남은 수량을 Redis 로 복사한다(워밍업).
 //
-// 없으면 모든 쿠폰의 첫 발급 요청이 NOT_INITIALIZED 로 DB 비관적 락 폴백을 탄다.
-// 그 폴백은 Redis 와 DB 두 저장소에 걸친 구간이라 분산 락을 오래 잡는데,
-// 이벤트 시작 순간이 곧 최대 트래픽 시점이라 하필 그때 요청이 폴백으로 몰린다.
+// 없으면 모든 쿠폰의 첫 발급 요청이 재고 키 없음(NOT_INITIALIZED)으로 503 을 받는다.
+// 이벤트 시작 순간이 곧 최대 트래픽 시점이라 하필 그때 요청이 몰려 거절된다.
 //
 // 상품 쪽 StockWarmUpRunner 와 의도적으로 다른 점: 덮어쓰지 않는다(SETNX).
 // 상품은 DB 가 원천이고 Redis 는 선점 게이트라 부팅 시 Redis=DB 로 맞추는 것이 옳지만,
 // 쿠폰은 이벤트 진행 중 Redis 가 살아 있는 카운터다. 재기동 시 SET 으로 덮으면
-// Lua 차감은 끝났으나 DB 커밋 전이던 요청 수만큼 재고가 되살아난다.
+// Lua 차감은 끝났으나 스트림 컨슈머의 DB 커밋 전이던 요청 수만큼 재고가 되살아난다.
 // 키가 없을 때 심는 값은 quantity − DB 발급 수다. V15 이후 quantity 는 고정된 총 발행량이라
 // 그대로 심으면 Redis 가 사라진 뒤 이미 나간 수만큼 재고가 되살아난다.
-// 워밍업의 목적은 동기화가 아니라 "첫 요청이 폴백을 타지 않게 하는 것"이다.
+// 워밍업의 목적은 동기화가 아니라 "첫 요청이 재고 키 없음으로 거절되지 않게 하는 것"이다.
 // 상품 워밍업(StockWarmUpRunner)과는 다루는 Redis 키가 달라 실행 순서에 의존하지 않는다.
 //
 // @Order(1) : 구 키 이관(CouponRedisKeyMigrationRunner, @Order(0)) 다음에 돈다.
@@ -49,8 +48,8 @@ public class CouponStockWarmUpRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // 재고 키가 없는 쿠폰이 있으면 Redis 가 사라진 것이다. 랙을 빼서 심는 복구가 먼저 돈다(복구 중 접수는 503)
-        // 아래 SETNX 는 복구가 심은 키를 덮지 않고, 복구가 심지 못한 쿠폰(랙을 못 읽은 경우)만 채운다
+        // 재고 키가 없는 쿠폰이 있으면 Redis 가 사라진 것이다. quantity − DB 발급 수로 심는 복구가 먼저 돈다(복구 중 접수는 503)
+        // 아래 SETNX 는 복구가 심은 키를 덮지 않고, 복구가 심지 못한 쿠폰만 채운다
         couponStockRecoveryService.recoverIfStockMissing();
 
         int planted = 0;

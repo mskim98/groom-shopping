@@ -9,7 +9,7 @@ import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.entity.CouponIssue;
 import groom.backend.domain.coupon.model.enums.CouponType;
-import groom.backend.application.coupon.event.CouponIssueRequestEvent;
+import groom.backend.infrastructure.coupon.CouponStreamConsumer;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.domain.coupon.service.CouponCommonService;
@@ -48,6 +48,8 @@ class CouponIssueServiceIntegrationTest {
 
     @Autowired
     private CouponAsyncIssueService couponAsyncIssueService;
+    @Autowired
+    private CouponStreamConsumer couponStreamConsumer;
 
     @Autowired
     private CouponCommonService couponCommonService;
@@ -166,14 +168,13 @@ class CouponIssueServiceIntegrationTest {
     }
 
     // 접수 게이트 + 컨슈머 확정을 한 호출로 묶는다
-    // 실제 컨슈머는 Kafka 를 거치지만, 이 테스트가 검증하는 것은 발급 판정이지 전달 경로가 아니다
+    // 컨슈머 루프를 기다리지 않고 한 번 읽기를 직접 부른다. 이 테스트가 검증하는 것은 발급 판정이지 루프 타이밍이 아니다
     //
-    // setUp 이 모든 쿠폰을 워밍업하므로 게이트는 SUCCESS 이고 gateReserved=true 다
+    // setUp 이 모든 쿠폰을 워밍업하므로 접수는 통과한다
     // 워밍업하지 않은 쿠폰을 다루는 케이스는 이 헬퍼를 쓰지 않는다
     private CouponIssueResponse issue(Long couponId, User user) {
         String requestId = couponAsyncIssueService.enqueue(couponId, user.getId()).requestId();
-        couponAsyncIssueService.process(
-                new CouponIssueRequestEvent(requestId, couponId, user.getId(), true));
+        couponStreamConsumer.pollCoupon(couponId);
         String status = couponAsyncIssueService.getStatus(requestId);
         if (!"SUCCESS".equals(status)) {
             throw new IllegalStateException("발급 실패: " + status);
@@ -237,8 +238,7 @@ class CouponIssueServiceIntegrationTest {
         String requestId = couponAsyncIssueService.enqueue(inactiveCoupon.getId(), testUser.getId()).requestId();
 
         // when
-        couponAsyncIssueService.process(new CouponIssueRequestEvent(
-                requestId, inactiveCoupon.getId(), testUser.getId(), true));
+        couponStreamConsumer.pollCoupon(inactiveCoupon.getId());
 
         // then
         assertThat(couponAsyncIssueService.getStatus(requestId))

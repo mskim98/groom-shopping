@@ -63,12 +63,4 @@ public class Coupon {
       this.isActive = request.getIsActive();
     }
   }
-
-  public void decreaseQuantity() {
-    if (this.quantity != null && this.quantity > 0) {
-      this.quantity--;
-    } else {
-      throw new IllegalStateException("Cannot decrease quantity below zero.");
-    }
-  }
 }

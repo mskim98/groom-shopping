@@ -145,14 +145,15 @@ public class CouponController {
   @Operation(
           summary = "쿠폰 비동기 발급 (대규모 트래픽용)",
           description = """
-          접수 단계의 Redis 게이트를 통과한 요청만 큐에 적재하고 requestId 를 반환합니다(202 Accepted).
-          품절·중복이 확정된 요청은 브로커에 싣지 않고 즉시 409 로 거절합니다.
-          동일 쿠폰 요청은 단일 컨슈머가 직렬 처리하므로 분산 락 없이 동시성이 해소됩니다.
-          처리 결과는 상태 조회 API 로 polling 합니다.
+          접수 단계의 Redis 게이트를 통과한 요청만 요청 스트림에 적재하고 requestId 를 반환합니다(202 Accepted).
+          품절·중복이 확정된 요청은 스트림에 싣지 않고 즉시 409 로 거절합니다.
+          저장은 컨슈머가 쿠폰 행 잠금 아래 배치로 하고, 처리 결과는 상태 조회 API 로 polling 합니다.
+          Redis 가 끊기면 DB 행 잠금 경로가 그 자리에서 발급하고 200 을 반환합니다.
           """
   )
   @ApiResponses({
           @ApiResponse(responseCode = "202", description = "요청 접수(처리 대기)"),
+          @ApiResponse(responseCode = "200", description = "Redis 장애로 DB 경로가 발급 확정"),
           @ApiResponse(responseCode = "409", description = "접수 게이트 거절 - 품절(COUPON_OUT_OF_STOCK) 또는 중복(COUPON_ALREADY_ISSUED)"),
           @ApiResponse(responseCode = "503", description = "재고 키 미초기화 - 판정 불가(COUPON_ISSUE_UNAVAILABLE)"),
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
@@ -170,10 +171,14 @@ public class CouponController {
       case ACCEPTED -> ResponseEntity.accepted().body(Map.of(
               "requestId", result.requestId(),
               "status", "WAITING"));
+      // Redis 장애로 DB 경로가 그 자리에서 발급한 경우다. 확정까지 끝났으므로 202 가 아니라 200 이다
+      case SUCCESS -> ResponseEntity.ok(Map.of(
+              "couponIssueId", String.valueOf(result.couponIssueId()),
+              "status", "SUCCESS"));
       case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
       case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
       case UNAVAILABLE -> throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
-      // 접수는 확정하지 않으므로 SUCCESS · CONTENTION 이 나올 자리가 없다
+      // 접수 경로가 CONTENTION 을 내는 자리는 없다
       default -> throw new BusinessException(ErrorCode.SERVER_ERROR);
     };
   }

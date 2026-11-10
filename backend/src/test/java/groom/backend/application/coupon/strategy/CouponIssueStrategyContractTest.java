@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.infrastructure.coupon.CouponStreamConsumer;
 import groom.backend.domain.auth.enums.Grade;
 import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.coupon.model.entity.Coupon;
@@ -24,7 +25,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.TestInstance;
@@ -60,6 +63,8 @@ class CouponIssueStrategyContractTest {
     @Autowired
     private List<CouponIssueStrategy> strategies;
     @Autowired
+    private CouponStreamConsumer streamConsumer;
+    @Autowired
     private CouponRepository couponRepository;
     @Autowired
     private CouponIssueRepository couponIssueRepository;
@@ -70,6 +75,17 @@ class CouponIssueStrategyContractTest {
 
     private Long couponId;
     private final List<User> users = new ArrayList<>();
+
+    // stream 전략은 접수만 하고 확정은 컨슈머 루프가 한다. 시험 설정은 루프를 자동으로 켜지 않으므로 여기서 켠다
+    @BeforeAll
+    void startStreamConsumer() {
+        streamConsumer.start();
+    }
+
+    @AfterAll
+    void stopStreamConsumer() {
+        streamConsumer.stop();
+    }
 
     // 파라미터 공급자가 인스턴스 메서드라 주입받은 빈 목록을 그대로 쓸 수 있다
     // PER_CLASS 수명주기를 쓴 이유가 이것이다
@@ -119,7 +135,9 @@ class CouponIssueStrategyContractTest {
             // 발급자 SET 을 남기면 다음 케이스가 전건 중복으로 깨진다
             redisTemplate.delete(List.of(
                     CouponStockRedisRepository.stockKey(couponId),
-                    CouponStockRedisRepository.issuedUsersKey(couponId)));
+                    CouponStockRedisRepository.issuedUsersKey(couponId),
+                    CouponStockRedisRepository.streamKey(couponId),
+                    CouponStockRedisRepository.dlqKey(couponId)));
             couponRepository.findById(couponId).ifPresent(couponRepository::delete);
             couponId = null;
         }
