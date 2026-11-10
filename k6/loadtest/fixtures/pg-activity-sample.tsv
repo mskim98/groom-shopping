@@ -1,0 +1,18 @@
+sample_time	pid	state	wait_event_type	wait_event	xact_age_ms	query_age_ms	blocking_pids	query
+2026-11-11T10:00:01.000Z	100	idle in transaction	Client	ClientRead	1500	1400	{}	SELECT id FROM product WHERE id = $1 FOR UPDATE
+2026-11-11T10:00:01.000Z	201	active	Lock	transactionid	1300	1200	{100}	UPDATE product SET stock = stock - $1 WHERE id = $2 AND stock >= $1
+2026-11-11T10:00:01.000Z	400	active			20	20	{}	SELECT 1
+2026-11-11T10:00:02.000Z	100	idle in transaction	Client	ClientRead	2500	2400	{}	SELECT id FROM product WHERE id = $1 FOR UPDATE
+2026-11-11T10:00:02.000Z	201	active	Lock	transactionid	2300	2200	{100}	UPDATE product SET stock = stock - $1 WHERE id = $2 AND stock >= $1
+2026-11-11T10:00:02.000Z	202	active	Lock	transactionid	900	800	{100}	UPDATE product SET stock = stock - $1 WHERE id = $2 AND stock >= $1
+2026-11-11T10:00:02.000Z	102	idle in transaction	Client	ClientRead	900	850	{}	SELECT * FROM cart WHERE user_id = $1
+2026-11-11T10:00:03.000Z	100	idle in transaction	Client	ClientRead	3500	3400	{}	SELECT id FROM product WHERE id = $1 FOR UPDATE
+2026-11-11T10:00:03.000Z	201	active	Lock	transactionid	3300	3200	{100}	UPDATE product SET stock = stock - $1 WHERE id = $2 AND stock >= $1
+2026-11-11T10:00:03.000Z	300	active			500	500	{}	SELECT pg_advisory_xact_lock($1)
+2026-11-11T10:00:03.000Z	301	active	Lock	advisory	450	400	{300}	SELECT pg_advisory_xact_lock_shared($1)
+2026-11-11T10:00:04.000Z	101	idle in transaction	Client	ClientRead	2100	2000	{}	INSERT INTO payment (order_id, status) VALUES ($1, $2)
+2026-11-11T10:00:04.000Z	300	active			100	100	{}	SELECT pg_advisory_xact_lock($1)
+2026-11-11T10:00:04.000Z								
+2026-11-11T10:00:05.000Z	101	idle in transaction	Client	ClientRead	3100	3000	{}	INSERT INTO payment (order_id, status) VALUES ($1, $2)
+2026-11-11T10:00:05.000Z	100	idle in transaction	Client	ClientRead	300	300	{}	SELECT id FROM product WHERE id = $1 FOR UPDATE
+2026-11-11T10:00:06.000Z								
