@@ -132,7 +132,8 @@ class PaymentConfirmOutboxTest {
     @Test
     @DisplayName("confirm 이 적재한 outbox payload 에 Toss 응답과 선점 항목이 담긴다")
     void confirm_outbox_payload에_Toss응답과_선점항목이_담긴다() throws Exception {
-        // Redis 재고를 초기화해 둬야 선점이 일어나 reservedItems 에 항목이 남는다(미초기화 상품은 건너뛴다)
+        // 플래시 상품만 Redis 선점을 하므로 reservedItems 에 항목이 남는다(일반 상품은 예약하지 않는다)
+        jdbc.update("UPDATE product SET flash_sale = true WHERE id = ?", productId);
         productStockRedisRepository.initStock(productId, 10);
 
         paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
@@ -147,5 +148,6 @@ class PaymentConfirmOutboxTest {
         assertThat(json.get("reservedItems")).hasSize(1);
         assertThat(json.get("reservedItems").get(0).get("productId").asText()).isEqualTo(productId.toString());
         assertThat(json.get("reservedItems").get(0).get("quantity").asInt()).isEqualTo(1);
+        assertThat(json.get("reservedItems").get(0).get("mode").asText()).as("예약 방식").isEqualTo("REDIS");
     }
 }

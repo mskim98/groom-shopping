@@ -190,10 +190,13 @@ class PaymentReadyReconcilerTest {
     }
 
     @Test
-    @DisplayName("재발행 상한에 닿아 환불하는 경우 outbox payload 의 선점 항목을 Redis 에 되돌려 선점 전 값이 된다")
+    @DisplayName("재발행 상한에 닿아 환불하는 경우 원장 SALE 을 REVERSAL 로 상쇄하고 outbox payload 의 선점 항목을 Redis 에 되돌려 선점 전 값이 된다")
     void reconcile_상한에_닿아_환불하면_Redis_재고가_선점_전_값으로_돌아온다() {
-        // confirm 이 재고 10 에서 1개를 선점해 Redis 가 9 가 된 상태
+        // 플래시 상품: confirm 이 재고 10 에서 1개를 선점해 Redis 가 9 가 되고 TX1 이 미적용 SALE 을 남긴 상태
+        jdbc.update("UPDATE product SET flash_sale = true WHERE id = ?", productId);
         productStockRedisRepository.initStock(productId, 9);
+        jdbc.update("INSERT INTO stock_ledger (payment_id, product_id, qty, kind, applied) VALUES (?, ?, 1, 'SALE', false)",
+                payment.getId(), productId);
         insertOutbox("PUBLISHED", 2, 10, "{\"reservedItems\":[{\"productId\":\"" + productId + "\",\"quantity\":1}]}");
         makeStale();
 
@@ -201,6 +204,7 @@ class PaymentReadyReconcilerTest {
 
         assertThat(redisTemplate.opsForValue().get(ProductStockRedisRepository.STOCK_KEY_PREFIX + productId))
                 .as("복원 뒤 Redis 재고").isEqualTo("10");
+        assertThat(fixture.ledgerSumOf(payment.getId())).as("원장 SALE 이 REVERSAL 로 상쇄된다").isZero();
         assertThat(fixture.compensationCountOf(payment.getId())).isEqualTo(1);
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
     }

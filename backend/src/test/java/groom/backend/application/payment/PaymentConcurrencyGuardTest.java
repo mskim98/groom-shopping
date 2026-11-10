@@ -86,7 +86,7 @@ class PaymentConcurrencyGuardTest {
     @BeforeEach
     void setUp() {
         fixture = new PaymentFixture(productRepository, orderRepository, paymentRepository, jdbc);
-        productId = fixture.product(10);
+        productId = fixture.flashProduct(10); // 플래시 상품 - 판매는 원장이 들고 상품 행은 적용 배치가 낮춘다
         payment = fixture.payment(productId, 1);
         given(productStockRedisRepository.preReserve(any(), anyInt())).willReturn(1L);
     }
@@ -97,7 +97,7 @@ class PaymentConcurrencyGuardTest {
     }
 
     @Test
-    @DisplayName("같은 주문에 대한 동시 확정은 이벤트를 1건만 남기고, 같은 이벤트를 동시에 받아도 하나만 DONE 이 되며 재고는 한 번만 차감된다")
+    @DisplayName("같은 주문에 대한 동시 확정은 이벤트를 1건만 남기고, 같은 이벤트를 동시에 받아도 하나만 DONE 이 되며 판매는 원장에 한 번만 남는다")
     void 동시승인_같은주문_하나만_DONE이다() throws Exception {
         String paymentKey = "pk-" + UUID.randomUUID();
         TossPaymentResponse response = PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE);
@@ -144,7 +144,9 @@ class PaymentConcurrencyGuardTest {
             executor.shutdownNow();
         }
 
-        assertThat(fixture.stockOf(productId)).as("재고 차감은 한 번뿐").isEqualTo(9);
+        // 후처리는 플래시 상품 행을 쓰지 않는다 - 판매 한 건이 원장에 미적용 1 로 남고, 남은 재고(stock − 미적용 합)는 9 다
+        assertThat(fixture.stockOf(productId)).as("상품 행은 그대로").isEqualTo(10);
+        assertThat(fixture.unappliedSumOf(productId)).as("원장 판매는 한 건뿐").isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment WHERE id = ? AND status = 'DONE'",
                 Long.class, payment.getId())).isEqualTo(1L);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
