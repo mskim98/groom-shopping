@@ -19,7 +19,10 @@ if [ -n "${SEED_VERIFY_TOL_SCALE:-}" ] && awk -v t="$SEED_VERIFY_TOL_SCALE" -v s
 fi
 
 set +e
-out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" ${SEED_VERIFY_TOL_SCALE:+-v tol_scale="$SEED_VERIFY_TOL_SCALE"} -f - 2>&1)"
+# 마이그레이션이 늘어도 고칠 곳이 없게 파일 수를 세어 넘긴다 (V24 가 붙으면서 고정값 22 가 틀렸다)
+MIG="${SEED_MIGRATION_DIR:-$HERE/../../backend/src/main/resources/db/migration}"
+MIGRATIONS="$(find "$MIG" -name 'V*.sql' -print | wc -l | tr -d ' ')"
+out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" -v migrations="$MIGRATIONS" ${SEED_VERIFY_TOL_SCALE:+-v tol_scale="$SEED_VERIFY_TOL_SCALE"} -f - 2>&1)"
 code=$?
 set -e
 # 11. raffle: 이름이 raffle 로 시작하는 표는 마이그레이션이 만든 행 그대로(raffles 10, 나머지 0). 읽기만 한다

@@ -46,9 +46,9 @@ UPDATE chk SET ok = ok AND (SELECT count(*) FROM stock_ledger WHERE kind = 'SALE
                        AND (SELECT count(*) FROM stock_ledger WHERE kind = 'REVERSAL') = (SELECT count(*) FROM flash_pairs WHERE status = 'CANCELED')
  WHERE name = 'counts';
 
--- 2. flyway: 성공한 기록 22 줄
+-- 2. flyway: 마이그레이션 파일 수(verify.sh 가 센 :migrations)만큼의 성공한 기록
 INSERT INTO chk (name, ok, detail)
-SELECT 'flyway', count(*) FILTER (WHERE success) = 22 AND count(*) = 22,
+SELECT 'flyway', count(*) FILTER (WHERE success) = :migrations AND count(*) = :migrations,
        'rows=' || count(*) || ' successful=' || count(*) FILTER (WHERE success)
   FROM flyway_schema_history;
 
