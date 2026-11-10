@@ -20,7 +20,7 @@ import org.springframework.stereotype.Repository;
  * 호출한 트랜잭션에 그대로 합류한다(JdbcTemplate 은 JPA 트랜잭션의 커넥션을 쓴다). 잠금은 두 층이다.
  * - 결제 경로(TX1 · DB 모드 진입 예약 · REVERSAL 기록)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다
  *   결제 경로는 공유, 전환 · 복귀는 배타라서 전환은 진행 중인 TX1 을 모두 기다리고 그동안 새 TX1 을 붙잡는다
- * - product 행 잠금(FOR UPDATE)은 적용 배치 · 전환 · 복귀 · DB 모드의 조건부 UPDATE 만 쓴다. 결제 경로는 REDIS 모드에서 행을 잡지 않으므로
+ * - product 행 잠금(FOR NO KEY UPDATE)은 적용 배치 · 전환 · 복귀 · DB 모드의 조건부 UPDATE 만 쓴다. FOR UPDATE 가 아닌 이유 - 장바구니 · 주문 insert 의 외래 키 검사가 잡는 FOR KEY SHARE 와 충돌하지 않아, 전환이 열린 장바구니 트랜잭션을 기다리지 않고 뒤따르는 insert 도 붙잡히지 않는다(재고 UPDATE 끼리는 그대로 직렬화). 결제 경로는 REDIS 모드에서 행을 잡지 않으므로
  *   적용 배치가 TX1 이 이어지는 동안에도 상품 행을 집을 수 있다. 순서는 advisory → 상품 행 → 원장 행 한 가지로 고정한다
  */
 @Repository
@@ -96,7 +96,7 @@ public class StockLedgerRepository {
 
     // 전환 · 복귀 트랜잭션의 상품 행 잠금
     public StockMode lockModeExclusive(UUID productId) {
-        return modeOf(jdbc.queryForList("SELECT stock_mode FROM product WHERE id = ? FOR UPDATE", String.class, productId), productId);
+        return modeOf(jdbc.queryForList("SELECT stock_mode FROM product WHERE id = ? FOR NO KEY UPDATE", String.class, productId), productId);
     }
 
     // DB 모드의 재고 판정. 영향 행 0 = 재고 부족이거나 모드가 DB 가 아님
@@ -175,7 +175,7 @@ public class StockLedgerRepository {
 
     // 다른 인스턴스가 이 상품을 처리 중이면 false - 그 상품은 이번 회차에서 건너뛴다
     public boolean lockProductSkipLocked(UUID productId) {
-        return !jdbc.queryForList("SELECT 1 FROM product WHERE id = ? FOR UPDATE SKIP LOCKED", Integer.class, productId).isEmpty();
+        return !jdbc.queryForList("SELECT 1 FROM product WHERE id = ? FOR NO KEY UPDATE SKIP LOCKED", Integer.class, productId).isEmpty();
     }
 
     // 상품 행을 이미 잠근 트랜잭션 안에서 미적용 행을 집는다
