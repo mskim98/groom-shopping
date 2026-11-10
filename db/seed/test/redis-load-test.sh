@@ -7,7 +7,8 @@
 # trap 이 지우는 키: t2:keep · coupon:issue:status:t2keep · refresh:t2keep(패턴 밖 보존 확인용) · product:stock:00000000-0000-4000-8000-000000000000 ·
 #   coupon:{777777}:stock · coupon:{777777}:issued_users · coupon:{777777}:req · coupon:{777777}:dlq(소유 패턴 묵은 키 삭제 확인용)
 # 템플릿 shop_seed_t2a 가 템플릿이 아니면 scale 0.01 로 새로 만든다
-# 마지막 케이스는 Redis 의 maxmemory 를 1 · maxmemory-policy 를 noeviction 으로 바꿔 SET 이 거절되게 한다 — trap 이 시작 때 값으로 되돌린다
+# 마지막 두 케이스 중 첫째는 Redis 의 maxmemory 를 1 · maxmemory-policy 를 noeviction 으로 바꿔 SET 이 거절되게 한다 — trap 이 시작 때 값으로 되돌린다
+# 둘째는 PATH 앞에 둔 임시 폴더의 가짜 docker 가 --pipe 호출에만 exit 0 과 `errors: 1, replies: 1` 을 답하게 한다 — 임시 폴더는 trap 의 rm 이 지운다
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED="$(dirname "$HERE")"
@@ -121,6 +122,26 @@ restore_redis_conf
 [ "$code" -eq 1 ] || fail "[redis rejects] exit $code, want 1"
 printf '%s\n' "$out" | grep -q 'while loading product' || { fail "[redis rejects] no message naming the step 'while loading product'"; printf '%s\n' "$out" | tail -5; }
 [ "$(seed_rcli CONFIG GET maxmemory | tail -1)" = "$OLD_MAXMEM" ] || fail "[redis rejects] maxmemory was not restored"
+
+# redis-cli --pipe 가 exit 0 인데 "errors: 1, replies: 1" 을 찍는 경우(종료 코드를 안 내는 redis-cli) - 앞에 놓은 가짜 docker 가 --pipe 호출만 가로채 그렇게 답하고
+# 나머지 호출은 진짜 docker 로 넘긴다. load-redis.sh 는 진짜 그대로 돌고, errors 줄만 보고도 exit 1 과 단계 이름을 내야 한다
+echo "== load-redis.sh fails on an errors line even when redis-cli --pipe exits 0"
+mkdir "$TMP/fakebin"
+REAL_DOCKER="$(command -v docker)"
+cat > "$TMP/fakebin/docker" <<FAKE
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = --pipe ]; then cat > /dev/null; echo "errors: 1, replies: 1"; exit 0; fi
+done
+exec "$REAL_DOCKER" "\$@"
+FAKE
+chmod +x "$TMP/fakebin/docker"
+set +e
+out="$(PATH="$TMP/fakebin:$PATH" bash "$SEED/load-redis.sh" "$TPL" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "[errors line] exit $code, want 1"
+printf '%s\n' "$out" | grep -q 'while loading product' || { fail "[errors line] no message naming the step 'while loading product'"; printf '%s\n' "$out" | tail -5; }
 
 if [ "$FAILS" -ne 0 ]; then echo "redis-load-test: $FAILS failure(s)"; exit 1; fi
 echo "redis-load-test: OK"
