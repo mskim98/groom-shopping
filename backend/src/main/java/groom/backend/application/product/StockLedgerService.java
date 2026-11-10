@@ -13,10 +13,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 /**
- * 플래시 세일 재고 원장의 트랜잭션 단위 작업. 상품 행 하나를 한 트랜잭션으로 다룬다.
+ * 플래시 세일 재고 원장의 트랜잭션 단위 작업. 상품 하나를 한 트랜잭션으로 다룬다.
  * <p>
- * 잠금 순서는 상품 행 → 원장 행이다. 적용 배치 · 전환 · 복귀가 모두 이 순서라 서로 기다리다 교착하지 않는다.
- * 남은 재고 = product.stock − SUM(미적용 qty) 은 stock 변경과 적용 표시를 한 트랜잭션으로 커밋하므로 어느 순간에도 성립한다
+ * 잠금 순서는 advisory → 상품 행 → 원장 행이다. 결제 경로(TX1 · DB 모드 진입)는 공유 advisory 만 잡고 REDIS 모드에서 상품 행을 잠그지 않는다.
+ * 전환 · 복귀는 배타 advisory 로 진행 중인 TX1 을 기다린 뒤 상품 행을 잠근다. 적용 배치는 advisory 를 잡지 않는다 -
+ * 배치가 도는 동안 들어온 미적용 행은 다음 회차에 적용되고, 남은 재고 = product.stock − SUM(미적용 qty) 은 stock 변경과 적용 표시를
+ * 한 트랜잭션으로 커밋하므로 어느 순간에도 성립한다
  */
 @Slf4j
 @Service
@@ -69,6 +71,7 @@ public class StockLedgerService {
         if (ledger.readMode(productId) == StockMode.DB) {
             return;
         }
+        ledger.lockProductExclusive(productId);
         if (ledger.lockModeExclusive(productId) == StockMode.DB) {
             return;
         }
@@ -83,6 +86,10 @@ public class StockLedgerService {
      */
     @Transactional
     public DbReservation reserveInDb(UUID paymentId, UUID productId, int quantity) {
+        ledger.lockProductShared(productId);
+        if (ledger.readMode(productId) == StockMode.REDIS) {
+            return DbReservation.MODE_FLIPPED;
+        }
         if (!ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, true)) {
             return DbReservation.DUPLICATE;
         }
@@ -90,41 +97,39 @@ public class StockLedgerService {
             return DbReservation.RESERVED;
         }
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-        return ledger.readMode(productId) == StockMode.REDIS ? DbReservation.MODE_FLIPPED : DbReservation.SHORT;
+        return DbReservation.SHORT;
     }
 
     /**
      * TX1(승인 트랜잭션)의 원장 기록. Redis 로 선점한 항목 하나를 호출한 트랜잭션에 합류해 기록한다.
-     * 조건부 UPDATE 를 먼저 한다 - 공유 잠금으로 읽은 뒤 같은 행을 UPDATE 로 올리면 인플라이트 결제 둘이 서로를 기다려 교착한다
-     * UPDATE 가 0행이면 공유 잠금으로 모드를 읽는다. REDIS 면 미적용 SALE 을 쓰고(잠금이 커밋까지 전환을 막는다), DB 면 재고 부족이다
-     * 그 사이 모드가 바뀌었을 수 있어 한 번 더 시도한다
+     * 공유 advisory 잠금을 먼저 잡고(커밋까지 전환 · 복귀를 막는다) 모드를 잠금 없이 읽는다. 잠금을 쥔 동안 모드는 바뀌지 않는다.
+     * REDIS → product 행을 건드리지 않고 미적용 SALE 만 쓴다. DB → 조건부 UPDATE + SALE(applied=true), 0행이면 재고 부족이라 던져 보상 경로로 보낸다
      */
     @Transactional
     public void recordSale(UUID paymentId, UUID productId, int quantity) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            if (ledger.decreaseInDbModeIfEnough(productId, quantity) == 1) {
-                if (!ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, true)) {
-                    // 이미 SALE 이 있는데 재고를 또 낮췄다 - 롤백해 이중 차감을 막는다
-                    throw new IllegalStateException("이미 판매가 기록된 결제를 DB 모드로 다시 차감하려 함 - paymentId=" + paymentId);
-                }
-                return;
-            }
-            if (ledger.lockModeShared(productId) == StockMode.REDIS) {
-                ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, false);
-                return;
-            }
+        ledger.lockProductShared(productId);
+        if (ledger.readMode(productId) == StockMode.REDIS) {
+            ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, false);
+            return;
         }
-        throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        if (ledger.decreaseInDbModeIfEnough(productId, quantity) == 0) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
+        }
+        if (!ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, true)) {
+            // 이미 SALE 이 있는데 재고를 또 낮췄다 - 롤백해 이중 차감을 막는다
+            throw new IllegalStateException("이미 판매가 기록된 결제를 DB 모드로 다시 차감하려 함 - paymentId=" + paymentId);
+        }
     }
 
     /**
-     * 복귀. 상품 행을 잠그고 DB 모드와 대기 시간을 다시 확인한 뒤, Redis 키를 stock − 미적용 합으로 덮어쓰고 REDIS 모드로 바꾼다
+     * 복귀. 배타 advisory 잠금으로 진행 중인 TX1 을 기다리고 상품 행을 잠근 뒤 DB 모드와 대기 시간을 다시 확인하고, Redis 키를 stock − 미적용 합으로 덮어쓰고 REDIS 모드로 바꾼다
      * NX 가 아니라 덮어쓰는 이유 - 장애 때 Redis 가 데이터를 잃지 않았다면 예전 값(DB 모드 판매가 반영되지 않은 큰 값)이 남아 있고,
      * 이 시점에는 상품 행 잠금 · DB 모드 · 대기 시간 덕에 그 키를 정당하게 쓰는 쪽이 없다
      * Redis 쓰기가 실패하면 예외로 롤백돼 DB 모드로 남는다
      */
     @Transactional
     public boolean returnToRedis(UUID productId, long minDwellMs) {
+        ledger.lockProductExclusive(productId);
         if (ledger.lockModeExclusive(productId) != StockMode.DB || !ledger.isDbModePastDwell(productId, minDwellMs)) {
             return false;
         }

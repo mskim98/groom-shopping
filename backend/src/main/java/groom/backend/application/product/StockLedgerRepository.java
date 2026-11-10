@@ -16,8 +16,11 @@ import org.springframework.stereotype.Repository;
 /**
  * 재고 원장(stock_ledger)과 플래시 세일 상품 행의 네이티브 SQL 모음.
  * <p>
- * 호출한 트랜잭션에 그대로 합류한다(JdbcTemplate 은 JPA 트랜잭션의 커넥션을 쓴다). 잠금 순서는 한 가지로 고정한다 -
- * 상품 행 잠금이 먼저, 원장 행 잠금이 나중이다. 적용 배치와 전환 트랜잭션이 서로 반대 순서로 잡으면 교착하기 때문이다
+ * 호출한 트랜잭션에 그대로 합류한다(JdbcTemplate 은 JPA 트랜잭션의 커넥션을 쓴다). 잠금은 두 층이다.
+ * - 결제 경로(TX1 · DB 모드 진입 예약)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다.
+ *   결제 경로는 공유, 전환 · 복귀는 배타라서 전환은 진행 중인 TX1 을 모두 기다리고 그동안 새 TX1 을 붙잡는다
+ * - product 행 잠금(FOR UPDATE)은 적용 배치 · 전환 · 복귀 · DB 모드의 조건부 UPDATE 만 쓴다. 결제 경로는 REDIS 모드에서 행을 잡지 않으므로
+ *   적용 배치가 TX1 이 이어지는 동안에도 상품 행을 집을 수 있다. 순서는 advisory → 상품 행 → 원장 행 한 가지로 고정한다
  */
 @Repository
 @RequiredArgsConstructor
@@ -39,6 +42,9 @@ public class StockLedgerRepository {
 
     private static final String VERSION_BUMP = "version = COALESCE(version, 0) + 1";
 
+    // 상품 id 에서 만든 안정적인 64비트 advisory 잠금 키. 서로 다른 두 상품의 키가 겹치면 한 상품의 전환이 다른 상품의 TX1 을 기다릴 뿐이다
+    private static final String LOCK_KEY = "hashtextextended(?::text, 0)";
+
     private final JdbcTemplate jdbc;
 
     // 이 중 플래시 세일 상품의 id 만 돌려준다
@@ -55,9 +61,17 @@ public class StockLedgerRepository {
         return modeOf(jdbc.queryForList("SELECT stock_mode FROM product WHERE id = ?", String.class, productId), productId);
     }
 
-    // TX1 이 읽는 동안 전환 트랜잭션(FOR UPDATE)이 끼어들지 못하게 공유 잠금으로 읽는다
-    public StockMode lockModeShared(UUID productId) {
-        return modeOf(jdbc.queryForList("SELECT stock_mode FROM product WHERE id = ? FOR SHARE", String.class, productId), productId);
+    // 결제 경로(TX1 · DB 모드 진입 예약)의 공유 advisory 잠금. 트랜잭션이 끝날 때까지 이어져 그동안 전환 · 복귀가 시작되지 못한다
+    // product 행은 잠그지 않는다 - 행을 잡으면 적용 배치(FOR UPDATE SKIP LOCKED)가 TX1 이 이어지는 동안 그 상품을 계속 건너뛴다
+    public void lockProductShared(UUID productId) {
+        jdbc.query("SELECT pg_advisory_xact_lock_shared(" + LOCK_KEY + ")", rs -> {
+        }, productId.toString());
+    }
+
+    // 전환 · 복귀의 배타 advisory 잠금. 진행 중인 TX1 이 모두 끝나길 기다리고, 기다리는 동안과 전환 중에는 새 TX1 이 공유 잠금에서 대기한다
+    public void lockProductExclusive(UUID productId) {
+        jdbc.query("SELECT pg_advisory_xact_lock(" + LOCK_KEY + ")", rs -> {
+        }, productId.toString());
     }
 
     // 전환 · 복귀 트랜잭션의 상품 행 잠금
