@@ -91,11 +91,10 @@ class CouponStreamAutoClaimTest {
         assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isZero();
         assertThat(ownerOfPending()).isEqualTo("dead-instance-1");
 
-        // 유휴 200ms 를 넘긴다
-        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
-            consumer.pollCoupon(couponId);
-            assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(1L);
-        });
+        // 유휴 200ms 를 넘긴다 - Redis 가 알려 주는 항목의 유휴 시간으로 기다린다
+        CouponStreamWaits.awaitPendingIdle(redis, couponId, Duration.ofMillis(250));
+        consumer.pollCoupon(couponId);
+        assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(1L);
 
         assertThat(fixture.status(requestId)).isEqualTo("SUCCESS");
         assertThat(fixture.pendingCount(couponId)).isZero();
@@ -117,7 +116,7 @@ class CouponStreamAutoClaimTest {
         // 전부 죽은 인스턴스가 읽은 뒤 유휴 한도를 넘긴다
         List<String> ids = fixture.readAs(busyCoupon, "dead-instance-2");
         assertThat(ids).hasSize(502);
-        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        CouponStreamWaits.awaitPendingIdle(redis, busyCoupon, Duration.ofMillis(250));
         // 앞의 501 건만 살아 있는 컨슈머가 방금 쥐었다(유휴 0). 마지막 1건은 여전히 유휴 한도를 넘었다
         fixture.claimAllAs(busyCoupon, "live-instance", ids.subList(0, 501));
 
@@ -140,7 +139,7 @@ class CouponStreamAutoClaimTest {
 
         // 시험 설정 claim-min-idle-ms = 200 이므로 기본 스캔 간격은 그 절반(100ms)이다
         assertThat(consumer.claimScans() - before).isEqualTo(1L);
-        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
             consumer.pollCoupon(couponId);
             assertThat(consumer.claimScans() - before).isEqualTo(2L);
         });
@@ -151,7 +150,7 @@ class CouponStreamAutoClaimTest {
     void pollCoupon_패스가_던지면_다음_호출이_간격을_기다리지_않고_다시_스캔한다() throws Exception {
         ReflectionTestUtils.setField(consumer, "claimIntervalMs", 3_600_000L);
         try {
-            Thread.sleep(300);
+            CouponStreamWaits.awaitPendingIdle(redis, couponId, Duration.ofMillis(250));
             doThrow(new IllegalStateException("redis down")).doCallRealMethod().when(redis).execute(any(RedisCallback.class));
 
             assertThatThrownBy(() -> consumer.pollCoupon(couponId)).isInstanceOf(IllegalStateException.class);
@@ -184,7 +183,7 @@ class CouponStreamAutoClaimTest {
             fixture.claimAs(couponId, "dead-instance-1", poisonId);
         }
         // 둘째 항목(살아 있는 컨슈머가 쥔 것)은 유휴를 0 으로 만들어 이번 스캔이 건드리지 않게 한다
-        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        CouponStreamWaits.awaitPendingIdle(redis, couponId, Duration.ofMillis(250));
         fixture.claimAllAs(couponId, "live-instance", List.of(rest.get(0)));
 
         int handled = consumer.pollCoupon(couponId);
@@ -209,7 +208,7 @@ class CouponStreamAutoClaimTest {
         for (int i = 0; i < 3; i++) {
             fixture.claimAs(couponId, "dead-instance-1", poisonId);
         }
-        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        CouponStreamWaits.awaitPendingIdle(redis, couponId, Duration.ofMillis(250));
         clearInvocations(redis);
 
         int handled = consumer.pollCoupon(couponId);
