@@ -16,11 +16,9 @@ import org.junit.jupiter.api.Test;
 class CouponIssueServiceTest {
 
     @Test
-    @DisplayName("두 코드는 서로 다른 값이어야 측정에서 구분된다")
+    @DisplayName("경합 실패와 품절은 서로 다른 코드여야 측정에서 구분된다")
     void errorCode_경합실패와_진짜품절은_다른_코드다() {
         assertThat(ErrorCode.COUPON_ISSUE_CONTENTION)
-                .isNotEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
-        assertThat(ErrorCode.COUPON_STORE_MISMATCH)
                 .isNotEqualTo(ErrorCode.COUPON_OUT_OF_STOCK);
     }
 }

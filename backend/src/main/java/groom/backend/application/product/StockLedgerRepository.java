@@ -17,7 +17,7 @@ import org.springframework.stereotype.Repository;
  * 재고 원장(stock_ledger)과 플래시 세일 상품 행의 네이티브 SQL 모음.
  * <p>
  * 호출한 트랜잭션에 그대로 합류한다(JdbcTemplate 은 JPA 트랜잭션의 커넥션을 쓴다). 잠금은 두 층이다.
- * - 결제 경로(TX1 · DB 모드 진입 예약)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다.
+ * - 결제 경로(TX1 · DB 모드 진입 예약 · REVERSAL 기록)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다
  *   결제 경로는 공유, 전환 · 복귀는 배타라서 전환은 진행 중인 TX1 을 모두 기다리고 그동안 새 TX1 을 붙잡는다
  * - product 행 잠금(FOR UPDATE)은 적용 배치 · 전환 · 복귀 · DB 모드의 조건부 UPDATE 만 쓴다. 결제 경로는 REDIS 모드에서 행을 잡지 않으므로
  *   적용 배치가 TX1 이 이어지는 동안에도 상품 행을 집을 수 있다. 순서는 advisory → 상품 행 → 원장 행 한 가지로 고정한다
@@ -72,6 +72,25 @@ public class StockLedgerRepository {
     public void lockProductExclusive(UUID productId) {
         jdbc.query("SELECT pg_advisory_xact_lock(" + LOCK_KEY + ")", rs -> {
         }, productId.toString());
+    }
+
+    // 이 트랜잭션 안의 잠금 대기 상한. set_config 의 마지막 인자 true 가 트랜잭션 범위(SET LOCAL)로 만든다 - 커넥션 풀에 상한이 남지 않는다
+    public void setLockTimeout(long timeoutMs) {
+        jdbc.query("SELECT set_config('lock_timeout', ?, true)", rs -> {
+        }, timeoutMs + "ms");
+    }
+
+    // 결제의 SALE 상품마다 공유 advisory 잠금을 상품 id 오름차순으로 잡고(여러 상품 결제 둘이 서로의 잠금을 기다리지 않게) 그 시점의 모드를 읽는다
+    // REVERSAL 을 쓰는 트랜잭션이 Redis 복원 여부를 이 모드로 정한다 - 복귀가 이 잠금 앞에서 끝났는지 뒤에서 끝나는지가 곧 모드다
+    public Map<UUID, StockMode> lockSaleProductsShared(UUID paymentId) {
+        Map<UUID, StockMode> modes = new java.util.LinkedHashMap<>();
+        for (UUID productId : jdbc.queryForList(
+                "SELECT DISTINCT product_id FROM stock_ledger WHERE payment_id = ? AND kind = 'SALE' ORDER BY product_id",
+                UUID.class, paymentId)) {
+            lockProductShared(productId);
+            modes.put(productId, readMode(productId));
+        }
+        return modes;
     }
 
     // 전환 · 복귀 트랜잭션의 상품 행 잠금

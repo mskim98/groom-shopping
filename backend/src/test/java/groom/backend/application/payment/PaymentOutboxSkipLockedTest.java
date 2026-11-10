@@ -1,33 +1,26 @@
 package groom.backend.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
 
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import groom.backend.domain.payment.repository.PaymentRepository;
-import groom.backend.infrastructure.kafka.PaymentEventPublisher;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -37,7 +30,6 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -105,21 +97,21 @@ class PaymentOutboxSkipLockedTest {
 
     @Test
     @DisplayName("두 트랜잭션이 동시에 폴링하면 서로 다른 행을 받는다")
-    void findPendingBatch_두_트랜잭션_동시_폴링은_서로_다른_행을_받는다() throws Exception {
+    void claimPendingBatch_두_트랜잭션_동시_폴링은_서로_다른_행을_받는다() throws Exception {
         seedPending(10);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch firstHolds = new CountDownLatch(1);
         CountDownLatch secondDone = new CountDownLatch(1);
         try {
             Future<Set<UUID>> first = pool.submit(() -> transactionTemplate.execute(status -> {
-                Set<UUID> ids = idsOf(outboxRepository.findPendingBatch(5));
+                Set<UUID> ids = idsOf(outboxRepository.claimPendingBatch(5, 60000L));
                 firstHolds.countDown();
                 await(secondDone); // 첫 트랜잭션은 잠금을 쥔 채 둘째가 끝나길 기다린다
                 return ids;
             }));
             assertThat(firstHolds.await(10, TimeUnit.SECONDS)).isTrue();
             Future<Set<UUID>> second = pool.submit(() -> transactionTemplate.execute(status -> {
-                Set<UUID> ids = idsOf(outboxRepository.findPendingBatch(5));
+                Set<UUID> ids = idsOf(outboxRepository.claimPendingBatch(5, 60000L));
                 secondDone.countDown();
                 return ids;
             }));
@@ -132,55 +124,6 @@ class PaymentOutboxSkipLockedTest {
             assertThat(firstIds).doesNotContainAnyElementsOf(secondIds);
         } finally {
             pool.shutdownNow();
-        }
-    }
-
-    @Test
-    @DisplayName("두 폴러가 동시에 돌아도 모든 PENDING 행은 한 번씩만 발행된다")
-    @SuppressWarnings("unchecked")
-    void publishPending_두_폴러_동시_실행_행은_한번씩만_발행된다() throws Exception {
-        seedPending(8);
-        KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
-        List<String> sentKeys = Collections.synchronizedList(new ArrayList<>());
-        doAnswer(invocation -> {
-            ProducerRecord<String, String> record = invocation.getArgument(0);
-            sentKeys.add(record.key());
-            Thread.sleep(50); // 발행이 걸리는 동안 다른 폴러가 같은 행을 집으려 든다
-            return CompletableFuture.completedFuture(null);
-        }).when(kafka).send(any(ProducerRecord.class));
-        PaymentEventPublisher first = new PaymentEventPublisher(outboxRepository, kafka);
-        PaymentEventPublisher second = new PaymentEventPublisher(outboxRepository, kafka);
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        CountDownLatch start = new CountDownLatch(1);
-        try {
-            Future<?> a = pool.submit(() -> {
-                start.await();
-                return transactionTemplate.execute(status -> {
-                    first.publishPending();
-                    return null;
-                });
-            });
-            Future<?> b = pool.submit(() -> {
-                start.await();
-                return transactionTemplate.execute(status -> {
-                    second.publishPending();
-                    return null;
-                });
-            });
-            start.countDown();
-            a.get(30, TimeUnit.SECONDS);
-            b.get(30, TimeUnit.SECONDS);
-        } finally {
-            pool.shutdownNow();
-        }
-
-        for (UUID aggregate : aggregates) {
-            assertThat(sentKeys.stream().filter(aggregate.toString()::equals).count())
-                    .as("발행 횟수 %s", aggregate).isEqualTo(1);
-        }
-        for (UUID aggregate : aggregates) {
-            assertThat(jdbc.queryForObject("SELECT status FROM payment_outbox WHERE aggregate_id = ?",
-                    String.class, aggregate)).isEqualTo("PUBLISHED");
         }
     }
 

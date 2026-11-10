@@ -4,11 +4,11 @@ import groom.backend.application.coupon.CouponIssueBatchWriter;
 import groom.backend.application.coupon.CouponIssueBatchWriter.InsertOutcome;
 import groom.backend.application.coupon.CouponIssueStatus;
 import groom.backend.application.coupon.CouponStockRedisRepository;
+import groom.backend.application.coupon.MyCouponCacheEvictor;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.config.RedisConfig;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -27,11 +27,7 @@ import io.lettuce.core.XAutoClaimArgs;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.models.stream.ClaimedMessages;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Range;
@@ -42,11 +38,13 @@ import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.PendingMessages;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
+import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
+import org.springframework.data.redis.connection.RedisStreamCommands.XPendingOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -111,12 +109,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private final CouponIssueRepository couponIssueRepository;
     private final CouponStockRedisRepository stockRepository;
     private final CouponIssueBatchWriter batchWriter;
-
-    // 내 쿠폰 목록 캐시(userId 키). searchMyCoupon 이 @Cacheable 로 읽는 목록이라 확정 경로가 비우지 않으면
-    // 방금 발급한 쿠폰이 캐시 TTL 동안 목록에 보이지 않는다. 캐시를 끈 구성처럼 없을 수도 있어 선택 주입이다
-    @Autowired(required = false)
-    @Qualifier("couponCacheManager")
-    private CacheManager couponCacheManager;
+    private final MyCouponCacheEvictor myCouponCacheEvictor;
 
     // 한 번에 읽어 한 트랜잭션으로 넣는 건수의 상한
     @Value("${coupon.issue.batch-size:500}")
@@ -128,6 +121,10 @@ public class CouponStreamConsumer implements SmartLifecycle {
     // 쿠폰마다 유휴 항목 스캔을 돌리는 최소 간격. 0 이면 claim-min-idle-ms 의 절반이다
     @Value("${coupon.issue.stream.claim-interval-ms:0}")
     private long claimIntervalMs = 0L;
+    // 대기 항목이 없는 다른 컨슈머 이름을 이만큼 쉰 뒤에 지운다(XGROUP DELCONSUMER). 재기동마다 새 이름이 생기므로 지우지 않으면 그룹의 컨슈머 목록이 끝없이 자란다
+    // 너무 짧으면 잠깐 쉰 살아 있는 인스턴스의 이름을 지워 다시 만들게 하고, 너무 길면 늘어난 이름이 그만큼 오래 남는다
+    @Value("${coupon.issue.stream.consumer-retire-idle-ms:3600000}")
+    private long consumerRetireIdleMs = 3_600_000L;
     // 항목 하나에 허용하는 배달 횟수. 넘으면 DLQ
     @Value("${coupon.issue.stream.max-deliveries:3}")
     private int maxDeliveries = 3;
@@ -155,12 +152,14 @@ public class CouponStreamConsumer implements SmartLifecycle {
 
     public CouponStreamConsumer(StringRedisTemplate redis, CouponRepository couponRepository,
                                 CouponIssueRepository couponIssueRepository,
-                                CouponStockRedisRepository stockRepository, CouponIssueBatchWriter batchWriter) {
+                                CouponStockRedisRepository stockRepository, CouponIssueBatchWriter batchWriter,
+                                MyCouponCacheEvictor myCouponCacheEvictor) {
         this.redis = redis;
         this.couponRepository = couponRepository;
         this.couponIssueRepository = couponIssueRepository;
         this.stockRepository = stockRepository;
         this.batchWriter = batchWriter;
+        this.myCouponCacheEvictor = myCouponCacheEvictor;
     }
 
     // 호스트 이름과 프로세스 번호. 같은 호스트에서 재기동하면 이름이 바뀌어 옛 이름의 항목은 유휴 인수로 넘어온다
@@ -262,8 +261,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
         StreamOffset<String>[] offsets = couponByStream.keySet().stream()
                 .map(key -> StreamOffset.create(key, ReadOffset.lastConsumed()))
                 .toArray(StreamOffset[]::new);
-        List<MapRecord<String, Object, Object>> records = redis.opsForStream().read(consumer(),
-                StreamReadOptions.empty().count(batchSize).block(Duration.ofMillis(blockMs)), offsets);
+        List<MapRecord<String, Object, Object>> records = readWatched(offsets, couponByStream.values());
         if (records == null || records.isEmpty()) {
             return handled;
         }
@@ -283,6 +281,23 @@ public class CouponStreamConsumer implements SmartLifecycle {
             }
         }
         return handled;
+    }
+
+    // 감시 쿠폰 전체를 한 번에 읽는다. NOGROUP 은 어느 스트림의 그룹이 사라졌는지 알려주지 않으므로 감시 쿠폰 전체의 준비 표시를 지우고
+    // 그룹을 다시 만든 뒤 같은 순회 안에서 한 번만 다시 읽는다 - 유휴 스캔은 간격이 길어 이 읽기보다 늦게 그룹을 되살린다
+    private List<MapRecord<String, Object, Object>> readWatched(StreamOffset<String>[] offsets, java.util.Collection<Long> couponIds) {
+        StreamReadOptions options = StreamReadOptions.empty().count(batchSize).block(Duration.ofMillis(blockMs));
+        try {
+            return redis.opsForStream().read(consumer(), options, offsets);
+        } catch (RuntimeException e) {
+            if (!messageContains(e, "NOGROUP")) {
+                throw e;
+            }
+            log.warn("[COUPON_STREAM_NOGROUP_RECOVER] couponCount={}", couponIds.size());
+            groupReady.removeAll(couponIds);
+            couponIds.forEach(this::ensureGroup);
+            return redis.opsForStream().read(consumer(), options, offsets);
+        }
     }
 
     /**
@@ -417,7 +432,10 @@ public class CouponStreamConsumer implements SmartLifecycle {
             return new ClaimResult(List.of(), 0);
         }
         claimScans.incrementAndGet();
+        retireIdleConsumers(couponId);
         List<StreamEntry> claimed = autoClaim(couponId);
+        // 패스가 끝난 뒤에 남긴다 - 던진 패스의 시각을 남기면 다음 호출이 간격만큼 그 쿠폰을 다시 스캔하지 않는다
+        lastClaimScanAt.put(couponId, System.currentTimeMillis());
         if (claimed.isEmpty()) {
             return new ClaimResult(List.of(), 0);
         }
@@ -440,13 +458,28 @@ public class CouponStreamConsumer implements SmartLifecycle {
 
     private boolean claimScanDue(Long couponId) {
         long interval = claimIntervalMs > 0 ? claimIntervalMs : claimMinIdleMs / 2;
-        long now = System.currentTimeMillis();
         Long last = lastClaimScanAt.get(couponId);
-        if (last != null && now - last < interval) {
-            return false;
+        return last == null || System.currentTimeMillis() - last >= interval;
+    }
+
+    /**
+     * 대기 항목이 없고 consumer-retire-idle-ms 이상 쉰 다른 컨슈머 이름을 지운다. 자기 이름은 건드리지 않는다
+     * 지우기 실패가 항목 인수를 막지 않게 삼킨다 - 이름이 조금 더 남을 뿐이다
+     */
+    private void retireIdleConsumers(Long couponId) {
+        try {
+            String streamKey = CouponStockRedisRepository.streamKey(couponId);
+            for (XInfoConsumer info : withGroup(couponId, () -> redis.opsForStream().consumers(streamKey, GROUP))) {
+                if (info.consumerName().equals(consumerName) || info.pendingCount() > 0 || info.idleTimeMs() < consumerRetireIdleMs) {
+                    continue;
+                }
+                // shortcut: XINFO 와 DELCONSUMER 사이에 그 이름이 새로 읽으면 그 항목의 대기 기록이 지워진다, 한 시간 넘게 쉰 이름이 그 사이에 돌아올 확률이라 받아들이며 이름이 재사용되는 구성이 생기면 Lua 로 묶는다
+                redis.opsForStream().deleteConsumer(streamKey, Consumer.from(GROUP, info.consumerName()));
+                log.info("[COUPON_STREAM_CONSUMER_RETIRED] couponId={}, consumer={}, idleMs={}", couponId, info.consumerName(), info.idleTimeMs());
+            }
+        } catch (RuntimeException e) {
+            log.warn("[COUPON_STREAM_CONSUMER_RETIRE_FAILED] couponId={}, error={}", couponId, e.toString());
         }
-        lastClaimScanAt.put(couponId, now);
-        return true;
     }
 
     /**
@@ -498,27 +531,25 @@ public class CouponStreamConsumer implements SmartLifecycle {
         }
     }
 
-    // 가져온 항목의 배달 횟수(XAUTOCLAIM 이 이미 올린 값). 가져온 id 범위 안의 PEL 한 번으로 읽는다
+    // 가져온 항목의 배달 횟수(XAUTOCLAIM 이 이미 올린 값). 항목마다 자기 id 한 건만 읽고 전부 한 번의 파이프라인으로 보낸다 -
+    // 처음~마지막 id 범위로 읽으면 사이에 낀 살아 있는 컨슈머의 항목이 건수 한도를 차지해 가져온 항목이 빠질 수 있고, 항목마다 왕복하면 배치 크기만큼 왕복이 는다
     private Map<String, Long> deliveryCounts(Long couponId, List<StreamEntry> claimed) {
-        String first = claimed.stream().map(StreamEntry::id).min(CouponStreamConsumer::compareIds).orElseThrow();
-        String last = claimed.stream().map(StreamEntry::id).max(CouponStreamConsumer::compareIds).orElseThrow();
-        PendingMessages pending = withGroup(couponId, () -> redis.opsForStream().pending(
-                CouponStockRedisRepository.streamKey(couponId), GROUP, Range.closed(first, last), 100_000L));
+        byte[] streamKey = bytes(CouponStockRedisRepository.streamKey(couponId));
+        List<Object> replies = withGroup(couponId, () -> redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (StreamEntry entry : claimed) {
+                connection.streamCommands().xPending(streamKey, GROUP, XPendingOptions.range(Range.closed(entry.id(), entry.id()), 1L));
+            }
+            return null;
+        }));
         Map<String, Long> counts = new HashMap<>();
-        if (pending != null) {
-            for (PendingMessage message : pending) {
-                counts.put(message.getIdAsString(), message.getTotalDeliveryCount());
+        for (Object reply : replies) {
+            if (reply instanceof PendingMessages pending) {
+                for (PendingMessage message : pending) {
+                    counts.put(message.getIdAsString(), message.getTotalDeliveryCount());
+                }
             }
         }
         return counts;
-    }
-
-    // 스트림 id 는 "밀리초-순번" 이다. 문자열이 아니라 두 수로 비교한다
-    private static int compareIds(String a, String b) {
-        String[] x = a.split("-");
-        String[] y = b.split("-");
-        int byTime = Long.compare(Long.parseLong(x[0]), Long.parseLong(y[0]));
-        return byTime != 0 ? byTime : Long.compare(Long.parseLong(x[1]), Long.parseLong(y[1]));
     }
 
     private static byte[] bytes(String value) {
@@ -565,7 +596,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
                     couponId, stream.id(), entry.getValue(), stream.fields());
         }
         stockRepository.setStatuses(statuses);
-        committedUsers.forEach(this::evictMyCouponCache);
+        committedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, poison.keySet().stream().map(StreamEntry::id).toList());
     }
 
@@ -632,7 +663,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
             }
         }
         stockRepository.setStatuses(statuses);
-        insertedUsers.forEach(this::evictMyCouponCache);
+        insertedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, entries.stream().map(StreamEntry::id).toList());
     }
 
@@ -643,21 +674,5 @@ public class CouponStreamConsumer implements SmartLifecycle {
         RecordId[] ids = entryIds.stream().map(RecordId::of).toArray(RecordId[]::new);
         redis.opsForStream().acknowledge(streamKey, GROUP, ids);
         redis.opsForStream().delete(streamKey, ids);
-    }
-
-    // 행이 커밋된 사용자의 목록 캐시를 비운다. 캐시 저장소(Redis) 장애로 확정 배치를 재전달시킬 이유는 없다 -
-    // 비우지 못하면 TTL 이 지날 때까지 목록이 낡을 뿐이다
-    private void evictMyCouponCache(Long userId) {
-        if (couponCacheManager == null) {
-            return;
-        }
-        try {
-            Cache cache = couponCacheManager.getCache(RedisConfig.COUPON_LIST_CACHE_NAME);
-            if (cache != null) {
-                cache.evict(userId);
-            }
-        } catch (Exception e) {
-            log.warn("[COUPON_MY_LIST_CACHE_EVICT_FAILED] userId={}, error={}", userId, e.toString());
-        }
     }
 }

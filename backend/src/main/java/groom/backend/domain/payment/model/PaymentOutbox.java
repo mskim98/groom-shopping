@@ -74,10 +74,4 @@ public class PaymentOutbox {
         this.publishedAt = null;
         this.republishCount++;
     }
-
-    // Kafka 발행 성공 시 호출 — PUBLISHED 로 전이하고 발행 시각을 남긴다.
-    public void markPublished() {
-        this.status = OutboxStatus.PUBLISHED;
-        this.publishedAt = LocalDateTime.now();
-    }
 }

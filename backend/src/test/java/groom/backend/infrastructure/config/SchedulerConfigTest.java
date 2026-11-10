@@ -81,7 +81,7 @@ class SchedulerConfigTest {
         PaymentOutboxRepository outboxRepository = mock(PaymentOutboxRepository.class);
         KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
         PaymentOutbox outbox = PaymentOutbox.create(UUID.randomUUID(), "PAYMENT_COMPLETED", "{}");
-        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(outbox));
+        when(outboxRepository.claimPendingBatch(100, 60000L)).thenReturn(List.of(outbox));
         // 브로커가 응답하지 않는 상황 - 완료되지 않는 Future
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
         PaymentEventPublisher publisher = new PaymentEventPublisher(outboxRepository, kafkaTemplate);
@@ -89,7 +89,6 @@ class SchedulerConfigTest {
 
         assertTimeoutPreemptively(Duration.ofSeconds(3), publisher::publishPending);
 
-        verify(outboxRepository, never()).save(any());
-        assertThat(outbox.getStatus()).as("발행 못 한 행은 PENDING 으로 남아 다음 주기에 재시도").isEqualTo(PaymentOutbox.OutboxStatus.PENDING);
+        verify(outboxRepository, never()).markPublished(any());
     }
 }

@@ -30,10 +30,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.cache.Cache;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 접수 진입점의 판정 매핑을 고정한다 (Redis · DB 는 가짜)
@@ -57,6 +57,8 @@ class CouponAsyncIssueServiceTest {
     private CouponStockRecoveryService couponStockRecoveryService;
     @Mock
     private DbLockIssueStrategy dbLockIssueStrategy;
+    @Mock
+    private ObjectProvider<CacheManager> cacheManagerProvider;
 
     private CouponAsyncIssueService service;
 
@@ -64,7 +66,8 @@ class CouponAsyncIssueServiceTest {
     void setUp() {
         service = new CouponAsyncIssueService(couponRepository, redisTemplate, couponStockRedisRepository,
                 couponStockRecoveryService, dbLockIssueStrategy,
-                new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L));
+                new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L),
+                new MyCouponCacheEvictor(cacheManagerProvider));
         given(redisTemplate.opsForValue()).willReturn(valueOps);
     }
 
@@ -147,7 +150,7 @@ class CouponAsyncIssueServiceTest {
         CacheManager cacheManager = mock(CacheManager.class);
         Cache cache = mock(Cache.class);
         given(cacheManager.getCache("user-coupons-list-cache")).willReturn(cache);
-        ReflectionTestUtils.setField(service, "couponCacheManager", cacheManager);
+        given(cacheManagerProvider.getIfAvailable()).willReturn(cacheManager);
         given(couponStockRedisRepository.enqueue(eq(1L), eq(100L), anyString()))
                 .willThrow(new org.springframework.data.redis.RedisConnectionFailureException("down"));
         given(dbLockIssueStrategy.issueFor(1L, 100L)).willReturn(CouponIssueResult.success(55L));

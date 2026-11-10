@@ -34,44 +34,42 @@ class PaymentEventPublisherTest {
     private PaymentEventPublisher publisher;
 
     @Test
-    void publishPending_발행_성공시_PUBLISHED로_전이하고_저장한다() {
+    void publishPending_발행_성공시_그_행을_PUBLISHED로_표시한다() {
         PaymentOutbox outbox = PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved", "{}");
-        given(outboxRepository.findPendingBatch(100)).willReturn(List.of(outbox));
+        given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of(outbox));
         doReturn(CompletableFuture.completedFuture(null))
                 .when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 
         publisher.publishPending();
 
-        assertThat(outbox.getStatus()).isEqualTo(PaymentOutbox.OutboxStatus.PUBLISHED);
-        verify(outboxRepository, times(1)).save(outbox);
+        verify(outboxRepository, times(1)).markPublished(outbox.getId());
     }
 
     @Test
     void publishPending_대기건이_없으면_아무것도_하지_않는다() {
-        given(outboxRepository.findPendingBatch(100)).willReturn(List.of());
+        given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of());
 
         publisher.publishPending();
 
         verify(paymentEventKafkaTemplate, never()).send(any(ProducerRecord.class));
-        verify(outboxRepository, never()).save(any());
+        verify(outboxRepository, never()).markPublished(any());
     }
 
     @Test
-    void publishPending_첫_발행이_예외면_그_회차의_남은_행을_시도하지_않고_모두_PENDING으로_남긴다() {
+    void publishPending_첫_발행이_예외면_그_회차의_남은_행을_시도하지_않고_아무것도_PUBLISHED로_표시하지_않는다() {
         PaymentOutbox first = PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved", "{}");
         PaymentOutbox second = PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved", "{}");
         PaymentOutbox third = PaymentOutbox.create(UUID.randomUUID(), "PaymentApproved", "{}");
-        given(outboxRepository.findPendingBatch(100)).willReturn(List.of(first, second, third));
+        given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of(first, second, third));
         doThrow(new IllegalStateException("broker down"))
                 .when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 
         publisher.publishPending();
 
         verify(paymentEventKafkaTemplate, times(1)).send(any(ProducerRecord.class));
-        verify(outboxRepository, never()).save(any());
-        assertThat(List.of(first, second, third))
-                .extracting(PaymentOutbox::getStatus)
-                .containsOnly(PaymentOutbox.OutboxStatus.PENDING);
+        verify(outboxRepository, never()).markPublished(any());
+        // 실패한 행과 보내지 못한 나머지 행의 임대를 풀어 다음 회차가 바로 집게 한다
+        verify(outboxRepository, times(1)).releaseLease(List.of(first.getId(), second.getId(), third.getId()));
     }
 
     @Test
