@@ -157,21 +157,31 @@ public class FlashStockReservation {
      * items 가 비어 있어도(outbox 가 없는 대사) 원장 되돌림은 한다
      */
     public void releaseAfterRecord(UUID paymentId, List<ReservedItem> items) {
-        List<StockLedgerRepository.Reversed> reversed;
+        List<StockLedgerRepository.Reversed> toRelease;
         try {
-            reversed = ledger.insertReversals(paymentId);
+            toRelease = reverseSales(paymentId, items);
         } catch (Exception e) {
             log.error("[STOCK_REVERSAL_FAILED] REVERSAL 기록 실패(수동 대사 필요) - PaymentId: {}, Error: {}", paymentId, e.getMessage());
             return;
         }
+        releaseRedis(toRelease);
+    }
+
+    /**
+     * 결제의 SALE 행 전부에 REVERSAL 을 쓰고(호출한 트랜잭션에 합류), 이번에 새로 쓰인 REDIS 예약 항목의 Redis 복원 대상을 돌려준다
+     * 사용자 취소처럼 REVERSAL 이 커밋되는 트랜잭션 안에서 부르는 경로가 Redis 복원을 커밋 뒤로 미룰 수 있게 둘로 나눴다 - 롤백된 REVERSAL 에 Redis 만 복원되면 키가 실제보다 커진다
+     */
+    public List<StockLedgerRepository.Reversed> reverseSales(UUID paymentId, List<ReservedItem> items) {
         Map<UUID, ReservedItem> byProduct = new LinkedHashMap<>();
         items.forEach(item -> byProduct.put(item.productId(), item));
-        for (StockLedgerRepository.Reversed row : reversed) {
-            ReservedItem item = byProduct.get(row.productId());
-            if (item != null && item.mode() == StockMode.REDIS) {
-                releaseRedis(row.productId(), row.quantity());
-            }
-        }
+        return ledger.insertReversals(paymentId).stream()
+                .filter(row -> byProduct.get(row.productId()) != null && byProduct.get(row.productId()).mode() == StockMode.REDIS)
+                .toList();
+    }
+
+    /** {@link #reverseSales} 가 돌려준 항목을 Redis 에 복원한다(모드가 REDIS 일 때만, 실패는 삼킨다) */
+    public void releaseRedis(List<StockLedgerRepository.Reversed> rows) {
+        rows.forEach(row -> releaseRedis(row.productId(), row.quantity()));
     }
 
     /**

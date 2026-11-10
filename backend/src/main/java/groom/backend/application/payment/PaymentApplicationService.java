@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ConditionalUpdateStockDecrementer;
-import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
 import groom.backend.application.product.StockLedgerRepository;
 import groom.backend.application.raffle.RaffleTicketAllocationService;
@@ -80,7 +79,6 @@ public class PaymentApplicationService {
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 승인(PaymentApproved) 이벤트 Outbox 적재
     private final ProductStockService productStockService; // 취소 복원(increase) 경로 전용 - 낙관적 락 + 재시도
     private final ConditionalUpdateStockDecrementer stockDecrementer; // 플래시가 아닌 상품의 차감(조건부 UPDATE)
-    private final ProductStockRedisRepository productStockRedisRepository; // 취소 복원 때 Redis 키 복원
     private final StockLedgerRepository stockLedgerRepository; // 후처리가 원장에 판매가 있는 상품을 가려내는 데 쓴다
     private final FlashStockReservation flashStockReservation; // 플래시 상품 진입 예약 · TX1 원장 기록 · 실패 되돌림
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
@@ -628,7 +626,7 @@ public class PaymentApplicationService {
         orderRepository.save(order);
 
         // 재고 복구
-        restoreProductStock(order);
+        restoreProductStock(order, paymentId);
 
         log.info("[PAYMENT_CANCEL_SUCCESS] Payment cancelled - PaymentId: {}", paymentId);
         return payment;
@@ -753,16 +751,42 @@ public class PaymentApplicationService {
         return results;
     }
 
-    private void restoreProductStock(Order order) {
+    // 취소로 재고를 돌려준다. 원장에 판매가 있는 플래시 상품은 상품 행에 직접 더하지 않고 REVERSAL 을 쓴다(적용 배치가 행에 접어 넣는다)
+    // 같은 취소가 두 번 돌아도 (결제, 상품, 종류) 유일 제약이 REVERSAL 을 한 번으로 막고, Redis 복원은 새로 쓰인 REVERSAL 에만 따른다
+    // Redis 복원은 커밋 뒤에 한다 - 롤백된 취소에 Redis 키만 커지지 않게 한다. 일반 상품은 행 복원뿐이다(Redis 키가 없다)
+    private void restoreProductStock(Order order, UUID paymentId) {
+        java.util.Set<UUID> inLedger = stockLedgerRepository.findSaleProductIds(paymentId);
+        if (!inLedger.isEmpty()) {
+            var toRelease = flashStockReservation.reverseSales(paymentId, reservedItemsOf(paymentId));
+            runAfterCommit("FLASH_STOCK_REDIS_RELEASE", () -> flashStockReservation.releaseRedis(toRelease));
+        }
         for (OrderItem orderItem : order.getOrderItems()) {
-            // 낙관적 락 + 자동 재시도 경로 - 플래시 상품은 적용 배치가 같은 행의 version 을 올리므로 충돌하면 다시 시도한다
+            if (inLedger.contains(orderItem.getProductId())) {
+                continue;
+            }
+            // 낙관적 락 + 자동 재시도 경로
             productStockService.increaseWithOptimisticLock(orderItem.getProductId(), orderItem.getQuantity());
-
-            // 플래시 상품의 Redis 키도 함께 복원한다. 키가 없는 상품(일반 상품 · 키 유실)은 Lua 가 만들지 않고 그대로 둔다
-            productStockRedisRepository.release(orderItem.getProductId(), orderItem.getQuantity());
 
             log.info("[STOCK_RESTORE] Product stock restored - ProductId: {}, Quantity: {}",
                     orderItem.getProductId(), orderItem.getQuantity());
+        }
+    }
+
+    // 승인 때 outbox 에 실은 예약 방식을 읽는다. 읽지 못하면 빈 목록이라 Redis 복원은 건너뛰고 원장 REVERSAL 만 쓴다(대조 배치가 Redis 를 되맞춘다)
+    private List<PaymentApprovedEvent.ReservedItem> reservedItemsOf(UUID paymentId) {
+        try {
+            return paymentOutboxRepository.findByAggregateIdAndEventType(paymentId, PaymentApprovedEvent.EVENT_TYPE)
+                    .map(row -> {
+                        try {
+                            PaymentApprovedEvent event = objectMapper.readValue(row.getPayload(), PaymentApprovedEvent.class);
+                            return event.reservedItems() != null ? event.reservedItems() : List.<PaymentApprovedEvent.ReservedItem>of();
+                        } catch (JsonProcessingException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }).orElse(List.of());
+        } catch (RuntimeException e) {
+            log.error("[STOCK_RESTORE_PAYLOAD_UNREADABLE] Redis 복원 생략 - PaymentId: {}, Error: {}", paymentId, e.getMessage());
+            return List.of();
         }
     }
 
