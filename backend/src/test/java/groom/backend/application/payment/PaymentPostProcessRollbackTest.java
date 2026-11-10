@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 
-import groom.backend.application.product.StockDecrementer;
+import groom.backend.application.product.ConditionalUpdateStockDecrementer;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
@@ -39,7 +39,7 @@ class PaymentPostProcessRollbackTest {
     private StockWarmUpRunner stockWarmUpRunner; // 1M 시드 워밍업 무력화
     // 실제 차감은 그대로 하고 그 뒤에 후처리를 실패시키는 주입 지점(Outbox 적재는 확정 쪽 트랜잭션으로 옮겨져 후처리에 없다)
     @SpyBean
-    private StockDecrementer stockDecrementer;
+    private ConditionalUpdateStockDecrementer stockDecrementer;
     // 비동기 알림·장바구니 호출이 시험 DB 에 부수효과를 남기지 않게 막는다
     @MockBean
     private PaymentNotificationService paymentNotificationService;
