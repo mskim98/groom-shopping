@@ -3,7 +3,7 @@
 # 사용: bash db/seed/verify.sh <database> <scale>
 #   <scale> 은 그 DB 를 만들 때의 SEED_SCALE (예: 1, 0.01) — 목표 행 수 = scale 1 의 목표 × scale
 # 환경 변수(기본값): SEED_PG_CONTAINER (dev-db) · SEED_PG_USER (dev) — 읽기만 한다. 아무것도 지우지 않는다
-#   SEED_VERIFY_TOL_SCALE (비어 있음 = <scale>) — 행 수 허용 오차 규칙을 고르는 배수. scale >= 1 이면 목표 300 이상은 ceil(1 %), 300 미만은 정확히 일치, scale < 1 이면 max(1 %, 3행)
+#   SEED_VERIFY_TOL_SCALE (비어 있음 = <scale>) — 행 수 허용 오차 규칙을 고르는 배수(<scale> 이상이어야 한다 — 더 엄격하게만 만들 수 있고 작으면 exit 2). scale >= 1 이면 목표 300 이상은 ceil(1 %), 300 미만은 정확히 일치, scale < 1 이면 max(1 %, 3행)
 # 검사 묶음: counts · flyway · refs · enums · amounts · flash-stock · coupon-quota · sequences · minority · skew · raffle
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,6 +12,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [ $# -eq 2 ] || { echo "usage: verify.sh <database> <scale>" >&2; exit 2; }
 DB="$1"
 SCALE="$2"
+# SEED_VERIFY_TOL_SCALE 은 검사를 더 엄격하게만 만든다 — scale 보다 작으면 거절한다(scale 1 검증을 환경 변수로 느슨하게 만들 수 없다)
+if [ -n "${SEED_VERIFY_TOL_SCALE:-}" ] && awk -v t="$SEED_VERIFY_TOL_SCALE" -v s="$SCALE" 'BEGIN { exit !(t + 0 < s + 0) }'; then
+  echo "refused: SEED_VERIFY_TOL_SCALE=$SEED_VERIFY_TOL_SCALE is below scale $SCALE (it may only make the check stricter)" >&2
+  exit 2
+fi
 
 set +e
 out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" ${SEED_VERIFY_TOL_SCALE:+-v tol_scale="$SEED_VERIFY_TOL_SCALE"} -f - 2>&1)"
