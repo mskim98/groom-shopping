@@ -223,7 +223,8 @@ def sampler_gaps(folder):
     from datetime import datetime
     out = {}
     for name, fn in (("docker_stats", "stats.tsv"), ("prometheus", "prom.tsv"), ("k6_cpu", "k6cpu.tsv")):
-        ts = sorted({l.split("\t")[0] for l in read(os.path.join(folder, fn)).splitlines() if l})
+        # prom.tsv 는 한 주기에 백엔드 3대 줄이 시각을 달리해 쌓인다 - backend1 의 줄만 센다
+        ts = sorted({l.split("\t")[0] for l in read(os.path.join(folder, fn)).splitlines() if l and (fn != "prom.tsv" or l.split("\t")[1:2] == ["backend1"])})
         t = [datetime.strptime(x, "%Y-%m-%dT%H:%M:%SZ").timestamp() for x in ts if re.match(r"\d{4}-", x)]
         gaps = sorted(b - a for a, b in zip(t, t[1:]))
         out[name] = percentile(gaps, 50) if gaps else None

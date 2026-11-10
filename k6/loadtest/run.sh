@@ -94,38 +94,45 @@ wait_lag_zero() { # 기다린 초를 표준 출력으로
   echo "$waited"
 }
 
+# 한 표본을 뜨는 데 걸린 시간(kafka-consumer-groups · docker stats 는 2 초 안팎)을 빼고 쉰다 - 그냥 sleep 5 면 표본 간격이 7 초가 된다
+nap() { local d=$(( 5 - ($(date +%s) - $1) )); [ "$d" -gt 0 ] && sleep "$d"; return 0; }
+
 # 5 초마다 소비자 랙 · 컨테이너 자원 · 백엔드 Hikari 와 bulkhead 지표를 파일에 덧붙인다
 sample_lag() {
   while :; do
+    local t0; t0="$(date +%s)"
     local out; out="$(kafka_cli kafka-consumer-groups --describe --group "$GROUP" 2>&1 || true)"
     printf '## %s\n%s\n' "$(date -u +%FT%TZ)" "$out" >> "$1/lag.log"
-    sleep 5
+    nap "$t0"
   done
 }
 sample_stats() {
   while :; do
+    local t0; t0="$(date +%s)"
     local ts; ts="$(date -u +%FT%TZ)"
     docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' | sed "s/^/$ts\t/" >> "$1/stats.tsv"
-    sleep 5
+    nap "$t0"
   done
 }
 sample_prom() {
   while :; do
+    local t0; t0="$(date +%s)"
     for b in $BACKENDS; do
       local ts; ts="$(date -u +%FT%TZ)"
       docker exec nginx curl -fsS "http://$b:8080/api/actuator/prometheus" 2> /dev/null \
         | grep -E '^(hikaricp_connections_(active|pending|max|timeout_total)|hikaricp_connections_(usage|acquire)_seconds_(count|sum|max)|resilience4j_bulkhead_available_concurrent_calls|process_cpu_usage)[{ ]' \
         | sed "s/^/$ts\t$b\t/" >> "$1/prom.tsv" || true
     done
-    sleep 5
+    nap "$t0"
   done
 }
 
 # 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
 sample_k6_cpu() { # 폴더 · k6 pid
   while kill -0 "$2" 2> /dev/null; do
+    local t0; t0="$(date +%s)"
     printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$(ps -o %cpu= -p "$2" | tr -d ' ')" >> "$1/k6cpu.tsv"
-    sleep 5
+    nap "$t0"
   done
 }
 
