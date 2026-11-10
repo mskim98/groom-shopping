@@ -30,7 +30,8 @@ import org.springframework.stereotype.Component;
  * 판정은 방향과 지속성 두 축으로 나눈다.
  * - redis > db : 선점은 Redis 를 줄이기만 하므로 정상 동작으로는 만들 수 없는 방향 -> 1회 관측으로 이상 확정
  * - redis < db : 인플라이트 선점과 구별 불가 -> 연속 2회 스캔에서 같은 gap 이 유지될 때만 지속 드리프트로 승격
- * - 키 부재   : 게이트가 열린 상태(preReserve 가 -2 로 DB 모드 전환) -> 별도 계상
+ * - 키 부재   : REDIS 모드 플래시 상품에서만 이상이다(다음 선점이 -2 를 받아 DB 모드로 전환된다) -> 별도 계상.
+ *               플래시가 아닌 상품은 Redis 키가 없는 것이 정상이라 계상하지 않는다
  * <p>
  * 자동 보정은 하지 않는다. 보정이 새 드리프트 원인이 될 수 있어 탐지와 경보까지만 담당한다(복귀 때의 덮어쓰기는 StockModeRecoveryJob 몫).
  * 순회는 StockWarmUpRunner 와 같은 키셋 페이지네이션을 쓴다.
@@ -67,7 +68,7 @@ public class StockReconciliationJob {
                 .description("Redis 재고가 DB 보다 작고 연속 2회 스캔에서 gap 이 줄지 않은 상품 수")
                 .register(meterRegistry);
         Gauge.builder("stock_drift_missing_key", missingKeyCount, AtomicInteger::get)
-                .description("Redis 재고 키가 없는 상품 수 (게이트 미동작)")
+                .description("Redis 재고 키가 없는 REDIS 모드 플래시 상품 수 (다음 선점이 DB 모드 전환을 일으킴)")
                 .register(meterRegistry);
         Gauge.builder("stock_drift_max_abs_gap", maxAbsGap, AtomicInteger::get)
                 .description("관측된 |DB - Redis| 최댓값")
@@ -125,7 +126,10 @@ public class StockReconciliationJob {
                 }
                 scanned++;
                 if (redisStock == null) {
-                    missing++;
+                    // 플래시가 아닌 상품은 Redis 키가 없는 것이 정상이다 - REDIS 모드 플래시 상품만 부재로 센다
+                    if (isRedisModeFlash(product)) {
+                        missing++;
+                    }
                     continue;
                 }
                 int gap = dbStock - redisStock;
