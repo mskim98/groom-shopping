@@ -3,9 +3,9 @@ package groom.backend.application.coupon;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -13,13 +13,13 @@ import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
-import groom.backend.infrastructure.kafka.KafkaLagReader;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -27,10 +27,10 @@ import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Pageable;
 
 /**
- * Redis 소실 복구 - 랙을 빼는 것이 이 계산의 전부다
+ * Redis 소실 복구 - 복원값은 quantity 에서 DB 발급 수를 뺀 값이다
  *
- * <p>{@code COUNT(coupon_issue)} 는 확정된 것만 세므로, 게이트는 통과했지만 아직 저장되지 않은 요청이 빠진다
- * 그만큼 재고를 많게 계산하고, 많게 계산한 재고는 그대로 초과 발급이 된다
+ * <p>대기 중인 요청은 같은 Redis 의 스트림에 있어 재고 키와 함께 사라진다. 그래서 빼야 할 대기분이 없다.
+ * 접수됐으나 확정되지 못한 요청은 재고 키와 함께 사라지므로 그 자리는 다시 열린다
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -43,15 +43,13 @@ class CouponStockRecoveryServiceTest {
     private CouponIssueRepository couponIssueRepository;
     @Mock
     private CouponStockRedisRepository couponStockRedisRepository;
-    @Mock
-    private KafkaLagReader kafkaLagReader;
 
     private CouponStockRecoveryService service;
 
     @BeforeEach
     void setUp() {
         service = new CouponStockRecoveryService(couponRepository, couponIssueRepository,
-                couponStockRedisRepository, kafkaLagReader);
+                couponStockRedisRepository);
     }
 
     private void 활성쿠폰_한건(long quantity) {
@@ -63,32 +61,49 @@ class CouponStockRecoveryServiceTest {
     }
 
     @Test
-    @DisplayName("복원값에서 랙을 뺀다")
-    void recoverAll_랙만큼_빼고_심는다() {
+    @DisplayName("재고 키가 사라지면 quantity − DB 발급 수를 심는다")
+    void recoverAll_수량에서_발급_수를_빼고_심는다() {
         활성쿠폰_한건(10_000L);
         given(couponStockRedisRepository.getStock(1L)).willReturn(null);
         given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(6_000L);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(1_500L);
         given(couponStockRedisRepository.initStockIfAbsent(eq(1L), anyLong())).willReturn(true);
 
         service.recoverAll();
 
-        // 10,000 − 6,000(확정) − 1,500(비행 중) = 2,500
-        // 랙을 빼지 않으면 4,000 을 심어 비행 중인 1,500 만큼이 그대로 초과 발급이 된다
-        verify(couponStockRedisRepository).initStockIfAbsent(1L, 2_500L);
+        // 10,000 − 6,000(확정) = 4,000. 대기 요청은 스트림과 함께 사라졌으므로 빼지 않는다
+        verify(couponStockRedisRepository).initStockIfAbsent(1L, 4_000L);
     }
 
     @Test
-    @DisplayName("랙을 읽지 못하면 복원하지 않는다")
-    void recoverAll_랙을_못_읽으면_멈춘다() {
-        활성쿠폰_한건(10_000L);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(-1L);
+    @DisplayName("발급자 명단을 DB 에서 다시 채운 뒤에 재고 키를 심는다")
+    void recoverAll_명단을_먼저_채우고_재고를_심는다() {
+        활성쿠폰_한건(10L);
+        given(couponStockRedisRepository.getStock(1L)).willReturn(null);
+        given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(2L);
+        given(couponIssueRepository.findUserIdsByCouponId(1L)).willReturn(List.of(7L, 8L));
+        given(couponStockRedisRepository.initStockIfAbsent(eq(1L), anyLong())).willReturn(true);
 
         service.recoverAll();
 
-        // 못 읽은 것을 0 으로 치고 복원하면 비행 중인 건수만큼 재고가 많아진다
-        // 재고가 많아지는 것은 곧 초과 발급이므로 멈춘 채 사람을 부른다
-        verify(couponStockRedisRepository, never()).initStockIfAbsent(anyLong(), anyLong());
+        // 재고 키가 먼저 생기면 명단이 빈 동안 이미 받은 사용자가 접수를 다시 통과한다
+        InOrder order = inOrder(couponStockRedisRepository);
+        order.verify(couponStockRedisRepository).addIssuedUsers(1L, List.of(7L, 8L));
+        order.verify(couponStockRedisRepository).initStockIfAbsent(1L, 8L);
+    }
+
+    @Test
+    @DisplayName("복구가 도는 동안은 isRecovering 이 참이다 - 접수 게이트가 이 값을 읽는다")
+    void recoverAll_도는_동안_복구중이다() {
+        활성쿠폰_한건(10L);
+        given(couponStockRedisRepository.getStock(1L)).willAnswer(invocation -> {
+            assertThat(service.isRecovering()).isTrue();
+            return null;
+        });
+        given(couponStockRedisRepository.initStockIfAbsent(eq(1L), anyLong())).willReturn(true);
+
+        service.recoverAll();
+
+        assertThat(service.isRecovering()).isFalse();
     }
 
     @Test
@@ -97,7 +112,6 @@ class CouponStockRecoveryServiceTest {
         활성쿠폰_한건(10_000L);
         given(couponStockRedisRepository.getStock(1L)).willReturn(null);
         given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(10_200L);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
         given(couponStockRedisRepository.initStockIfAbsent(eq(1L), anyLong())).willReturn(true);
 
         service.recoverAll();
@@ -110,7 +124,6 @@ class CouponStockRecoveryServiceTest {
     @DisplayName("살아 있는 재고 키는 덮지 않는다")
     void recoverAll_재고가_살아있으면_건너뛴다() {
         활성쿠폰_한건(10_000L);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
         given(couponStockRedisRepository.getStock(1L)).willReturn(4_200L);
 
         service.recoverAll();
@@ -123,7 +136,6 @@ class CouponStockRecoveryServiceTest {
     @DisplayName("복구가 끝나면 접수 차단이 풀린다")
     void recoverAll_끝나면_차단이_풀린다() {
         활성쿠폰_한건(10_000L);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(-1L);
 
         assertThat(service.isRecovering()).isFalse();
         service.recoverAll();

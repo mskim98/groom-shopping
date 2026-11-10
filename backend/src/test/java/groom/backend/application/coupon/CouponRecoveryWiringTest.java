@@ -11,17 +11,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.coupon.strategy.CouponIssueResult;
+import groom.backend.application.coupon.strategy.DbLockIssueStrategy;
 import groom.backend.domain.coupon.model.entity.Coupon;
 import groom.backend.domain.coupon.model.enums.CouponType;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.infrastructure.coupon.CouponIssueHealthIndicator;
 import groom.backend.infrastructure.coupon.CouponStockWarmUpRunner;
-import groom.backend.infrastructure.kafka.KafkaLagReader;
 import groom.backend.infrastructure.kafka.stream.CouponDelayConsumer;
 import groom.backend.infrastructure.kafka.stream.CouponDelayEvent;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
@@ -45,7 +45,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.health.Status;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -66,8 +65,6 @@ class CouponRecoveryWiringTest {
     private CouponIssueRepository couponIssueRepository;
     @Mock
     private CouponStockRedisRepository stockRepository;
-    @Mock
-    private KafkaLagReader kafkaLagReader;
     @Mock
     private CouponStockRecoveryService recoveryService;
 
@@ -93,47 +90,45 @@ class CouponRecoveryWiringTest {
 
         runner.run(null);
 
-        // 랙을 빼서 심는 경로다. 키 부재를 단순 SETNX 로만 메우면 발행 중이던 요청 수만큼 재고가 많아진다
-        // 복구가 심은 키는 이어지는 워밍업이 SETNX 로 덮지 않는다
+        // quantity − DB 발급 수로 심는 경로다. 복구가 심은 키는 이어지는 워밍업이 SETNX 로 덮지 않는다
         InOrder order = inOrder(recoveryService, stockRepository);
         order.verify(recoveryService).recoverIfStockMissing();
         order.verify(stockRepository).addIssuedUsers(anyLong(), any());
     }
 
     @Test
-    @DisplayName("재고 키가 없는 활성 쿠폰이 있으면 recoverIfStockMissing 이 recoverAll 로 랙을 빼서 심는다")
+    @DisplayName("재고 키가 없는 활성 쿠폰이 있으면 recoverIfStockMissing 이 recoverAll 로 quantity − DB 발급 수를 심는다")
     void recoverIfStockMissing_키가_없으면_recoverAll_로_심는다() {
         CouponStockRecoveryService real = new CouponStockRecoveryService(
-                couponRepository, couponIssueRepository, stockRepository, kafkaLagReader);
+                couponRepository, couponIssueRepository, stockRepository);
         given(stockRepository.getStock(1L)).willReturn(null);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(5L);
         given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(30L);
         given(stockRepository.initStockIfAbsent(anyLong(), anyLong())).willReturn(true);
 
         assertThat(real.recoverIfStockMissing()).isTrue();
 
-        verify(stockRepository).initStockIfAbsent(1L, 65L);
+        // 100 − 30 = 70. 대기 요청은 같은 Redis 의 스트림에 있어 재고 키와 함께 사라졌으므로 빼지 않는다
+        verify(stockRepository).initStockIfAbsent(1L, 70L);
     }
 
     @Test
-    @DisplayName("재고 키가 모두 살아 있으면 recoverIfStockMissing 은 랙을 읽지도 않는다")
+    @DisplayName("재고 키가 모두 살아 있으면 recoverIfStockMissing 은 아무것도 심지 않는다")
     void recoverIfStockMissing_키가_있으면_아무것도_하지_않는다() {
         CouponStockRecoveryService real = new CouponStockRecoveryService(
-                couponRepository, couponIssueRepository, stockRepository, kafkaLagReader);
+                couponRepository, couponIssueRepository, stockRepository);
         given(stockRepository.getStock(1L)).willReturn(40L);
 
         assertThat(real.recoverIfStockMissing()).isFalse();
 
-        verify(kafkaLagReader, never()).lagOf(anyString(), anyString());
+        verify(stockRepository, never()).initStockIfAbsent(anyLong(), anyLong());
     }
 
     @Test
     @DisplayName("복구는 발급자 SET 을 먼저 복원하고 그 다음에 재고 키를 심는다")
     void recoverAll_발급자_SET_복원이_재고_키보다_앞선다() {
         CouponStockRecoveryService real = new CouponStockRecoveryService(
-                couponRepository, couponIssueRepository, stockRepository, kafkaLagReader);
+                couponRepository, couponIssueRepository, stockRepository);
         given(stockRepository.getStock(1L)).willReturn(null);
-        given(kafkaLagReader.lagOf(anyString(), anyString())).willReturn(0L);
         given(couponIssueRepository.countByCoupon_Id(1L)).willReturn(30L);
         given(couponIssueRepository.findUserIdsByCouponId(1L)).willReturn(List.of(5L));
         given(stockRepository.initStockIfAbsent(anyLong(), anyLong())).willReturn(true);
@@ -151,12 +146,12 @@ class CouponRecoveryWiringTest {
     void enqueue_복구_중이면_접수가_보류된다() {
         given(recoveryService.isRecovering()).willReturn(true);
         CouponAsyncIssueService service = new CouponAsyncIssueService(
-                couponRepository, couponIssueRepository, mock(CouponIssueBatchWriter.class), stockRepository,
-                mock(RedisTemplate.class), mock(KafkaTemplate.class), new ObjectMapper(),
-                mock(RedissonClient.class), recoveryService);
+                couponRepository, mock(RedisTemplate.class), stockRepository, recoveryService,
+                mock(DbLockIssueStrategy.class),
+                new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L));
 
         assertThat(service.enqueue(1L, 100L).status()).isEqualTo(CouponIssueResult.Status.UNAVAILABLE);
-        verify(stockRepository, never()).tryIssue(anyLong(), anyLong());
+        verify(stockRepository, never()).enqueue(anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -217,7 +212,7 @@ class CouponRecoveryWiringTest {
         RLock lock = mock(RLock.class);
         given(redisson.getLock("coupon:reconcile:lock")).willReturn(lock);
         CouponStockReconciliationService service = new CouponStockReconciliationService(
-                couponRepository, couponIssueRepository, stockRepository, redisson, kafkaLagReader, new SimpleMeterRegistry());
+                couponRepository, couponIssueRepository, stockRepository, redisson, new SimpleMeterRegistry());
 
         Method scheduled = Arrays.stream(CouponStockReconciliationService.class.getDeclaredMethods())
                 .filter(m -> m.isAnnotationPresent(Scheduled.class))

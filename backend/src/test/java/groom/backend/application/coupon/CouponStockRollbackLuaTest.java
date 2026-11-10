@@ -35,7 +35,9 @@ class CouponStockRollbackLuaTest {
     @AfterEach
     void cleanKeys() {
         redisTemplate.delete(List.of(CouponStockRedisRepository.stockKey(COUPON_ID),
-                CouponStockRedisRepository.issuedUsersKey(COUPON_ID)));
+                CouponStockRedisRepository.issuedUsersKey(COUPON_ID),
+                CouponStockRedisRepository.streamKey(COUPON_ID),
+                CouponStockRedisRepository.statusKey("rollback-lua-probe")));
     }
 
     @Test
@@ -92,8 +94,8 @@ class CouponStockRollbackLuaTest {
         repository.rollbackStockOnly(COUPON_ID);
 
         assertThat(redisTemplate.hasKey(CouponStockRedisRepository.stockKey(COUPON_ID))).isFalse();
-        // 키가 만들어졌다면 tryIssue 가 -2(미초기화) 대신 통과를 돌려주게 된다
-        assertThat(repository.tryIssue(COUPON_ID, USER_ID))
+        // 키가 만들어졌다면 enqueue 가 -2(미초기화) 대신 통과를 돌려주게 된다
+        assertThat(repository.enqueue(COUPON_ID, USER_ID, "rollback-lua-probe"))
                 .isEqualTo(CouponStockRedisRepository.IssueResult.NOT_INITIALIZED);
     }
 }

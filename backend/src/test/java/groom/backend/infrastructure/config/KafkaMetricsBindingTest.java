@@ -45,7 +45,7 @@ class KafkaMetricsBindingTest {
         TestPropertyValues.of("spring.kafka.bootstrap-servers=localhost:9094").applyTo(context);
         context.registerBean(MeterRegistry.class, () -> new SimpleMeterRegistry());
         context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
-        context.register(KafkaConfig.class, CouponIssueKafkaConfig.class);
+        context.register(KafkaConfig.class);
         context.refresh();
     }
 
@@ -99,13 +99,13 @@ class KafkaMetricsBindingTest {
     }
 
     @Test
-    @DisplayName("Streams 원천 토픽 coupon-delay-events 와 DLQ 토픽 coupon-issue-dlq 의 NewTopic 빈이 있다")
-    void topics_원천_토픽과_DLQ_토픽이_빈으로_있다() {
+    @DisplayName("Streams 원천 토픽 coupon-delay-events 의 NewTopic 빈이 있다")
+    void topics_원천_토픽이_빈으로_있다() {
         Set<String> names = context.getBeansOfType(NewTopic.class).values().stream()
                 .map(NewTopic::name).collect(Collectors.toSet());
 
         // 원천 토픽이 없으면 Streams 가 INCOMPLETE_SOURCE_TOPIC_METADATA 로 스스로 종료하고 모든 kafka_* 지표가 사라진다
-        assertThat(names).contains("coupon-delay-events", "coupon-issue-dlq");
+        assertThat(names).contains("coupon-delay-events");
     }
 
     private static long toLong(Object value) {
