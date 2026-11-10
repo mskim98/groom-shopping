@@ -9,8 +9,10 @@
 #   step <rps> <out-dir>      초당 <rps> 요청 램프 10 초 + 유지 30 초 (<out-dir>/step-<rps>)
 #   collect <out-dir> <result.json>   단계 폴더를 result.json 한 개로 모은다(collect.py)
 #   down                      스택의 컨테이너를 멈추고 지운다 - 볼륨은 지우지 않는다
+# tiny · step 은 <out-dir> 자체에 진단 파일도 쓴다(같은 <out-dir> 로 두 단계를 돌리면 뒤의 단계가 덮어쓴다): pg-activity.tsv(pg_stat_activity 1 초 표본) ·
+#   backend<N>.log(단계 구간의 백엔드 로그 전체) · leak-digest.txt · pg-digest.txt(leak_digest.py · pg_activity_digest.py 의 요약)
 # 지우는 것: down 이 이 프로젝트의 컨테이너와 네트워크만. 볼륨 · dev-* 컨테이너 · 다른 DB 는 건드리지 않는다. seed 는 shop_seed_template · shop_seed_m1 두 DB 를 다시 만든다
-# 환경 변수(기본값): LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30)
+# 환경 변수(기본값): LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
@@ -139,6 +141,27 @@ sample_prom() {
   done
 }
 
+# pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션을 1 초마다 한 번 읽는다. 컨테이너 안에서 psql 을 반복해(docker exec 를 매번 새로 치면 간격이 1.3 초 넘게 늘어난다)
+# 표본 하나의 비용은 psql 연결 1 회 + pg_stat_activity 한 번 읽기(수 ms)이고, 활동 행이 없는 시각에도 빈 행 하나를 남겨 표본 시각이 끊기지 않게 한다
+# 컨테이너 안 반복은 docker exec 를 죽여도 남으므로 멈춤 파일(/tmp/pg-sample.stop)이 생기면 끝나고, 멈춤 신호를 놓쳐도 3600 번째에 끝난다
+PG_SAMPLE_SQL="WITH n AS (SELECT statement_timestamp() AS t)
+SELECT to_char(n.t AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), coalesce(a.pid::text, ''), coalesce(a.state, ''), coalesce(a.wait_event_type, ''), coalesce(a.wait_event, ''),
+  coalesce(round(extract(epoch FROM n.t - a.xact_start) * 1000)::bigint::text, ''), coalesce(round(extract(epoch FROM n.t - a.query_start) * 1000)::bigint::text, ''),
+  CASE WHEN a.pid IS NULL THEN '' ELSE pg_blocking_pids(a.pid)::text END, coalesce(left(regexp_replace(a.query, '\\s+', ' ', 'g'), 200), '')
+FROM n LEFT JOIN pg_stat_activity a ON a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.backend_type = 'client backend' AND a.state IS DISTINCT FROM 'idle'"
+
+sample_pg() { # 출력 폴더
+  printf 'sample_time\tpid\tstate\twait_event_type\twait_event\txact_age_ms\tquery_age_ms\tblocking_pids\tquery\n' > "$1/pg-activity.tsv"
+  docker exec db rm -f /tmp/pg-sample.stop
+  docker exec -e SQL="$PG_SAMPLE_SQL" -e PGPASSWORD="$SEED_PG_PASSWORD" db sh -c '
+    i=0
+    while [ ! -e /tmp/pg-sample.stop ] && [ "$i" -lt 3600 ]; do
+      psql -U "'"$SEED_PG_USER"'" -d '"$SEED_DB"' -X -q -At -F "$(printf "\t")" -c "$SQL"
+      i=$((i + 1)); sleep 1
+    done' >> "$1/pg-activity.tsv" 2> /dev/null || true
+}
+stop_pg_sample() { docker exec db touch /tmp/pg-sample.stop 2> /dev/null || true; }
+
 # 5 초마다 k6 프로세스의 CPU 사용률(%cpu, 코어 하나 = 100)을 호스트에서 읽는다 - 부하 생성기가 한계였는지 가리는 근거
 sample_k6_cpu() { # 폴더 · k6 pid
   while kill -0 "$2" 2> /dev/null; do
@@ -151,8 +174,8 @@ sample_k6_cpu() { # 폴더 · k6 pid
 # 시험 창(DB 시계) - 주문 시각은 앱이 Asia/Seoul 시각으로 timestamp 열에 쓰므로 같은 기준으로 읽는다
 db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS.US')"; }
 
-run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
-  local name="$1" rps="$2" vus="$3" dir="$4"
+run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출력 폴더(진단 파일이 가는 곳)
+  local name="$1" rps="$2" vus="$3" dir="$4" out="$5"
   mkdir -p "$dir"
   local before_lines start end
   # 단계 전에 랙이 남아 있으면 앞 단계의 일이 섞인다
@@ -173,7 +196,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   sample_lag "$dir" & local p1=$!
   sample_stats "$dir" & local p2=$!
   sample_prom "$dir" & local p3=$!
-  trap 'kill $p1 $p2 $p3 2> /dev/null || true' EXIT
+  sample_pg "$out" & local p5=$!
+  trap 'stop_pg_sample; kill $p1 $p2 $p3 2> /dev/null || true' EXIT
 
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
   # 종료 코드는 임계값 실패 등 k6 자체 판정이다 - 측정값은 요약 파일에서 읽으므로 여기서 멈추지 않는다
@@ -193,8 +217,9 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   echo "lag_wait_after_s=$(wait_lag_zero)" >> "$dir/wait.txt"
   echo "lag_after=$(lag_total)" >> "$dir/wait.txt"
   sleep 6
+  stop_pg_sample
   kill $p1 $p2 $p3 2> /dev/null || true
-  wait $p1 $p2 $p3 2> /dev/null || true
+  wait $p1 $p2 $p3 $p5 2> /dev/null || true
   trap - EXIT
 
   end_offsets > "$dir/offsets_after.txt"
@@ -204,6 +229,10 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
     docker logs --since "$start" "${PROJECT}-$b-1" 2>&1 | grep 'STOCK_LEDGER_APPLY' > "$dir/ledger-$b.log" || true
     docker logs --since "$start" "${PROJECT}-$b-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -200 > "$dir/warn-$b.log" || true
   done
+  # 진단 파일 - 단계 구간의 백엔드 로그 전체(Hikari 누수 감지 보고 포함)와 두 요약
+  for b in $BACKENDS; do docker logs --since "$start" "${PROJECT}-$b-1" > "$out/$b.log" 2>&1 || true; done
+  python3 -B k6/loadtest/leak_digest.py --threshold-ms "${LEAK_THRESHOLD_MS:-2000}" "$out"/backend*.log > "$out/leak-digest.txt" || true
+  python3 -B k6/loadtest/pg_activity_digest.py "$out/pg-activity.tsv" > "$out/pg-digest.txt" || true
   sleep 1
   docker exec nginx tail -n +"$((before_lines + 1))" "$NGINX_LOG" > "$dir/nginx.log"
   echo "== $name done: $(tail -1 "$dir/k6.log")"
@@ -212,8 +241,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
 max_vus_for() { case "$1" in 2000) echo 1000 ;; 4000) echo 2000 ;; 6000) echo 3000 ;; *) echo $(( $1 / 2 + 1 )) ;; esac; }
 
 # 시험 실행은 초당 50 요청 10 초(램프 2 초 뒤 유지 10 초) - 도구가 끝까지 도는지만 본다
-cmd_tiny() { RAMP_S=2; HOLD_S=10; run_step tiny 50 "${MAX_VUS:-50}" "${1:?usage: tiny <out-dir>}/tiny"; }
-cmd_step() { local rps="${1:?usage: step <rps> <out-dir>}" out="${2:?usage: step <rps> <out-dir>}"; run_step "step $rps" "$rps" "${MAX_VUS:-$(max_vus_for "$rps")}" "$out/step-$rps"; }
+cmd_tiny() { RAMP_S=2; HOLD_S="${TINY_HOLD_S:-10}"; local out="${1:?usage: tiny <out-dir>}"; mkdir -p "$out"; run_step tiny 50 "${MAX_VUS:-50}" "$out/tiny" "$out"; }
+cmd_step() { local rps="${1:?usage: step <rps> <out-dir>}" out="${2:?usage: step <rps> <out-dir>}"; mkdir -p "$out"; run_step "step $rps" "$rps" "${MAX_VUS:-$(max_vus_for "$rps")}" "$out/step-$rps" "$out"; }
 cmd_collect() { python3 -B "$ROOT/k6/loadtest/collect.py" "${1:?usage: collect <out-dir> <result.json>}" "${2:?usage: collect <out-dir> <result.json>}"; }
 cmd_down() { $DC down --remove-orphans; }
 
