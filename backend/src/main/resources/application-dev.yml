@@ -116,8 +116,6 @@ payment:
   toss:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
-  consumer:
-    circuit-check-ms: 1000       # db-ledger 회로 상태를 보고 결제 컨슈머를 멈추거나 재개하는 확인 주기. 길면 DB 가 돌아와도 그만큼 늦게 재개한다
   # Outbox 폴러 주기. 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦다
   outbox:
     poll-delay-ms: 200
@@ -257,6 +255,7 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 5
         automatic-transition-from-open-to-half-open-enabled: true
       # 결제 컨슈머의 DB 작업(PaymentEventConsumer) 회로. 데이터 접근 실패만 센다 - 업무 예외(BusinessException)는 DB 가 살아 있다는 신호라 세지 않는다
+      # 멈추고 재개하는 확인 주기는 payment.consumer.circuit-check-ms(기본 1000 - 길면 DB 가 돌아와도 그만큼 늦게 재개한다, application-dev.yml 에는 두지 않고 코드 기본값을 쓴다)
       # OPEN 이면 리스너 컨테이너를 멈춰 레코드를 승인하지 않은 채 남긴다(재시도 5회 · DLQ 적재를 막는다). 10초 뒤 HALF_OPEN 의 레코드 2건이 DB 를 탐색한다
       db-ledger:
         sliding-window-type: COUNT_BASED
