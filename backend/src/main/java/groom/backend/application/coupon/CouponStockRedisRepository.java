@@ -63,7 +63,7 @@ public class CouponStockRedisRepository {
     /**
      * 접수 Lua. 반환 코드: 1=성공, 0=품절, -1=중복 발급, -2=미초기화.
      * KEYS[1]=재고 키, KEYS[2]=발급자 SET 키, KEYS[3]=요청 스트림 키, KEYS[4]=상태 키,
-     * ARGV[1]=userId, ARGV[2]=requestId, ARGV[3]=상태 키 만료(초)
+     * ARGV[1]=userId, ARGV[2]=requestId, ARGV[3]=상태 키 만료(초), ARGV[4]=처음 상태값(WAITING)
      *
      * <p>중복 검사를 재고 검사보다 앞에 둔다. 뒤에 두면 재고가 0 이 된 뒤로는
      * 이미 받은 사용자의 재요청까지 "품절"로 응답돼, 실패 집계에서 중복과 품절이 섞인다
@@ -87,7 +87,7 @@ public class CouponStockRedisRepository {
                     redis.call('DECR', KEYS[1])
                     redis.call('SADD', KEYS[2], ARGV[1])
                     redis.call('XADD', KEYS[3], '*', 'userId', ARGV[1], 'requestId', ARGV[2])
-                    redis.call('SET', KEYS[4], 'WAITING', 'EX', ARGV[3])
+                    redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[3])
                     return 1
                     """,
             Long.class
@@ -169,7 +169,7 @@ public class CouponStockRedisRepository {
                 statusKey(requestId)
         );
         Long result = redisTemplate.execute(ENQUEUE_SCRIPT, keys, userId.toString(), requestId,
-                String.valueOf(STATUS_TTL.toSeconds()));
+                String.valueOf(STATUS_TTL.toSeconds()), CouponIssueStatus.WAITING);
         if (result == null) {
             return IssueResult.NOT_INITIALIZED;
         }

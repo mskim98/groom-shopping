@@ -2,6 +2,7 @@ package groom.backend.infrastructure.coupon;
 
 import groom.backend.application.coupon.CouponIssueBatchWriter;
 import groom.backend.application.coupon.CouponIssueBatchWriter.InsertOutcome;
+import groom.backend.application.coupon.CouponIssueStatus;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.coupon.model.entity.Coupon;
@@ -9,6 +10,7 @@ import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.infrastructure.config.RedisConfig;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,6 +20,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
+import io.lettuce.core.StreamMessage;
+import io.lettuce.core.XAutoClaimArgs;
+import io.lettuce.core.api.async.RedisAsyncCommands;
+import io.lettuce.core.models.stream.ClaimedMessages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -27,6 +35,7 @@ import org.springframework.cache.CacheManager;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessage;
@@ -35,9 +44,9 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
-import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -52,7 +61,7 @@ import org.springframework.stereotype.Component;
  *       ({@link CouponIssueBatchWriter})</li>
  *   <li><b>커밋 뒤에</b> 상태(SUCCESS · 자리 없음 FAILED) · 내 쿠폰 캐시 비움 · {@code XACK}(+ 스트림 항목 삭제).
  *       커밋과 ack 사이에 죽으면 항목이 재전달되고 {@code ON CONFLICT} 와 request_id 비교가 흡수한다</li>
- *   <li>다른 컨슈머가 {@code claim-min-idle-ms} 이상 쥔 항목은 가져와(XPENDING + XCLAIM) 같은 방식으로 처리한다</li>
+ *   <li>다른 컨슈머가 {@code claim-min-idle-ms} 이상 쥔 항목은 가져와(XAUTOCLAIM) 같은 방식으로 처리한다</li>
  *   <li>배달 횟수가 {@code max-deliveries} 를 넘은 항목은 {@code coupon:{id}:dlq} 로 옮기고 ack 하며
  *       Redis 예약을 되돌리고 FAILED 로 남긴다</li>
  * </ol>
@@ -66,8 +75,6 @@ public class CouponStreamConsumer implements SmartLifecycle {
 
     public static final String GROUP = "coupon-issue";
 
-    private static final String STATUS_SUCCESS = "SUCCESS";
-    private static final String STATUS_FAILED_PREFIX = "FAILED:";
     private static final int PAGE_SIZE = 500;
     private static final long DLQ_MAX_LENGTH = 10_000L;
 
@@ -118,6 +125,9 @@ public class CouponStreamConsumer implements SmartLifecycle {
     // 처리 중인 인스턴스의 한 배치(최대 한 트랜잭션 10초)보다 길어야 살아 있는 인스턴스의 항목을 가로채지 않는다
     @Value("${coupon.issue.stream.claim-min-idle-ms:30000}")
     private long claimMinIdleMs = 30_000L;
+    // 쿠폰마다 유휴 항목 스캔을 돌리는 최소 간격. 0 이면 claim-min-idle-ms 의 절반이다
+    @Value("${coupon.issue.stream.claim-interval-ms:0}")
+    private long claimIntervalMs = 0L;
     // 항목 하나에 허용하는 배달 횟수. 넘으면 DLQ
     @Value("${coupon.issue.stream.max-deliveries:3}")
     private int maxDeliveries = 3;
@@ -136,6 +146,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private final Set<Long> groupReady = ConcurrentHashMap.newKeySet();
     // 루프가 읽는 쿠폰. 비활성이 됐어도 스트림에 항목이 남아 있으면 비울 때까지 둔다
     private volatile Set<Long> watched = Set.of();
+    private final Map<Long, Long> lastClaimScanAt = new ConcurrentHashMap<>();
+    private final AtomicLong claimScans = new AtomicLong();
     private volatile long lastRefreshAt = 0L;
 
     private volatile boolean running = false;
@@ -392,39 +404,30 @@ public class CouponStreamConsumer implements SmartLifecycle {
     }
 
     /**
-     * 유휴 시간이 지난 항목을 내 이름으로 가져온다(XPENDING 으로 배달 횟수를 읽고 XCLAIM min-idle 로 가져온다)
+     * 유휴 시간이 지난 항목을 내 이름으로 가져온다 - {@code XAUTOCLAIM … min-idle-time start COUNT n} 을 서버가 거른다
      *
-     * <p>XCLAIM 은 배달 횟수를 1 올린다. 올린 뒤의 횟수가 max-deliveries 를 넘으면 처리하지 않고 DLQ 로 보낸다 -
+     * <p>유휴 필터가 서버에 있으므로 살아 있는 컨슈머가 쥔 유휴 전 항목이 앞에 많아도 뒤의 유휴 항목이 밀리지 않는다.
+     * XAUTOCLAIM 은 배달 횟수를 1 올린다. 올린 뒤의 횟수가 max-deliveries 를 넘으면 처리하지 않고 DLQ 로 보낸다 -
      * 항목은 배달 1 ~ max-deliveries 회째까지 처리를 시도하는 셈이다
+     *
+     * <p>스캔은 쿠폰마다 {@code claim-interval-ms} 에 한 번만 돈다. 순회마다 PEL 을 훑을 이유가 없다
      */
-    // shortcut: XAUTOCLAIM 대신 XPENDING(oldest batch-size 건) + XCLAIM 이다. Spring Data Redis 3.5 에 XAUTOCLAIM 이 없다.
-    // PEL 앞쪽 batch-size 건이 모두 유휴 전이면 뒤쪽 유휴 항목은 다음 순회로 밀린다, XAUTOCLAIM 명령을 직접 보낼 때 정리한다
     private ClaimResult claimIdle(Long couponId) {
-        String streamKey = CouponStockRedisRepository.streamKey(couponId);
-        StreamOperations<String, Object, Object> ops = redis.opsForStream();
-        PendingMessages pending = withGroup(couponId,
-                () -> ops.pending(streamKey, GROUP, Range.unbounded(), batchSize));
-        if (pending == null || pending.isEmpty()) {
+        if (!claimScanDue(couponId)) {
             return new ClaimResult(List.of(), 0);
         }
-        Map<String, Long> deliveriesBefore = new HashMap<>();
-        List<RecordId> ids = new ArrayList<>();
-        for (PendingMessage message : pending) {
-            deliveriesBefore.put(message.getIdAsString(), message.getTotalDeliveryCount());
-            ids.add(message.getId());
-        }
-        List<MapRecord<String, Object, Object>> claimed = ops.claim(streamKey, GROUP, consumerName,
-                Duration.ofMillis(claimMinIdleMs), ids.toArray(RecordId[]::new));
-        if (claimed == null || claimed.isEmpty()) {
+        claimScans.incrementAndGet();
+        List<StreamEntry> claimed = autoClaim(couponId);
+        if (claimed.isEmpty()) {
             return new ClaimResult(List.of(), 0);
         }
+        Map<String, Long> deliveries = deliveryCounts(couponId, claimed);
         List<StreamEntry> processable = new ArrayList<>();
         Map<StreamEntry, Long> poison = new LinkedHashMap<>();
-        for (MapRecord<String, Object, Object> record : claimed) {
-            StreamEntry entry = StreamEntry.from(record);
-            long deliveries = deliveriesBefore.getOrDefault(entry.id(), 0L) + 1;
-            if (deliveries > maxDeliveries) {
-                poison.put(entry, deliveries);
+        for (StreamEntry entry : claimed) {
+            long count = deliveries.getOrDefault(entry.id(), 1L);
+            if (count > maxDeliveries) {
+                poison.put(entry, count);
             } else {
                 processable.add(entry);
             }
@@ -433,6 +436,102 @@ public class CouponStreamConsumer implements SmartLifecycle {
             deadLetter(couponId, poison);
         }
         return new ClaimResult(processable, poison.size());
+    }
+
+    private boolean claimScanDue(Long couponId) {
+        long interval = claimIntervalMs > 0 ? claimIntervalMs : claimMinIdleMs / 2;
+        long now = System.currentTimeMillis();
+        Long last = lastClaimScanAt.get(couponId);
+        if (last != null && now - last < interval) {
+            return false;
+        }
+        lastClaimScanAt.put(couponId, now);
+        return true;
+    }
+
+    /**
+     * 처음부터 훑어 batch-size 건까지 가져온다. 한 번의 XAUTOCLAIM 은 PEL 을 일정 수만 훑고 다음 시작점을 돌려주므로,
+     * 가져온 것이 batch-size 에 못 미치고 시작점이 남았으면 이어서 부른다
+     *
+     * <p>Spring Data Redis 3.5 에 XAUTOCLAIM 이 없고 {@code connection.execute} 는 중첩 응답을 평탄화하므로
+     * Lettuce 의 {@code xautoclaim} 을 네이티브 연결로 부른다
+     */
+    private List<StreamEntry> autoClaim(Long couponId) {
+        byte[] streamKey = bytes(CouponStockRedisRepository.streamKey(couponId));
+        List<StreamEntry> claimed = new ArrayList<>();
+        String cursor = "0-0";
+        do {
+            String start = cursor;
+            long want = batchSize - claimed.size();
+            ClaimedMessages<byte[], byte[]> reply = withGroup(couponId, () -> redis.execute(
+                    (RedisCallback<ClaimedMessages<byte[], byte[]>>) connection -> xautoclaim(connection, streamKey,
+                            start, want)));
+            if (reply == null) {
+                break;
+            }
+            for (StreamMessage<byte[], byte[]> message : reply.getMessages()) {
+                Map<String, String> fields = new LinkedHashMap<>();
+                message.getBody().forEach((k, v) -> fields.put(text(k), text(v)));
+                claimed.add(new StreamEntry(message.getId(), fields));
+            }
+            cursor = reply.getId();
+        } while (!"0-0".equals(cursor) && claimed.size() < batchSize);
+        return claimed;
+    }
+
+    @SuppressWarnings("unchecked")
+    private ClaimedMessages<byte[], byte[]> xautoclaim(RedisConnection connection, byte[] streamKey, String start,
+                                                       long count) {
+        RedisAsyncCommands<byte[], byte[]> commands = (RedisAsyncCommands<byte[], byte[]>) connection.getNativeConnection();
+        XAutoClaimArgs<byte[]> args = XAutoClaimArgs.Builder
+                .xautoclaim(io.lettuce.core.Consumer.from(bytes(GROUP), bytes(consumerName)),
+                        Duration.ofMillis(claimMinIdleMs), start)
+                .count(count);
+        try {
+            return commands.xautoclaim(streamKey, args).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("XAUTOCLAIM interrupted", e);
+        } catch (ExecutionException e) {
+            // NOGROUP 같은 서버 오류를 원인 사슬에 그대로 둔다 - 호출부가 메시지로 판별한다
+            throw new IllegalStateException("XAUTOCLAIM failed: " + e.getCause(), e.getCause());
+        }
+    }
+
+    // 가져온 항목의 배달 횟수(XAUTOCLAIM 이 이미 올린 값). 가져온 id 범위 안의 PEL 한 번으로 읽는다
+    private Map<String, Long> deliveryCounts(Long couponId, List<StreamEntry> claimed) {
+        String first = claimed.stream().map(StreamEntry::id).min(CouponStreamConsumer::compareIds).orElseThrow();
+        String last = claimed.stream().map(StreamEntry::id).max(CouponStreamConsumer::compareIds).orElseThrow();
+        PendingMessages pending = withGroup(couponId, () -> redis.opsForStream().pending(
+                CouponStockRedisRepository.streamKey(couponId), GROUP, Range.closed(first, last), 100_000L));
+        Map<String, Long> counts = new HashMap<>();
+        if (pending != null) {
+            for (PendingMessage message : pending) {
+                counts.put(message.getIdAsString(), message.getTotalDeliveryCount());
+            }
+        }
+        return counts;
+    }
+
+    // 스트림 id 는 "밀리초-순번" 이다. 문자열이 아니라 두 수로 비교한다
+    private static int compareIds(String a, String b) {
+        String[] x = a.split("-");
+        String[] y = b.split("-");
+        int byTime = Long.compare(Long.parseLong(x[0]), Long.parseLong(y[0]));
+        return byTime != 0 ? byTime : Long.compare(Long.parseLong(x[1]), Long.parseLong(y[1]));
+    }
+
+    private static byte[] bytes(String value) {
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String text(Object value) {
+        return value instanceof byte[] raw ? new String(raw, StandardCharsets.UTF_8) : String.valueOf(value);
+    }
+
+    /** 지금까지 돈 유휴 항목 스캔 횟수. 시험이 스캔 간격을 확인한다 */
+    public long claimScans() {
+        return claimScans.get();
     }
 
     /**
@@ -449,7 +548,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
         for (Map.Entry<StreamEntry, Long> entry : poison.entrySet()) {
             StreamEntry stream = entry.getKey();
             if (stream.requestId() != null && committed.contains(stream.requestId())) {
-                statuses.put(stream.requestId(), STATUS_SUCCESS);
+                statuses.put(stream.requestId(), CouponIssueStatus.SUCCESS);
                 committedUsers.add(stream.userId());
                 continue;
             }
@@ -460,7 +559,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
             addToDlq(couponId, dlqFields);
             if (stream.readable()) {
                 stockRepository.rollbackIssue(couponId, stream.userId());
-                statuses.put(stream.requestId(), STATUS_FAILED_PREFIX + ErrorCode.SERVER_ERROR.name());
+                statuses.put(stream.requestId(), CouponIssueStatus.FAILED_PREFIX + ErrorCode.SERVER_ERROR.name());
             }
             log.error("[COUPON_STREAM_DEAD_LETTER] couponId={}, entryId={}, deliveries={}, fields={}",
                     couponId, stream.id(), entry.getValue(), stream.fields());
@@ -515,21 +614,21 @@ public class CouponStreamConsumer implements SmartLifecycle {
             if (!outcome.couponUsable()) {
                 // 자리를 배정받았는데 쿠폰이 끝났거나 사라졌다. 되돌리지 않으면 아무도 못 받는 수량이 된다
                 stockRepository.rollbackIssue(couponId, userId);
-                statuses.put(requestId, STATUS_FAILED_PREFIX + ErrorCode.COUPON_NOT_FOUND.name());
+                statuses.put(requestId, CouponIssueStatus.FAILED_PREFIX + ErrorCode.COUPON_NOT_FOUND.name());
             } else if (outcome.owned().contains(requestId)) {
-                statuses.put(requestId, STATUS_SUCCESS);
+                statuses.put(requestId, CouponIssueStatus.SUCCESS);
                 insertedUsers.add(userId);
             } else if (outcome.soldOut().contains(requestId)) {
                 // DB 경로와 섞여 Redis 재고가 실제보다 많았다. 자리와 명단을 되돌려 뒤 요청이 판정하게 한다
                 stockRepository.rollbackIssue(couponId, userId);
-                statuses.put(requestId, STATUS_FAILED_PREFIX + ErrorCode.COUPON_OUT_OF_STOCK.name());
+                statuses.put(requestId, CouponIssueStatus.FAILED_PREFIX + ErrorCode.COUPON_OUT_OF_STOCK.name());
             } else {
                 // 다른 요청이 이미 그 쿠폰의 행을 갖고 있다 = 진짜 중복이다
                 // 같은 requestId 의 행이면 owned 에 들어와 여기 오지 않는다 - 재전달에서 재고를 되돌리면 +1 씩 부푼다
                 // 발급자 명단에서는 빼지 않는다 - 빼면 게이트가 그를 다시 통과시켜 같은 실패를 반복한다
                 stockRepository.rollbackStockOnly(couponId);
                 log.warn("[COUPON_DUPLICATE_BLOCKED_BY_DB] couponId={}, userId={}", couponId, userId);
-                statuses.put(requestId, STATUS_FAILED_PREFIX + ErrorCode.COUPON_ALREADY_ISSUED.name());
+                statuses.put(requestId, CouponIssueStatus.FAILED_PREFIX + ErrorCode.COUPON_ALREADY_ISSUED.name());
             }
         }
         stockRepository.setStatuses(statuses);

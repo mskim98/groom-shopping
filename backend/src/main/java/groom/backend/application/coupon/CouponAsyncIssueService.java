@@ -38,10 +38,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CouponAsyncIssueService {
 
-    public static final String STATUS_WAITING = "WAITING";
-    public static final String STATUS_SUCCESS = "SUCCESS";
-    public static final String STATUS_FAILED_PREFIX = "FAILED:";
-
     private final CouponRepository couponRepository;
     private final RedisTemplate<String, String> redisTemplate;
     private final CouponStockRedisRepository couponStockRedisRepository;
@@ -134,6 +130,6 @@ public class CouponAsyncIssueService {
      */
     public String getStatus(String requestId) {
         String status = redisTemplate.opsForValue().get(CouponStockRedisRepository.statusKey(requestId));
-        return status != null ? status : "UNKNOWN";
+        return status != null ? status : CouponIssueStatus.UNKNOWN;
     }
 }

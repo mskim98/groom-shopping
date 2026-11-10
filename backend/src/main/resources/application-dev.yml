@@ -158,7 +158,7 @@ coupon:
     # 이 값은 목표치가 아니라 상한이다 - 평소 읽기는 그 순간 스트림에 쌓인 몇 행만 가져온다
     batch-size: ${COUPON_ISSUE_BATCH_SIZE:500}
     # coupon.issue.stream.* 는 코드 기본값을 쓴다(시험이 덮어쓸 수 있게 여기 두지 않는다)
-    #   claim-min-idle-ms 30000 · max-deliveries 3 · block-ms 1000 · refresh-ms 5000 · enabled true
+    #   claim-min-idle-ms 30000 · claim-interval-ms (claim-min-idle-ms 의 절반) · max-deliveries 3 · block-ms 1000 · refresh-ms 5000 · enabled true
     #   circuit.failure-rate-threshold 50 · circuit.minimum-calls 10 · circuit.window-size 20 · circuit.wait-open-ms 5000
   warmup:
     batch-size: 1000
