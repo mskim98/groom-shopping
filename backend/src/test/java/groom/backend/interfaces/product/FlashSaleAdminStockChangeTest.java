@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import groom.backend.application.product.ProductStockRedisRepository;
+import groom.backend.common.exception.GlobalExceptionHandler;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.product.persistence.ProductJpaEntity;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
@@ -53,7 +54,8 @@ class FlashSaleAdminStockChangeTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
         flashId = save(10, true);
         plainId = save(10, false);
         stockRedisRepository.initStock(flashId, 10);
