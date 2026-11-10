@@ -26,17 +26,26 @@
             </rollingPolicy>
         </appender>
 
+        <!-- 요청 스레드가 appender 락을 기다리지 않게 비동기로 쓴다 - 락 대기 중에도 DB 커넥션은 반납되지 않는다(r120 스레드 덤프: 커넥션을 쥔 스레드의 31%).
+             기본 큐 256 · 큐가 80% 차면 INFO 이하만 버리고 WARN/ERROR 는 버리지 않으며, neverBlock=false 라 큐가 가득 차면 쓰는 쪽이 기다린다(로그를 잃지 않는 쪽) -->
+        <appender name="CONSOLE_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="CONSOLE"/>
+        </appender>
+        <appender name="FILE_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="FILE"/>
+        </appender>
+
         <!-- Root Logger -->
         <root level="INFO">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="FILE"/>
+            <appender-ref ref="CONSOLE_ASYNC"/>
+            <appender-ref ref="FILE_ASYNC"/>
         </root>
 
         <!-- 애플리케이션 로그 (더 자세한 로그) -->
         <!-- additivity="false": 이 로거가 자체 appender로 출력한 뒤 root 로거로 또 전파(중복 출력)되는 것을 막는다 -->
         <logger name="groom.backend" level="DEBUG" additivity="false">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="FILE"/>
+            <appender-ref ref="CONSOLE_ASYNC"/>
+            <appender-ref ref="FILE_ASYNC"/>
         </logger>
 
         <!-- Spring Boot 로그 (수준 제어) -->
@@ -73,9 +82,18 @@
             </rollingPolicy>
         </appender>
 
-        <root level="WARN">
+        <!-- 요청 스레드가 appender 락을 기다리지 않게 비동기로 쓴다 - 락 대기 중에도 DB 커넥션은 반납되지 않는다(r120 스레드 덤프: 커넥션을 쥔 스레드의 31%).
+             기본 큐 256 · 큐가 80% 차면 INFO 이하만 버리고 WARN/ERROR 는 버리지 않으며, neverBlock=false 라 큐가 가득 차면 쓰는 쪽이 기다린다(로그를 잃지 않는 쪽) -->
+        <appender name="CONSOLE_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
             <appender-ref ref="CONSOLE"/>
+        </appender>
+        <appender name="FILE_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
             <appender-ref ref="FILE"/>
+        </appender>
+
+        <root level="WARN">
+            <appender-ref ref="CONSOLE_ASYNC"/>
+            <appender-ref ref="FILE_ASYNC"/>
         </root>
 
         <logger name="groom.backend" level="INFO"/>
