@@ -5,7 +5,7 @@
 #   infra                     db redis kafka wiremock 을 띄우고 준비될 때까지 기다린다
 #   seed                      compose db 안에 시드 템플릿을 만들고 shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성
 #   app                       백엔드 이미지 빌드 후 backend1..3 · nginx 를 띄우고 건강 UP 을 기다린다
-#   tiny <out-dir>            초당 50 요청 10 초 (<out-dir>/tiny)
+#   tiny <out-dir>            초당 50 요청 10 초 + 램프 2 초 (<out-dir>/tiny)
 #   step <rps> <out-dir>      초당 <rps> 요청 램프 10 초 + 유지 30 초 (<out-dir>/step-<rps>)
 #   collect <out-dir> <result.json>   단계 폴더를 result.json 한 개로 모은다(collect.py)
 #   down                      스택의 컨테이너를 멈추고 지운다 - 볼륨은 지우지 않는다
@@ -119,7 +119,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   # 단계 전에 랙이 남아 있으면 앞 단계의 일이 섞인다
   echo "lag_wait_before_s=$(wait_lag_zero)" > "$dir/wait.txt"
   for b in $BACKENDS; do
-    echo "$b $(docker inspect -f "{{(index .NetworkSettings.Networks \"${PROJECT}_app-network\").IPAddress}}" "$b")"
+    echo "$b $(docker inspect -f "{{(index .NetworkSettings.Networks \"${PROJECT}_app-network\").IPAddress}}" "${PROJECT}-$b-1")"
   done > "$dir/backends.tsv"
   psql_seed -c "SELECT pg_stat_statements_reset()" > /dev/null
   end_offsets > "$dir/offsets_before.txt"
@@ -156,8 +156,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
   psql_seed -At -F $'\t' -c "SELECT regexp_replace(left(query, 400), '\s+', ' ', 'g'), calls, round(mean_exec_time::numeric, 3), round(total_exec_time::numeric, 1)
     FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') ORDER BY total_exec_time DESC LIMIT 20" > "$dir/pgss.tsv"
   for b in $BACKENDS; do
-    docker logs --since "$start" "$b" 2>&1 | grep 'STOCK_LEDGER_APPLY' > "$dir/ledger-$b.log" || true
-    docker logs --since "$start" "$b" 2>&1 | grep -E ' (WARN|ERROR) ' | head -200 > "$dir/warn-$b.log" || true
+    docker logs --since "$start" "${PROJECT}-$b-1" 2>&1 | grep 'STOCK_LEDGER_APPLY' > "$dir/ledger-$b.log" || true
+    docker logs --since "$start" "${PROJECT}-$b-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -200 > "$dir/warn-$b.log" || true
   done
   sleep 1
   docker exec nginx tail -n +"$((before_lines + 1))" "$NGINX_LOG" > "$dir/nginx.log"
@@ -166,7 +166,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 출력 폴더
 
 max_vus_for() { case "$1" in 2000) echo 1000 ;; 4000) echo 2000 ;; 6000) echo 3000 ;; *) echo $(( $1 / 2 + 1 )) ;; esac; }
 
-cmd_tiny() { run_step tiny 50 "${MAX_VUS:-50}" "${1:?usage: tiny <out-dir>}/tiny"; }
+# 시험 실행은 초당 50 요청 10 초(램프 2 초 뒤 유지 10 초) - 도구가 끝까지 도는지만 본다
+cmd_tiny() { RAMP_S=2; HOLD_S=10; run_step tiny 50 "${MAX_VUS:-50}" "${1:?usage: tiny <out-dir>}/tiny"; }
 cmd_step() { local rps="${1:?usage: step <rps> <out-dir>}" out="${2:?usage: step <rps> <out-dir>}"; run_step "step $rps" "$rps" "${MAX_VUS:-$(max_vus_for "$rps")}" "$out/step-$rps"; }
 cmd_collect() { python3 "$ROOT/k6/loadtest/collect.py" "${1:?usage: collect <out-dir> <result.json>}" "${2:?usage: collect <out-dir> <result.json>}"; }
 cmd_down() { $DC down --remove-orphans; }
