@@ -297,6 +297,15 @@ resilience4j:
         max-concurrent-calls: 50
         max-wait-duration: 0
 
+  # 플래시 세일 결제 진입 속도(인스턴스당) - 넘으면 Redis 를 부르지 않고 FLASH_ENTRY_LIMITED(429) 로 거절한다
+  # 2000/초: Redis 스크립트 1건이 1ms 안팎이라 한 인스턴스가 감당하는 상한. 크면 Redis 가 몰리고, 작으면 정상 트래픽도 429 를 받는다
+  ratelimiter:
+    instances:
+      flash-entry:
+        limit-for-period: 2000
+        limit-refresh-period: 1s
+        timeout-duration: 0
+
   jackson:
     serialization:
       write-dates-as-timestamps: false

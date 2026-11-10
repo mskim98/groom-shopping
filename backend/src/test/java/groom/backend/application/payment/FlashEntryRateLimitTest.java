@@ -19,7 +19,6 @@ import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
-import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,8 +60,6 @@ class FlashEntryRateLimitTest {
     @Autowired
     private PaymentApplicationService paymentApplicationService;
     @Autowired
-    private RateLimiterRegistry rateLimiterRegistry;
-    @Autowired
     private RedisTemplate<String, String> redisTemplate;
     @Autowired
     private SpringDataProductRepository productRepository;
@@ -81,8 +78,6 @@ class FlashEntryRateLimitTest {
 
     @BeforeEach
     void setUp() {
-        // 한도 상태는 컨텍스트 안에서 공유되므로 시험마다 새로 만든다 - 레지스트리에서 지우면 다음 조회가 설정대로 다시 만든다
-        rateLimiterRegistry.remove("flash-entry");
         fixture = new PaymentFixture(productRepository, orderRepository, paymentRepository, jdbc);
         flashId = fixture.flashProduct(10);
         stockRedisRepository.initStock(flashId, 10);
@@ -109,8 +104,9 @@ class FlashEntryRateLimitTest {
         return "pk-" + payment.getId();
     }
 
+    // 한도 상태는 컨텍스트 안의 인스턴스 하나라 시험 하나로 순서대로 본다(레지스트리에서 지우면 yml 설정이 아닌 기본값으로 다시 만들어진다)
     @Test
-    @DisplayName("한도 2 에서 세 번째 플래시 확정은 429 이고 Redis 재고 키에는 선점 2건만 남으며 Redis 호출도 원장 행도 없다")
+    @DisplayName("한도 2 에서 세 번째 플래시 확정은 429 이고 Redis 재고 키에는 선점 2건만 남으며 Redis 호출도 원장 행도 없고, 플래시 아닌 주문은 제한받지 않는다")
     void confirmPayment_한도_초과_세번째는_429이고_Redis와_원장을_건드리지_않는다() {
         paymentApplicationService.confirmPayment(key(payments[0]), payments[0].getOrderId(), PaymentFixture.PRICE);
         paymentApplicationService.confirmPayment(key(payments[1]), payments[1].getOrderId(), PaymentFixture.PRICE);
@@ -126,17 +122,9 @@ class FlashEntryRateLimitTest {
         assertThat(redisTemplate.opsForValue().get(ProductStockRedisRepository.STOCK_KEY_PREFIX + flashId)).isEqualTo("8");
         verify(stockRedisRepository, never()).preReserve(any(), org.mockito.ArgumentMatchers.anyInt());
         assertThat(fixture.ledgerRows(payments[2].getId())).isEmpty();
-    }
-
-    @Test
-    @DisplayName("플래시 상품이 없는 주문은 한도를 다 쓴 뒤에도 제한받지 않는다")
-    void confirmPayment_플래시_아닌_주문은_제한받지_않는다() {
-        paymentApplicationService.confirmPayment(key(payments[0]), payments[0].getOrderId(), PaymentFixture.PRICE);
-        paymentApplicationService.confirmPayment(key(payments[1]), payments[1].getOrderId(), PaymentFixture.PRICE);
 
         Payment result = paymentApplicationService.confirmPayment(
                 key(plainPayment), plainPayment.getOrderId(), PaymentFixture.PRICE);
-
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
     }
 }

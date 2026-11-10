@@ -10,6 +10,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.model.OrderItem;
 import groom.backend.domain.product.model.enums.StockMode;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -35,12 +36,15 @@ import org.springframework.stereotype.Component;
 public class FlashStockReservation {
 
     private static final String CIRCUIT = "redis-stock";
+    private static final String RATE_LIMITER = "flash-entry";
     private static final long REDIS_UNAVAILABLE = -3L;
 
     private final StockLedgerRepository ledger;
     private final StockLedgerService ledgerService;
     private final ProductStockRedisRepository redis;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    // 인스턴스당 진입 속도 제한 - nginx 는 접속 주소별로 막고 이쪽은 Redis 스크립트를 지킨다
+    private final RateLimiterRegistry rateLimiterRegistry;
 
     /**
      * 주문의 플래시 세일 항목을 예약한다. 하나라도 모자라면 이미 예약한 항목을 되돌리고 INSUFFICIENT_STOCK 으로 끝낸다
@@ -50,6 +54,11 @@ public class FlashStockReservation {
     public List<ReservedItem> reserve(UUID paymentId, List<OrderItem> orderItems) {
         Map<UUID, Integer> quantities = quantitiesByProduct(orderItems);
         List<UUID> flashIds = ledger.findFlashProductIds(quantities.keySet());
+        // 플래시 상품이 있는 주문만 센다. 넘으면 Redis 도 원장도 건드리지 않고 거절한다(되돌릴 예약이 아직 없다)
+        if (!flashIds.isEmpty() && !rateLimiterRegistry.rateLimiter(RATE_LIMITER).acquirePermission()) {
+            log.warn("[FLASH_ENTRY_LIMITED] PaymentId: {}", paymentId);
+            throw new BusinessException(ErrorCode.FLASH_ENTRY_LIMITED);
+        }
         List<ReservedItem> reserved = new ArrayList<>();
         for (UUID productId : flashIds) {
             try {
