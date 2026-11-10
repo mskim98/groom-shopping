@@ -104,6 +104,19 @@ class ProductNameSearchIndexTest {
     }
 
     @Test
+    @DisplayName("검색_b_(밑줄이 든 2글자)_LIKE 와일드카드로 읽어 Hub Stand 를 답하고_2-gram 조건을 쓰지 않는다")
+    void search_twoCharKeywordWithWildcard_keepsLikeOnlyResult() throws Exception {
+        RecordingStatementInspector.clear();
+
+        search("b_").andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].name").value("Hub Stand"));
+
+        assertThat(RecordingStatementInspector.productListSelects()).hasSize(1);
+        assertThat(RecordingStatementInspector.productListSelects().get(0)).doesNotContain("product_name_has_gram2");
+    }
+
+    @Test
     @DisplayName("EXPLAIN_2글자 키워드_V25 의 2-gram 인덱스를 쓰고_product 표 순차 읽기가 없다")
     void explain_twoCharKeyword_usesGramIndex() throws Exception {
         String plan = explainOfSearch("ub");
