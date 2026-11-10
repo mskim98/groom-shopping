@@ -58,7 +58,7 @@ public class ProductJpaEntity {
     @Column(name = "image_url")
     private String imageUrl;
 
-    // @Version : 낙관적 락. UPDATE 시 WHERE 절에 version 이 자동 부착되어 동시 차감 충돌을 감지한다.
+    // @Version : 낙관적 락. UPDATE 시 WHERE 절에 version 이 자동 부착되어 동시 수정 · 복원 충돌을 감지한다. 원장 적용 · 전환 SQL 도 version 을 올린다.
     @Version
     @Column(name = "version")
     private Long version;

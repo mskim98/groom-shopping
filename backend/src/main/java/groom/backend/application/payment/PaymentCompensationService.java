@@ -43,7 +43,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Toss 결제 승인 후 내부 DB 처리(재고 차감, 주문 상태 변경)가 실패하면 즉시 Toss 취소 API를 호출해 자동 환불을 시도, 즉시 취소마저 실패한 건은
+ * Toss 결제 승인 후 내부 DB 처리(일반 상품 재고 차감, 플래시 상품 원장 기록, 주문 상태 변경)가 실패하면 즉시 Toss 취소 API를 호출해 자동 환불을 시도, 즉시 취소마저 실패한 건은
  * {@code payment_compensation} 테이블에 기록되고, {@link #retryPendingCompensations()} 스케줄러가 지수 백오프로 주기적으로 재시도
  */
 // @Slf4j : log 객체 생성.

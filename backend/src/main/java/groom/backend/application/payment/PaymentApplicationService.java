@@ -320,7 +320,7 @@ public class PaymentApplicationService {
     }
 
     /**
-     * Kafka 컨슈머의 후처리 진입점. READY 인 결제만 {@link #applyApprovedPaymentInTx} 로 DONE · CONFIRMED · 재고 차감 ·
+     * Kafka 컨슈머의 후처리 진입점. READY 인 결제만 {@link #applyApprovedPaymentInTx} 로 DONE · CONFIRMED · 일반 상품 재고 차감 ·
      * 티켓 발급까지 끝낸다. READY 가 아니면(재전달 · 동시 중복 확정) 아무것도 하지 않고 돌아와 멱등이다.
      * <p>
      * 후처리가 실패하면 ① 보상 의도 기록(돈이 걸린 일) → ② 원장 REVERSAL · Redis 선점 복원 → ③ FAILED 기록 순으로 처리하고 예외를 던지지
