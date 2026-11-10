@@ -8,13 +8,14 @@ import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.service.ProductCommonService;
 import groom.backend.interfaces.product.dto.request.CreateProductRequest;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // 없는 상품 id 는 nf:product:{id}(5초)에 적어 두 번째 읽기가 SQL 없이 404 로 끝나고, 만들면 키가 지워지고, 지우면 404 인지 본다
 @DisplayName("상품 부재 캐시")
@@ -24,6 +25,8 @@ class ProductNegativeCacheTest extends ProductCacheTestBase {
     private ProductCommonService productCommonService;
     @Autowired
     private ProductDetailCache cache;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     @DisplayName("없는 id 는 404 이고 nf 키를 5초 만료로 쓰며 두 번째 읽기는 SQL 0 으로 404 다")
@@ -43,13 +46,18 @@ class ProductNegativeCacheTest extends ProductCacheTestBase {
     }
 
     @Test
-    @DisplayName("createProduct 뒤 nf 키가 없고 만든 id 를 읽으면 200 이다")
-    void createProduct_뒤_nf_키가_없고_읽으면_200이다() throws Exception {
-        Product created = productCommonService.createProduct(
-                new CreateProductRequest("negative-create", "설명", 1000, 3, ProductCategory.GENERAL));
+    @DisplayName("커밋 전에 먼저 읽혀 nf 키가 남은 새 상품은 createProduct 커밋 뒤 nf 키가 지워지고 읽으면 200 이다")
+    void createProduct_뒤_커밋_전에_남은_nf_키가_지워지고_읽으면_200이다() throws Exception {
+        // id 는 서비스 안에서 정해진다 - 같은 트랜잭션에서 만든 직후 nf 키를 써서 커밋 전에 다른 읽기가 404 를 적어 둔 상황을 만든다
+        Product created = new TransactionTemplate(transactionManager).execute(status -> {
+            Product saved = productCommonService.createProduct(
+                    new CreateProductRequest("negative-create", "설명", 1000, 3, ProductCategory.GENERAL));
+            redis.opsForValue().set("nf:product:" + saved.getId(), "1", Duration.ofSeconds(5));
+            return saved;
+        });
         track(created.getId());
 
-        assertThat(redis.hasKey("nf:product:" + created.getId())).as("nf 키").isFalse();
+        assertThat(redis.hasKey("nf:product:" + created.getId())).as("커밋 뒤 nf 키").isFalse();
         mockMvc.perform(get("/v1/product/{id}", created.getId())).andExpect(status().isOk());
     }
 
@@ -61,9 +69,7 @@ class ProductNegativeCacheTest extends ProductCacheTestBase {
         // 다른 인스턴스가 지운 상황 - 이 인스턴스의 deleteProduct 를 거치지 않고 행만 지운다
         jdbc.update("DELETE FROM product WHERE id = ?", id);
         // 본문 L1 은 남기고 수량 L1 만 비운다(운영에서는 두 항목의 쓰기 시각이 달라 만료 시점이 어긋날 수 있다)
-        @SuppressWarnings("unchecked")
-        Cache<UUID, Integer> quantities = (Cache<UUID, Integer>) ReflectionTestUtils.getField(cache, "quantities");
-        quantities.invalidate(id);
+        cache.invalidateQuantity(id);
 
         mockMvc.perform(get("/v1/product/{id}", id)).andExpect(status().isNotFound());
     }

@@ -221,6 +221,11 @@ public class ProductDetailCache {
         }
     }
 
+    // 시험이 수량 L1 만 비운 상태(본문 L1 은 남음)를 만든다 - 운영에서는 두 항목의 쓰기 시각이 달라 만료 시점이 어긋날 수 있다
+    void invalidateQuantity(UUID id) {
+        quantities.invalidate(id);
+    }
+
     /** 상품을 만든 뒤 - 그 id 로 먼저 읽혀 남은 부재 키를 지운다 */
     public void clearNegative(UUID id) {
         try {

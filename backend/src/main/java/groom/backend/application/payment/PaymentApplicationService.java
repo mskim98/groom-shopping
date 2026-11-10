@@ -742,8 +742,8 @@ public class PaymentApplicationService {
             // 조건부 UPDATE 로 차감한다. 차감 후 재고량을 반환.
             int stockAfter = stockDecrementer.decrease(orderItem.getProductId(), orderItem.getQuantity());
 
-            // 차감된 상품 ID와 차감 후 재고량 저장
-            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter));
+            // 차감된 상품 ID · 차감 후 재고량 · 차감 수량 저장 (알림이 임계값을 넘긴 차감인지 가리는 데 쓴다)
+            results.add(new PaymentNotificationService.StockReductionResult(orderItem.getProductId(), stockAfter, orderItem.getQuantity()));
 
             log.info("[STOCK_REDUCE] Product stock reduced - ProductId: {}, Quantity: {}, StockAfter: {}",
                     orderItem.getProductId(), orderItem.getQuantity(), stockAfter);
