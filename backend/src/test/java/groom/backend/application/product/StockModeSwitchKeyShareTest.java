@@ -57,6 +57,8 @@ class StockModeSwitchKeyShareTest {
     private long cartId;
     private final ExecutorService pool = Executors.newFixedThreadPool(3);
     private final CountDownLatch release = new CountDownLatch(1);
+    // 열어 둔 트랜잭션 A 의 Future - 정리가 A 의 커밋을 기다린 뒤 행을 지우게 한다
+    private Future<?> held;
 
     @BeforeEach
     void setUp() {
@@ -72,8 +74,12 @@ class StockModeSwitchKeyShareTest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
         release.countDown();
+        if (held != null) {
+            // A 가 끝나기 전에 cart_item · product 행을 지우면 외래 키 검사와 경합한다
+            held.get(5, TimeUnit.SECONDS);
+        }
         pool.shutdownNow();
         redisTemplate.delete(ProductStockRedisRepository.STOCK_KEY_PREFIX + productId);
         jdbc.update("DELETE FROM stock_ledger WHERE product_id = ?", productId);
@@ -90,7 +96,7 @@ class StockModeSwitchKeyShareTest {
     // 장바구니에 이 상품을 넣고 커밋하지 않은 트랜잭션 - 외래 키 검사가 product 행에 FOR KEY SHARE 를 잡은 채 열려 있다
     private void holdKeyShareViaCartInsert() throws InterruptedException {
         CountDownLatch locked = new CountDownLatch(1);
-        pool.submit(() -> transactionTemplate.execute(status -> {
+        held = pool.submit(() -> transactionTemplate.execute(status -> {
             jdbc.update("INSERT INTO cart_item (cart_id, product_id, quantity) VALUES (?, ?, 1)", cartId, productId);
             locked.countDown();
             awaitRelease();
@@ -102,7 +108,7 @@ class StockModeSwitchKeyShareTest {
     // 조건부 재고 UPDATE 를 한 뒤 커밋하지 않은 트랜잭션 - 상품 행의 쓰기 잠금을 쥔다
     private void holdStockUpdate() throws InterruptedException {
         CountDownLatch locked = new CountDownLatch(1);
-        pool.submit(() -> transactionTemplate.execute(status -> {
+        held = pool.submit(() -> transactionTemplate.execute(status -> {
             stockLedgerRepository.lowerStock(productId, 0);
             locked.countDown();
             awaitRelease();
