@@ -101,10 +101,12 @@ public class JpaProductQueryRepository implements ProductQueryRepository {
       // 검색 단어가 포함된 이름을 검색
       if (condition.getName() != null && !condition.getName().isBlank()) {
         String keyword = condition.getName().toLowerCase();
-        predicates.add(cb.like(cb.lower(product.get("name")), "%" + keyword + "%"));
+        // % _ \ 는 LIKE 가 와일드카드·이스케이프로 읽으므로 \ 로 막아 키워드를 적힌 그대로 찾는다
+        String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        predicates.add(cb.like(cb.lower(product.get("name")), "%" + escaped + "%", '\\'));
         // 2글자 키워드는 trigram 인덱스를 못 타므로 V25 의 2-gram 인덱스로 후보를 먼저 좁힌다(LIKE 가 포함 여부를 확정한다)
-        // LIKE 와일드카드(% _)가 든 키워드는 글자 그대로의 조각과 뜻이 달라 좁히지 않는다
-        if (keyword.codePointCount(0, keyword.length()) == 2 && keyword.indexOf('%') < 0 && keyword.indexOf('_') < 0) {
+        // 2-gram 함수는 글자를 그대로 비교하므로 % _ 가 든 키워드도 이스케이프하지 않은 값으로 좁힌다
+        if (keyword.codePointCount(0, keyword.length()) == 2) {
           predicates.add(cb.isTrue(cb.function("product_name_has_gram2", Boolean.class,
                   cb.lower(product.get("name")), cb.literal(keyword))));
         }
