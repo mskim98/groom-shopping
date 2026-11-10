@@ -3,7 +3,8 @@
 # 사용: bash db/seed/verify.sh <database> <scale>
 #   <scale> 은 그 DB 를 만들 때의 SEED_SCALE (예: 1, 0.01) — 목표 행 수 = scale 1 의 목표 × scale
 # 환경 변수(기본값): SEED_PG_CONTAINER (dev-db) · SEED_PG_USER (dev) — 읽기만 한다. 아무것도 지우지 않는다
-#   SEED_VERIFY_TOL_SCALE (비어 있음 = <scale>) — 행 수 허용 오차 규칙을 고르는 배수(<scale> 이상이어야 한다 — 더 엄격하게만 만들 수 있고 작으면 exit 2). scale >= 1 이면 목표 300 이상은 ceil(1 %), 300 미만은 정확히 일치, scale < 1 이면 max(1 %, 3행)
+#   SEED_MIGRATION_DIR (<저장소>/backend/src/main/resources/db/migration) — flyway 검사가 세는 마이그레이션 파일(V*.sql)의 폴더. DB 를 다른 폴더의 파일로 만들었을 때만 build-template.sh 와 같은 값으로 맞춘다(다르면 파일 수와 적용 기록 수가 달라 flyway 가 실패한다)
+#   SEED_VERIFY_TOL_SCALE (비어 있음 = <scale>) — 행 수 허용 오차 규칙을 고르는 배수(<scale> 이상의 숫자여야 한다 — 더 엄격하게만 만들 수 있고, 작거나 숫자가 아니면 exit 2). scale >= 1 이면 목표 300 이상은 ceil(1 %), 300 미만은 정확히 일치, scale < 1 이면 max(1 %, 3행)
 # 검사 묶음: counts · flyway · refs · enums · amounts · flash-stock · coupon-quota · sequences · minority · skew · raffle
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,6 +13,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [ $# -eq 2 ] || { echo "usage: verify.sh <database> <scale>" >&2; exit 2; }
 DB="$1"
 SCALE="$2"
+# 숫자가 아닌 값(abc · 1x)은 awk 가 앞쪽 숫자만 읽어 0 이나 1 로 통과시키므로 먼저 거절한다
+if [ -n "${SEED_VERIFY_TOL_SCALE:-}" ] && ! printf '%s' "$SEED_VERIFY_TOL_SCALE" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+  echo "refused: SEED_VERIFY_TOL_SCALE='$SEED_VERIFY_TOL_SCALE' is not a number (digits with an optional decimal part, e.g. 1 or 0.5)" >&2
+  exit 2
+fi
 # SEED_VERIFY_TOL_SCALE 은 검사를 더 엄격하게만 만든다 — scale 보다 작으면 거절한다(scale 1 검증을 환경 변수로 느슨하게 만들 수 없다)
 if [ -n "${SEED_VERIFY_TOL_SCALE:-}" ] && awk -v t="$SEED_VERIFY_TOL_SCALE" -v s="$SCALE" 'BEGIN { exit !(t + 0 < s + 0) }'; then
   echo "refused: SEED_VERIFY_TOL_SCALE=$SEED_VERIFY_TOL_SCALE is below scale $SCALE (it may only make the check stricter)" >&2

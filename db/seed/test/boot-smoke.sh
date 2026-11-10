@@ -4,11 +4,13 @@
 # 환경 변수: SEED_PG_CONTAINER(dev-db) SEED_REDIS_PORT(6379 — 이 시험은 16380 을 넘긴다) SEED_KAFKA_CONTAINER
 #   SEED_BOOT_PORT(18082) SEED_BOOT_TIMEOUT(초, 기본 240)
 # 지우는 것: shop_seed_t2b(reset.sh 가 다시 만든다) · load-redis.sh 의 소유 키 패턴 · 이 시험이 띄운 백엔드 프로세스(자기 자식 그룹과 시작 때 비어 있던 $SEED_BOOT_PORT 의 리스너만 — 클래스 경로로 찾아 끄지 않는다)
-# 시작 전에 $SEED_BOOT_PORT 가 이미 쓰이면 아무것도 바꾸지 않고 실패한다
+# 시작 전에 $SEED_BOOT_PORT 가 이미 쓰이면 아무것도 바꾸지 않고 실패한다. lsof 가 PATH 에 없으면 exit 2 로 같은 식으로 멈춘다
 # 카프카 리스너는 SPRING_KAFKA_BOOTSTRAP_SERVERS 기본값(dev-kafka 9092)에 붙고 이 시험은 아무것도 보내지 않는다
 # 사본(shop_seed_t2b)만 고친다(템플릿은 그대로): PENDING outbox 행을 PUBLISHED 로, 보상의 PENDING · FAILED 재시도를 1일 뒤로 미루고,
 #   PAYMENT_RECONCILE_DELAY_MS · PAYMENT_COMPENSATION_RETRY_DELAY_MS 를 1시간으로 둔다 — 부팅한 폴러가 dev-kafka 로 발행하거나 보상 배치가 Toss 를 부르지 않게 한다
 set -euo pipefail
+# lsof 가 없으면 포트 점검이 "비어 있음" 으로 읽혀 쓰이는 포트를 놓치므로, 아무것도 바꾸기 전에 멈춘다
+command -v lsof > /dev/null 2>&1 || { echo "refused: lsof is not on PATH — boot-smoke.sh needs it to check and stop the port; nothing was changed" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED="$(dirname "$HERE")"
 ROOT="$(dirname "$(dirname "$SEED")")"
