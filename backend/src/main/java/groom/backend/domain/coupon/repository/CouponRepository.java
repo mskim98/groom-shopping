@@ -18,8 +18,8 @@ import java.util.Optional;
 // @Repository : JPA 기반 쿠폰 영속성 계층. 기본 CRUD는 JpaRepository가 제공한다.
 @Repository
 public interface CouponRepository extends JpaRepository<Coupon, Long> {
-  // @Lock(PESSIMISTIC_WRITE) : 조회하는 동안 해당 행에 DB 쓰기 락을 걸어
-  // 다른 트랜잭션이 동시에 수량을 못 바꾸게 한다(Redis 재고가 없을 때의 폴백 경로에서 사용).
+  // @Lock(PESSIMISTIC_WRITE) : 조회하는 동안 해당 행에 DB 쓰기 락을 건다(SELECT … FOR UPDATE).
+  // Redis 장애 때의 DB 경로가 이 잠금 아래서 quantity 와 발급 수를 비교한다.
   // @Query : 메서드 이름 규칙 대신 직접 JPQL을 지정한다. @Param 은 쿼리의 :couponId 자리에 인자를 바인딩.
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT c FROM Coupon c WHERE c.id = :couponId")
@@ -29,14 +29,6 @@ public interface CouponRepository extends JpaRepository<Coupon, Long> {
   @Modifying
   @Query("UPDATE Coupon c SET c.isActive = false where c.id = :couponId")
   Integer updateIsActiveFalse(@Param("couponId") Long couponId);
-
-  // 수량 차감을 읽고-쓰기가 아니라 단일 UPDATE 로 수행한다.
-  // 조회 후 엔티티에서 빼면 두 요청이 같은 값을 읽어 한 번만 줄어드는 lost update 가 생기는데,
-  // DB 가 quantity 를 직접 감산하면 그 창 자체가 없어져 락도 재시도도 필요하지 않다.
-  // quantity > 0 조건이 음수 방지 겸 소진 감지를 겸한다(0건이면 호출부가 소진으로 처리).
-  @Modifying(clearAutomatically = true, flushAutomatically = true)
-  @Query("UPDATE Coupon c SET c.quantity = c.quantity - 1 WHERE c.id = :couponId AND c.quantity > 0")
-  int decreaseQuantityAtomically(@Param("couponId") Long couponId);
 
   // 마감 시 확정 발급 수를 한 번 굳힌다. 이후로는 변하지 않으므로 리포트가 매번 COUNT 하지 않는다
   // 엔티티를 읽어 세터로 넣지 않는 이유는 이 시점에 quantity 를 함께 덮어쓸 위험을 없애기 위해서다 -
