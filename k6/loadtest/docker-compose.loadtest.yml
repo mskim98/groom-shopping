@@ -10,6 +10,8 @@ x-loadtest-env: &loadtest-env
   LOGGING_LEVEL_GROOM_BACKEND: INFO
   LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB: INFO
   SPRING_OUTPUT_ANSI_ENABLED: never
+  # 진단용 - 커넥션을 2 초 넘게 쥔 스레드의 빌린 시점 스택을 로그에 남긴다(r120 Hikari 고갈 추적). 운영 yml 은 그대로이고 측정 백엔드만 켠다
+  SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD: "2000"
 
 services:
   wiremock:
