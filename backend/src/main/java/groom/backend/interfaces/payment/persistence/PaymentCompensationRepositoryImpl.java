@@ -18,10 +18,9 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
     // 선점 조회를 원자적 단일 문장으로 묶는 SQL. SELECT 로 후보를 고르는 서브쿼리에
     // FOR UPDATE SKIP LOCKED 를 걸어 다른 인스턴스가 잠근 행을 건너뛰고,
     // 그 결과를 바로 UPDATE...RETURNING 으로 커밋해 조회와 선점 사이에 틈이 없다
+    // 고른 행은 MATERIALIZED CTE 로 한 번만 정한다 - WHERE id IN (… LIMIT … SKIP LOCKED) 는 실행 계획에 따라 LIMIT 보다 많은 행을 집는다
     private static final String ACQUIRE_RETRYABLE_SQL = """
-            UPDATE payment_compensation
-            SET status = 'PROCESSING', updated_at = now()
-            WHERE id IN (
+            WITH picked AS MATERIALIZED (
                 SELECT id
                 FROM payment_compensation
                 WHERE (status IN ('PENDING', 'FAILED') AND next_retry_at <= :now)
@@ -29,9 +28,11 @@ public class PaymentCompensationRepositoryImpl implements PaymentCompensationRep
                        AND COALESCE(next_retry_at, :now) <= :now)
                 ORDER BY next_retry_at ASC NULLS LAST
                 LIMIT :limit
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *
+                FOR UPDATE SKIP LOCKED)
+            UPDATE payment_compensation c
+            SET status = 'PROCESSING', updated_at = now()
+            FROM picked WHERE c.id = picked.id
+            RETURNING c.*
             """;
 
     private final SpringDataPaymentCompensationRepository jpa;
