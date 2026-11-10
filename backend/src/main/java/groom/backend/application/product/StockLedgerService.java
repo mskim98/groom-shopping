@@ -42,13 +42,14 @@ public class StockLedgerService {
         MODE_FLIPPED
     }
 
+    /** 예약 결과와, RESERVED 일 때 예약이 낮춘 뒤의 재고(그 밖의 결과는 null) */
+    public record DbReserved(DbReservation result, Integer stockAfter) {
+    }
+
     /**
      * REVERSAL 을 쓴 결과. written 은 이번에 새로 쓰인 행, modes 는 REVERSAL 을 쓴 같은 트랜잭션이 공유 잠금 아래에서 읽은 상품별 모드다
      * 커밋 뒤 Redis 복원은 modes 가 REDIS 인 상품에만 한다
      */
-    public record DbReserved(DbReservation result, Integer stockAfter) {
-    }
-
     public record Reversal(List<Reversed> written, Map<UUID, StockMode> modes) {
     }
 
@@ -119,7 +120,7 @@ public class StockLedgerService {
     }
 
     /**
-     * {@link #reserveInDb} 와 같은 예약이며 RESERVED 일 때 예약이 낮춘 뒤의 재고를 함께 돌려준다(그 밖의 결과는 null).
+     * {@link #reserveInDb} 와 같은 예약이며 RESERVED 일 때 예약이 낮춘 뒤의 재고를 함께 돌려준다(그 밖의 결과는 null)
      * 재고는 조건부 UPDATE 와 같은 문장에서 읽은 값이라 이 예약보다 늦게 커밋된 차감이 섞이지 않는다
      */
     @Transactional
