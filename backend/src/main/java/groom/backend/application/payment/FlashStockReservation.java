@@ -29,6 +29,7 @@ import org.springframework.stereotype.Component;
  * Redis 가 예외 · 서킷 OPEN · 키 없음(-2)이면 상품을 DB 모드로 전환해 조건부 UPDATE 로 예약한다. DB 모드면 Redis 를 건드리지 않는다
  * 복귀 직후 오래된 키로 선점한 요청이 새 키를 모르는 미적용 SALE 을 남기는 일을 막기 위해서다.
  * 플래시가 아닌 상품은 Redis 도 원장도 쓰지 않는다(컨슈머가 조건부 UPDATE 로 낮춘다)
+ * 예약이 남긴 판매 재고(REDIS: 선점 결과, DB: 조건부 UPDATE 결과)는 {@code ReservedItem.stockAfter} 로 승인까지 실려 가 임계값 통과 알림에 쓰인다
  */
 @Slf4j
 @Component
