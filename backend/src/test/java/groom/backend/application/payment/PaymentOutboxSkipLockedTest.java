@@ -105,21 +105,21 @@ class PaymentOutboxSkipLockedTest {
 
     @Test
     @DisplayName("두 트랜잭션이 동시에 폴링하면 서로 다른 행을 받는다")
-    void findPendingBatch_두_트랜잭션_동시_폴링은_서로_다른_행을_받는다() throws Exception {
+    void claimPendingBatch_두_트랜잭션_동시_폴링은_서로_다른_행을_받는다() throws Exception {
         seedPending(10);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch firstHolds = new CountDownLatch(1);
         CountDownLatch secondDone = new CountDownLatch(1);
         try {
             Future<Set<UUID>> first = pool.submit(() -> transactionTemplate.execute(status -> {
-                Set<UUID> ids = idsOf(outboxRepository.findPendingBatch(5));
+                Set<UUID> ids = idsOf(outboxRepository.claimPendingBatch(5, 60000L));
                 firstHolds.countDown();
                 await(secondDone); // 첫 트랜잭션은 잠금을 쥔 채 둘째가 끝나길 기다린다
                 return ids;
             }));
             assertThat(firstHolds.await(10, TimeUnit.SECONDS)).isTrue();
             Future<Set<UUID>> second = pool.submit(() -> transactionTemplate.execute(status -> {
-                Set<UUID> ids = idsOf(outboxRepository.findPendingBatch(5));
+                Set<UUID> ids = idsOf(outboxRepository.claimPendingBatch(5, 60000L));
                 secondDone.countDown();
                 return ids;
             }));
@@ -153,19 +153,16 @@ class PaymentOutboxSkipLockedTest {
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
         try {
+            // 폴러는 트랜잭션 없이 돈다 - 집기와 PUBLISHED 표시가 각자 짧은 트랜잭션이다
             Future<?> a = pool.submit(() -> {
                 start.await();
-                return transactionTemplate.execute(status -> {
-                    first.publishPending();
-                    return null;
-                });
+                first.publishPending();
+                return null;
             });
             Future<?> b = pool.submit(() -> {
                 start.await();
-                return transactionTemplate.execute(status -> {
-                    second.publishPending();
-                    return null;
-                });
+                second.publishPending();
+                return null;
             });
             start.countDown();
             a.get(30, TimeUnit.SECONDS);
