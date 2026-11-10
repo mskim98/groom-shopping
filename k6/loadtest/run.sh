@@ -160,18 +160,19 @@ sample_pg() { # 출력 폴더
 stop_pg_sample() { psql_db postgres -Atc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'r120-pg-sample'" > /dev/null 2>&1 || true; }
 
 # 유지 구간 동안 every 초마다 백엔드마다 SIGQUIT 를 보낸다 - JVM 이 멈추지 않고 전체 스레드 덤프를 표준 출력(컨테이너 로그)에 찍는다
-# 덤프 시각은 시작 시각 + n x every 초(정수 초)로 맞춰 kill 에 걸린 시간이 간격에 쌓이지 않게 한다
-sample_threads() { # 간격 초 · 램프 초 · 유지 초
-  local every="$1" t0 end n=0 d pids b
+# k6 의 준비 단계(setup, 로그인 천 건)가 끝난 줄이 k6 로그에 찍힌 뒤 램프 초를 기다려 유지 구간에 맞춘다
+# 부하 중에는 docker kill 한 번이 2 초 넘게 걸려(첫 실행: 덤프 간격 3~4 초, 백엔드당 15 장) 보내는 일을 기다리지 않고 시각표(시작 + n x every 초)대로 백그라운드로 보낸다
+sample_threads() { # 간격 초 · 램프 초 · 유지 초 · k6 로그
+  local every="$1" t0 end n=0 d b waited=0
+  until grep -q 'setup:' "$4" 2> /dev/null || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
   sleep "$2"
   t0="$(date +%s)"; end=$((t0 + $3))
   while [ "$(date +%s)" -lt "$end" ]; do
-    pids=""
-    for b in $BACKENDS; do docker kill --signal=QUIT "${PROJECT}-$b-1" > /dev/null 2>&1 & pids="$pids $!"; done
-    wait $pids || true
+    for b in $BACKENDS; do docker kill --signal=QUIT "${PROJECT}-$b-1" > /dev/null 2>&1 & done
     n=$((n + 1)); d=$((t0 + n * every - $(date +%s)))
     [ "$d" -gt 0 ] && sleep "$d"
   done
+  wait || true
   return 0
 }
 
@@ -206,7 +207,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   before_lines="$(docker exec nginx sh -c "wc -l < $NGINX_LOG" 2> /dev/null | tr -d ' ' || true)"
   before_lines="${before_lines:-0}"
   echo "$before_lines" > "$dir/nginx_lines_before.txt"
-  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"; : > "$dir/k6cpu.tsv"
+  : > "$dir/lag.log"; : > "$dir/stats.tsv"; : > "$dir/prom.tsv"; : > "$dir/k6cpu.tsv"; : > "$dir/k6.log"
   db_now > "$dir/db_window_start.txt"
   start="$(date -u +%FT%TZ)"
   echo "$start" > "$dir/start.txt"
@@ -216,7 +217,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_prom "$dir" & local p3=$!
   sample_pg "$out" & local p5=$!
   local p6=""
-  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" & p6=$!; fi
+  if [ "${THREAD_DUMP_EVERY_S:-0}" -gt 0 ]; then sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!; fi
   trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
 
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
