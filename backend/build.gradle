@@ -28,6 +28,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
+    // 상품 상세 L1 캐시(infrastructure/cache) - 버전은 Spring Boot BOM 이 정한다
+    implementation 'com.github.ben-manes.caffeine:caffeine'
     // Redisson - 분산 락 (서버 스케일 아웃 시에도 동시성 보장)
     implementation 'org.redisson:redisson-spring-boot-starter:3.27.2'
     implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -94,4 +96,9 @@ tasks.named('test') {
     // 컨텍스트 캐시 키가 갈려 Spring 이 컨텍스트를 두 벌 띄운다. 그러면 Kafka 컨슈머도
     // 두 벌이 돼 한쪽 테스트가 발행한 이벤트를 다른 쪽 컨슈머가 실제로 처리한다.
     systemProperty 'coupon.reconcile.enabled', 'false'
+
+    // 공유 서킷 키(cb:*:open_until)를 시험 기본에서 끈다 - 컨텍스트 여러 개가 한 Redis 를 같이 쓰므로 앞선 시험이 연 회로의 키가
+    // 뒤 시험의 호출 · 보상 배치를 막는다. 프로필 yml(운영 기본 toss,toss-cancel,db-ledger)이 properties 파일보다 우선해 시스템 프로퍼티로 둔다
+    // 키를 보는 시험(SharedCircuitFlagTest)만 DynamicPropertySource 로 이름을 켠다
+    systemProperty 'circuit.shared.names', ''
 }

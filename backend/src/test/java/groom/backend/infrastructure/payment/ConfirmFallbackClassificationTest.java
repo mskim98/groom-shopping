@@ -64,7 +64,7 @@ class ConfirmFallbackClassificationTest {
     private JdbcTemplate jdbc;
 
     // 이 클래스의 fallback 은 프록시를 거치지 않고 직접 부른다. 필드(RestTemplate)는 fallback 이 쓰지 않는다
-    private final TossPaymentClientImpl client = new TossPaymentClientImpl(null, null);
+    private final TossPaymentClientImpl client = new TossPaymentClientImpl(null, null, null);
 
     private ErrorCode classify(Throwable cause) {
         BusinessException thrown = org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,

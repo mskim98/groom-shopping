@@ -1,0 +1,10 @@
+# 비밀 · 로컬 산출물이 빌드 컨텍스트로 들어가지 않게 한다
+.env
+.gradle
+build
+logs
+docs
+runbook
+scripts
+tmp
+**/*.pem

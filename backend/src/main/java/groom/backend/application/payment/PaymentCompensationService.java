@@ -16,6 +16,7 @@ import groom.backend.infrastructure.payment.TossPaymentClient;
 import groom.backend.infrastructure.payment.TossPaymentNotFoundException;
 import groom.backend.infrastructure.payment.TossRetryLaterException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import groom.backend.infrastructure.resilience.SharedCircuitFlag;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -68,6 +69,7 @@ public class PaymentCompensationService {
     private final PaymentCompensationBatchProperties batchProperties;
     // 회차 시작에 회로 상태를 읽어 OPEN 이면 쉬기 위해 주입
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final SharedCircuitFlag sharedCircuitFlag;
     // 적재·처리 지표 노출용
     private final MeterRegistry meterRegistry;
 
@@ -310,7 +312,9 @@ public class PaymentCompensationService {
     // skip-when-open 회로 중 OPEN 인 첫 이름을 돌려준다. 없으면 null
     private String firstOpenSkipCircuit() {
         for (String name : batchProperties.getSkipWhenOpen()) {
-            if (circuitBreakerRegistry.circuitBreaker(name).getState() == CircuitBreaker.State.OPEN) {
+            // 다른 인스턴스가 연 회로(공유 키)도 같게 본다
+            if (circuitBreakerRegistry.circuitBreaker(name).getState() == CircuitBreaker.State.OPEN
+                    || sharedCircuitFlag.isOpen(name)) {
                 return name;
             }
         }

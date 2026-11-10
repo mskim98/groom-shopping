@@ -66,26 +66,61 @@ services:
     volumes:
       - kafka_kraft_data:/var/lib/kafka/data
 
-  backend:
-    container_name: backend
+  # 백엔드 3대 - 같은 이미지 · 같은 JWT 키 파일 · 같은 DB/Redis/Kafka 를 쓰고 Kafka Streams 상태 폴더와 컨테이너만 따로 둔다
+  # JWT 키 파일(secrets/jwt-keys.pem)은 저장소에 없다 - 처음 한 번 만든다(.gitignore 의 secrets/ 대상)
+  #   mkdir -p secrets && openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out secrets/priv.pem \
+  #     && { cat secrets/priv.pem; openssl pkey -in secrets/priv.pem -pubout; } > secrets/jwt-keys.pem && rm secrets/priv.pem
+  # 3대가 키가 다르면 한 대가 발급한 토큰을 다른 대가 거절한다
+  # Hikari 풀 50 : 3 x 50 = 150 이라 DB max_connections 300 에서 150 이 남는다(마이그레이션 · 모니터링 · 수동 접속 몫)
+  x-backend: &backend
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    environment:
-      - SPRING_PROFILES_ACTIVE=dev
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/${POSTGRES_DB}
-      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
-      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+    image: groom-backend
+    environment: &backend-env
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "50"
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9093
     depends_on:
       - db
       - redis
       - kafka
     networks:
       - app-network
+
+  backend1:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SPRING_KAFKA_STREAMS_PROPERTIES_STATE_DIR: /var/lib/streams/state
+      JWT_KEY_FILE: /run/secrets/jwt-keys.pem
+    volumes:
+      - ./secrets/jwt-keys.pem:/run/secrets/jwt-keys.pem:ro
+      - backend1_streams:/var/lib/streams
+
+  backend2:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SPRING_KAFKA_STREAMS_PROPERTIES_STATE_DIR: /var/lib/streams/state
+      JWT_KEY_FILE: /run/secrets/jwt-keys.pem
+    volumes:
+      - ./secrets/jwt-keys.pem:/run/secrets/jwt-keys.pem:ro
+      - backend2_streams:/var/lib/streams
+
+  backend3:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SPRING_KAFKA_STREAMS_PROPERTIES_STATE_DIR: /var/lib/streams/state
+      JWT_KEY_FILE: /run/secrets/jwt-keys.pem
+    volumes:
+      - ./secrets/jwt-keys.pem:/run/secrets/jwt-keys.pem:ro
+      - backend3_streams:/var/lib/streams
 
   frontend:
     container_name: frontend
@@ -97,7 +132,9 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=/api/v1
     depends_on:
-      - backend
+      - backend1
+      - backend2
+      - backend3
     networks:
       - app-network
 
@@ -110,12 +147,18 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
+      - backend1
+      - backend2
+      - backend3
     networks:
       - app-network
 
 volumes:
   db_data:
   kafka_kraft_data:
+  backend1_streams:
+  backend2_streams:
+  backend3_streams:
 
 networks:
   app-network:

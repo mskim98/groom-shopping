@@ -69,11 +69,7 @@ public class ProductQueryController {
     public ResponseEntity<ProductResponse> findById(
             @Parameter(description = "제품 ID", required = true, example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID id) {
-        Product product = productQueryService.findById(id);
-
-        ProductResponse productResponse = ProductResponse.from(product);
-
-        return ResponseEntity.ok(productResponse);
+        return ResponseEntity.ok(ProductResponse.from(productQueryService.findDetail(id)));
     }
 
     @Operation(

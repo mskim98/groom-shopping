@@ -43,7 +43,7 @@ class JwtRsaTokenProviderKeyTest {
     void 키없음_dev_임시키쌍으로_토큰을_서명하고_검증한다() throws Exception {
         JwtRsaTokenProvider provider = provider(new MockEnvironment(), "", "", "");
 
-        String token = provider.createAccessToken("a@b.c", Role.ROLE_USER);
+        String token = provider.createAccessToken(1L, "a@b.c", Role.ROLE_USER);
 
         assertThat(provider.validateToken(token)).isTrue();
     }
@@ -70,8 +70,8 @@ class JwtRsaTokenProviderKeyTest {
                 Base64.getEncoder().encodeToString(priv.getBytes(StandardCharsets.UTF_8)),
                 Base64.getEncoder().encodeToString(pub.getBytes(StandardCharsets.UTF_8)), "");
 
-        assertThat(escaped.validateToken(escaped.createAccessToken("a@b.c", Role.ROLE_USER))).isTrue();
-        assertThat(wrapped.validateToken(escaped.createAccessToken("a@b.c", Role.ROLE_USER)))
+        assertThat(escaped.validateToken(escaped.createAccessToken(1L, "a@b.c", Role.ROLE_USER))).isTrue();
+        assertThat(wrapped.validateToken(escaped.createAccessToken(1L, "a@b.c", Role.ROLE_USER)))
                 .as("같은 키 쌍이면 서로의 토큰을 검증한다").isTrue();
     }
 
@@ -85,7 +85,7 @@ class JwtRsaTokenProviderKeyTest {
 
         JwtRsaTokenProvider provider = provider(new MockEnvironment(), "", "", file.toString());
 
-        assertThat(provider.validateToken(provider.createAccessToken("a@b.c", Role.ROLE_USER))).isTrue();
+        assertThat(provider.validateToken(provider.createAccessToken(1L, "a@b.c", Role.ROLE_USER))).isTrue();
     }
 
     @Test

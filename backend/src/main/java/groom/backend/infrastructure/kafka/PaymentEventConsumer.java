@@ -5,9 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.payment.event.PaymentEventParseException;
+import groom.backend.infrastructure.resilience.DbLedgerCircuit;
+import groom.backend.infrastructure.resilience.DbLedgerOpenException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -23,8 +27,16 @@ public class PaymentEventConsumer {
 
     private final PaymentApplicationService paymentApplicationService;
     private final ObjectMapper objectMapper;
+    // db-ledger 회로. 없으면(단위 시험) 회로 없이 바로 처리한다
+    private DbLedgerCircuit dbLedgerCircuit;
+
+    @Autowired(required = false)
+    public void setDbLedgerCircuit(DbLedgerCircuit dbLedgerCircuit) {
+        this.dbLedgerCircuit = dbLedgerCircuit;
+    }
 
     @KafkaListener(
+            id = DbLedgerCircuit.LISTENER_ID,
             topics = "payment-events",
             groupId = "payment-event-group",
             containerFactory = "paymentApprovedKafkaListenerContainerFactory")
@@ -36,6 +48,15 @@ public class PaymentEventConsumer {
             throw new PaymentEventParseException("PaymentApproved 레코드를 읽지 못했다: key=" + record.key(), e);
         }
         log.info("[PAYMENT_EVENT_CONSUMED] key={}, paymentId={}", record.key(), event.paymentId());
-        paymentApplicationService.applyApprovedEvent(event);
+        if (dbLedgerCircuit == null) {
+            paymentApplicationService.applyApprovedEvent(event);
+            return;
+        }
+        try {
+            dbLedgerCircuit.run(() -> paymentApplicationService.applyApprovedEvent(event));
+        } catch (CallNotPermittedException e) {
+            // 회로가 열려 있다 - 승인하지 않고 되감아 풀린 뒤 다시 읽는다(재시도 횟수 · DLQ 로 세지 않는다)
+            throw new DbLedgerOpenException();
+        }
     }
 }

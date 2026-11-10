@@ -3,6 +3,7 @@ package groom.backend.domain.product.service;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.Product;
+import groom.backend.infrastructure.cache.ProductDetailCache;
 import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
 import groom.backend.domain.product.model.vo.Price;
@@ -14,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -26,6 +29,7 @@ public class ProductCommonService {
 
     private final ProductCommonRepository productCommonRepository;
     private final S3Service s3Service;
+    private final ProductDetailCache detailCache;
 
     @Transactional
     public Product findById(UUID id) {
@@ -39,7 +43,9 @@ public class ProductCommonService {
 
         Product product = request.toEntity();
 
-        return productCommonRepository.save(product);
+        Product saved = productCommonRepository.save(product);
+        afterCommit(() -> detailCache.clearNegative(saved.getId()));
+        return saved;
     }
 
     @Transactional
@@ -53,7 +59,9 @@ public class ProductCommonService {
             product.changeImageUrl(imageUrl);
         }
 
-        return productCommonRepository.save(product);
+        Product saved = productCommonRepository.save(product);
+        afterCommit(() -> detailCache.clearNegative(saved.getId()));
+        return saved;
     }
 
     @Transactional
@@ -83,6 +91,8 @@ public class ProductCommonService {
         }
 
         productCommonRepository.save(product);
+        // 본문이 바뀌었으니 커밋 뒤에 캐시 버전을 옮긴다. 롤백되면 호출되지 않아 포인터가 그대로다. 재고 변경 메서드는 부르지 않는다
+        afterCommit(() -> detailCache.switchVersion(id, product));
 
         return product;
     }
@@ -115,6 +125,21 @@ public class ProductCommonService {
     @Transactional
     public void deleteProduct(UUID id) {
         productCommonRepository.deleteById(id);
+        afterCommit(() -> detailCache.evictDeleted(id));
+    }
+
+    // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 캐시 쓰기 실패는 이미 커밋된 변경을 되돌릴 수 없으므로 캐시가 삼킨다
+    private static void afterCommit(Runnable task) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    task.run();
+                }
+            });
+        } else {
+            task.run();
+        }
     }
 }
 

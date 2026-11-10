@@ -78,10 +78,10 @@ public class AuthApplicationService {
             User user = ((CustomUserDetails) principal).getUser();
 
             // Access Token 생성
-            String accessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
+            String accessToken = jwtTokenProvider.createAccessToken(user.getId(), user.getEmail(), user.getRole());
 
             // Refresh Token 생성
-            String refreshToken = jwtTokenProvider.createRefreshToken(user.getEmail(), user.getRole());
+            String refreshToken = jwtTokenProvider.createRefreshToken(user.getId(), user.getEmail(), user.getRole());
 
             // Refresh Token 저장(Redis)
             String userAgent = request.getHeader("User-Agent");
@@ -124,12 +124,12 @@ public class AuthApplicationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         // 5. 새로운 Access Token 생성
-        String newAccessToken = jwtTokenProvider.createAccessToken(user.getEmail(), user.getRole());
+        String newAccessToken = jwtTokenProvider.createAccessToken(user.getId(), user.getEmail(), user.getRole());
 
         // 7. Refresh Token Rotation
         String userAgent = request.getHeader("User-Agent");
         String ipAddress = getClientIp(request);
-        String newRefreshToken = refreshTokenService.rotateRefreshToken(refreshToken, userAgent, ipAddress);
+        String newRefreshToken = refreshTokenService.rotateRefreshToken(refreshToken, user.getId(), userAgent, ipAddress);
 
         // 8. 새로운 Refresh Token을 HttpOnly Cookie로 설정
         Cookie newRefreshTokenCookie = createRefreshTokenCookie(newRefreshToken);
