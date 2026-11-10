@@ -59,6 +59,9 @@ cmd_seed() {
   fi
   bash db/seed/reset.sh "$SEED_DB"
   psql_seed -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+  # 백엔드가 멈춘 상태의 측정용 Redis 를 비운다 - 앞 시험이 남긴 장바구니 키(cart:<사용자 id>)가 남으면 GET /cart 가 DB 에 없는 옛 항목을 보여 주고
+  # 시드가 DB 에 넣어 둔 장바구니 항목은 비워지지 않아 첫 주문에 섞인다. load-redis.sh 는 자기 소유 키 패턴만 지우므로 여기서 한다
+  docker exec redis redis-cli FLUSHALL > /dev/null
   bash db/seed/load-redis.sh "$SEED_DB"
   bash db/seed/recreate-topics.sh
   # 백엔드가 뜨기 전의 검사 - 기동 뒤에는 시드의 PENDING 행이 처리돼 이 검사가 통과하지 못한다(R119-7)
@@ -75,6 +78,15 @@ cmd_app() {
   $DC build backend1
   $DC up -d --no-build backend1 backend2 backend3 nginx
   for b in $BACKENDS; do wait_for "$b health" 300 backend_healthy "$b"; done
+  # 기동 직후 한 대가 Redis 연결 전에 러너가 실패해 스스로 내려간 적이 있다(CouponRedisKeyMigrationRunner) - 20 초 뒤 다시 보고 내려간 대는 한 번 다시 띄운다
+  sleep 20
+  for b in $BACKENDS; do
+    if ! backend_healthy "$b"; then
+      echo "$b is not healthy after boot, starting it once more" >&2
+      $DC up -d --no-build "$b"
+      wait_for "$b health" 300 backend_healthy "$b"
+    fi
+  done
   echo "app up"
 }
 
