@@ -2,6 +2,7 @@ package groom.backend.interfaces.coupon;
 
 import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.application.coupon.CouponIssueStatus;
 import groom.backend.application.coupon.strategy.CouponIssueResult;
 import groom.backend.application.coupon.strategy.CouponIssueStrategySelector;
 import groom.backend.common.annotation.CheckPermission;
@@ -123,12 +124,12 @@ public class CouponController {
     return switch (result.status()) {
       case SUCCESS -> ResponseEntity.ok(Map.of(
               "couponIssueId", String.valueOf(result.couponIssueId()),
-              "status", "SUCCESS"));
+              "status", CouponIssueStatus.SUCCESS));
       // 202 는 "받았고 처리 중"이다. 대기 순번은 응답하지 않는다 -
       // 발급 판정은 컨슈머 도달 순서로 정해지므로 적재 순번을 돌려주면 지킬 수 없는 순서를 약속하게 된다
       case ACCEPTED -> ResponseEntity.accepted().body(Map.of(
               "requestId", result.requestId(),
-              "status", "WAITING"));
+              "status", CouponIssueStatus.WAITING));
       // 실패는 예외로 던져 ErrorResponse 의 code 필드에 사유 이름이 실리게 한다
       // 부하 스크립트가 그 이름으로 품절 · 중복 · 경합을 나누고, 그 분리가 라운드 비교의 근거다
       case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
@@ -170,11 +171,11 @@ public class CouponController {
     return switch (result.status()) {
       case ACCEPTED -> ResponseEntity.accepted().body(Map.of(
               "requestId", result.requestId(),
-              "status", "WAITING"));
+              "status", CouponIssueStatus.WAITING));
       // Redis 장애로 DB 경로가 그 자리에서 발급한 경우다. 확정까지 끝났으므로 202 가 아니라 200 이다
       case SUCCESS -> ResponseEntity.ok(Map.of(
               "couponIssueId", String.valueOf(result.couponIssueId()),
-              "status", "SUCCESS"));
+              "status", CouponIssueStatus.SUCCESS));
       case SOLD_OUT -> throw new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK);
       case ALREADY_ISSUED -> throw new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED);
       case UNAVAILABLE -> throw new BusinessException(ErrorCode.COUPON_ISSUE_UNAVAILABLE);
