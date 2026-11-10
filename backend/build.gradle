@@ -28,6 +28,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
+    // 상품 상세 L1 캐시(infrastructure/cache) - 버전은 Spring Boot BOM 이 정한다
+    implementation 'com.github.ben-manes.caffeine:caffeine'
     // Redisson - 분산 락 (서버 스케일 아웃 시에도 동시성 보장)
     implementation 'org.redisson:redisson-spring-boot-starter:3.27.2'
     implementation 'org.springframework.boot:spring-boot-starter-security'

@@ -1,6 +1,8 @@
 package groom.backend.interfaces.product.dto.response;
 
 import groom.backend.domain.product.model.Product;
+import groom.backend.infrastructure.cache.ProductBody;
+import groom.backend.infrastructure.cache.ProductDetailCache;
 import groom.backend.domain.product.model.enums.ProductCategory;
 import groom.backend.domain.product.model.enums.ProductStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -36,6 +38,21 @@ public record ProductResponse(
                 product.getStatus(),
                 product.getCategory(),
                 product.getImageUrl()
+        );
+    }
+
+    // 본문(캐시)과 수량(별도 1초 캐시)을 합친다 - 상태는 수량에서 파생한다
+    public static ProductResponse from(ProductDetailCache.ProductDetail detail) {
+        ProductBody body = detail.body();
+        return new ProductResponse(
+                body.productId(),
+                body.name(),
+                body.description(),
+                body.price(),
+                detail.stock(),
+                detail.stock() > 0 ? ProductStatus.AVAILABLE : ProductStatus.OUT_OF_STOCK,
+                body.category(),
+                body.imageUrl()
         );
     }
 }
