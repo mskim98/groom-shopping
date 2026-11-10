@@ -3,7 +3,7 @@
 # 사용: bash k6/loadtest/run.sh <명령> [인자]
 #   keys                      secrets/jwt-keys.pem 이 없으면 만든다(저장소 밖 · .gitignore 의 secrets/ 대상)
 #   infra                     db redis kafka wiremock 을 띄우고 준비될 때까지 기다린다
-#   seed                      compose db 안에 시드 템플릿을 만들고 shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성
+#   seed                      시드 템플릿이 없을 때만 만들고(SEED_REBUILD_TEMPLATE=1 이면 다시) shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성
 #   app                       백엔드 이미지 빌드 후 backend1..3 · nginx 를 띄우고 건강 UP 을 기다린다
 #   tiny <out-dir>            초당 50 요청 10 초 + 램프 2 초 (<out-dir>/tiny)
 #   step <rps> <out-dir>      초당 <rps> 요청 램프 10 초 + 유지 30 초 (<out-dir>/step-<rps>)
@@ -51,7 +51,12 @@ cmd_infra() {
 }
 
 cmd_seed() {
-  bash db/seed/build-template.sh
+  # 템플릿은 한 번 만들고 복제한다 - 이미 템플릿 표시가 된 DB 가 있으면 다시 만들지 않는다(새 Flyway 마이그레이션이 생겼을 때만 SEED_REBUILD_TEMPLATE=1)
+  if [ "${SEED_REBUILD_TEMPLATE:-0}" = 1 ] || [ "$(psql_db postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = 'shop_seed_template' AND datistemplate")" != 1 ]; then
+    bash db/seed/build-template.sh
+  else
+    echo "== shop_seed_template exists, reused"
+  fi
   bash db/seed/reset.sh "$SEED_DB"
   psql_seed -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
   bash db/seed/load-redis.sh "$SEED_DB"

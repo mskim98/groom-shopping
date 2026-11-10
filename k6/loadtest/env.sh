@@ -18,3 +18,4 @@ export SEED_REDIS_PORT=6379
 export SEED_REDIS_CONTAINER=redis
 
 psql_seed() { docker exec db psql -U "$SEED_PG_USER" -d "$SEED_DB" -X -q -v ON_ERROR_STOP=1 "$@"; }
+psql_db() { local db="$1"; shift; docker exec db psql -U "$SEED_PG_USER" -d "$db" -X -q -v ON_ERROR_STOP=1 "$@"; }
