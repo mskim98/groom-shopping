@@ -156,7 +156,7 @@ public class FlashStockReservation {
 
     /**
      * TX1 이 커밋된 뒤 실패했을 때(컨슈머 후처리 실패 · 대사 포기): 결제의 SALE 행 전부를 REVERSAL 로 되돌린다. 이미 쓴 행은 건너뛰므로 두 번 불러도 하나다
-     * Redis 는 이번에 REVERSAL 이 새로 쓰인 REDIS 예약 항목만, 모드가 아직 REDIS 일 때 복원한다
+     * Redis 는 이번에 REVERSAL 이 새로 쓰인 REDIS 예약 항목만, REVERSAL 을 쓴 트랜잭션이 읽은 모드가 REDIS 일 때 복원한다
      * items 가 비어 있어도(outbox 가 없는 대사) 원장 되돌림은 한다
      */
     public void releaseAfterRecord(UUID paymentId, List<ReservedItem> items) {
@@ -171,20 +171,23 @@ public class FlashStockReservation {
     }
 
     /**
-     * 결제의 SALE 행 전부에 REVERSAL 을 쓰고(호출한 트랜잭션에 합류), 이번에 새로 쓰인 REDIS 예약 항목의 Redis 복원 대상을 돌려준다
+     * 결제의 SALE 행 전부에 REVERSAL 을 쓰고, 이번에 새로 쓰인 REDIS 예약 항목 가운데 REVERSAL 을 쓴 트랜잭션이 REDIS 모드로 읽은 것만 Redis 복원 대상으로 돌려준다
      * 사용자 취소처럼 REVERSAL 이 커밋되는 트랜잭션 안에서 부르는 경로가 Redis 복원을 커밋 뒤로 미룰 수 있게 둘로 나눴다 - 롤백된 REVERSAL 에 Redis 만 복원되면 키가 실제보다 커진다
+     * 모드 판정은 REVERSAL 과 같은 트랜잭션 · 공유 advisory 잠금 아래다({@link StockLedgerService#reverseSales}) - 복귀와 겹쳐도 복원이 두 번 되거나 빠지지 않는다
      */
     public List<StockLedgerRepository.Reversed> reverseSales(UUID paymentId, List<ReservedItem> items) {
         Map<UUID, ReservedItem> byProduct = new LinkedHashMap<>();
         items.forEach(item -> byProduct.put(item.productId(), item));
-        return ledger.insertReversals(paymentId).stream()
+        StockLedgerService.Reversal reversal = ledgerService.reverseSales(paymentId);
+        return reversal.written().stream()
                 .filter(row -> byProduct.get(row.productId()) != null && byProduct.get(row.productId()).mode() == StockMode.REDIS)
+                .filter(row -> reversal.modes().get(row.productId()) == StockMode.REDIS)
                 .toList();
     }
 
-    /** {@link #reverseSales} 가 돌려준 항목을 Redis 에 복원한다(모드가 REDIS 일 때만, 실패는 삼킨다) */
+    /** {@link #reverseSales} 가 돌려준 항목을 Redis 에 복원한다. 모드 판정은 REVERSAL 트랜잭션이 끝냈으므로 다시 읽지 않는다(실패는 삼킨다) */
     public void releaseRedis(List<StockLedgerRepository.Reversed> rows) {
-        rows.forEach(row -> releaseRedis(row.productId(), row.quantity()));
+        rows.forEach(row -> restoreRedis(row.productId(), row.quantity()));
     }
 
     /**
@@ -199,12 +202,23 @@ public class FlashStockReservation {
         }
     }
 
-    // 모드가 REDIS 일 때만 복원한다. DB 모드의 키는 오래된 값이라 복귀가 덮어쓰며, 키가 없으면 Lua 가 만들지 않는다
+    // 원장 행이 없는 되돌림(진입 실패 · 중복 예약)용. 모드가 REDIS 일 때만 복원한다 - DB 모드의 키는 오래된 값이라 복귀가 덮어쓰며, 키가 없으면 Lua 가 만들지 않는다
     private void releaseRedis(UUID productId, int quantity) {
         try {
-            if (ledger.readMode(productId) == StockMode.REDIS) {
-                redis.release(productId, quantity);
+            if (ledger.readMode(productId) != StockMode.REDIS) {
+                return;
             }
+        } catch (Exception e) {
+            log.error("[STOCK_RELEASE_FAILED] Redis 선점 복원 실패 - ProductId: {}, Quantity: {}, Error: {}",
+                    productId, quantity, e.getMessage());
+            return;
+        }
+        restoreRedis(productId, quantity);
+    }
+
+    private void restoreRedis(UUID productId, int quantity) {
+        try {
+            redis.release(productId, quantity);
         } catch (Exception e) {
             log.error("[STOCK_RELEASE_FAILED] Redis 선점 복원 실패 - ProductId: {}, Quantity: {}, Error: {}",
                     productId, quantity, e.getMessage());

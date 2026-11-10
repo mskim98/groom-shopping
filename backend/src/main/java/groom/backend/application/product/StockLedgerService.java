@@ -1,13 +1,19 @@
 package groom.backend.application.product;
 
 import groom.backend.application.product.StockLedgerRepository.LedgerRow;
+import groom.backend.application.product.StockLedgerRepository.Reversed;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.enums.StockMode;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
@@ -35,8 +41,19 @@ public class StockLedgerService {
         MODE_FLIPPED
     }
 
+    /**
+     * REVERSAL 을 쓴 결과. written 은 이번에 새로 쓰인 행, modes 는 REVERSAL 을 쓴 같은 트랜잭션이 공유 잠금 아래에서 읽은 상품별 모드다
+     * 커밋 뒤 Redis 복원은 modes 가 REDIS 인 상품에만 한다
+     */
+    public record Reversal(List<Reversed> written, Map<UUID, StockMode> modes) {
+    }
+
     private final StockLedgerRepository ledger;
     private final ProductStockRedisRepository redis;
+
+    // 배타 advisory 잠금 대기 상한. 너무 작으면 TX1 이 조금만 길어도 전환이 실패하고, 너무 크면 열린 TX1 하나가 전환 · 복귀 스레드를 그만큼 붙잡는다
+    @Value("${stock.mode.lock-timeout-ms:3000}")
+    private long lockTimeoutMs = 3000;
 
     /**
      * 한 상품의 미적용 행을 product.stock 에 접어 넣고 적용 표시를 한다. 다른 인스턴스가 이 상품을 처리 중이면 건너뛴다
@@ -71,12 +88,20 @@ public class StockLedgerService {
         if (ledger.readMode(productId) == StockMode.DB) {
             return;
         }
-        ledger.lockProductExclusive(productId);
-        if (ledger.lockModeExclusive(productId) == StockMode.DB) {
-            return;
+        try {
+            ledger.setLockTimeout(lockTimeoutMs);
+            ledger.lockProductExclusive(productId);
+            if (ledger.lockModeExclusive(productId) == StockMode.DB) {
+                return;
+            }
+            foldUnapplied(productId);
+            ledger.setModeDb(productId);
+        } catch (DataAccessException e) {
+            requireLockTimeout(e);
+            // 열린 TX1 이 상한보다 오래 잠금을 쥐고 있다. 결제 실패 경로가 이 예약을 되돌리고 사용자는 잠시 뒤 다시 시도한다
+            log.warn("[STOCK_MODE_SWITCH_LOCK_TIMEOUT] 전환 포기 - ProductId: {}, LockTimeoutMs: {}", productId, lockTimeoutMs);
+            throw new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT);
         }
-        foldUnapplied(productId);
-        ledger.setModeDb(productId);
         log.warn("[STOCK_MODE_SWITCH] REDIS -> DB - ProductId: {}", productId);
     }
 
@@ -129,13 +154,44 @@ public class StockLedgerService {
      */
     @Transactional
     public boolean returnToRedis(UUID productId, long minDwellMs) {
-        ledger.lockProductExclusive(productId);
-        if (ledger.lockModeExclusive(productId) != StockMode.DB || !ledger.isDbModePastDwell(productId, minDwellMs)) {
+        try {
+            ledger.setLockTimeout(lockTimeoutMs);
+            ledger.lockProductExclusive(productId);
+            if (ledger.lockModeExclusive(productId) != StockMode.DB || !ledger.isDbModePastDwell(productId, minDwellMs)) {
+                return false;
+            }
+            redis.initStock(productId, ledger.stockOf(productId) - ledger.sumUnapplied(productId));
+            ledger.setModeRedis(productId);
+        } catch (DataAccessException e) {
+            requireLockTimeout(e);
+            // 열린 TX1 이나 취소 트랜잭션이 상한보다 오래 잠금을 쥐고 있다. DB 모드로 남기고 다음 회차에 다시 시도한다
+            log.warn("[STOCK_MODE_RETURN_LOCK_TIMEOUT] 이번 회차 건너뜀 - ProductId: {}, LockTimeoutMs: {}", productId, lockTimeoutMs);
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return false;
         }
-        redis.initStock(productId, ledger.stockOf(productId) - ledger.sumUnapplied(productId));
-        ledger.setModeRedis(productId);
         log.warn("[STOCK_MODE_RETURN] DB -> REDIS - ProductId: {}", productId);
         return true;
+    }
+
+    /**
+     * REVERSAL 기록. 결제의 SALE 상품마다 공유 advisory 잠금을 잡고 그 트랜잭션 안에서 모드를 읽은 뒤 REVERSAL 을 쓴다.
+     * 복귀(배타 잠금)는 이 트랜잭션보다 온전히 앞서거나 온전히 뒤에 돈다 -
+     * 앞서면 모드는 REDIS 라 호출한 쪽이 커밋 뒤에 Redis 를 복원하고(복귀가 쓴 키는 이 REVERSAL 을 모른다),
+     * 뒤서면 모드는 DB 라 복원하지 않는다(복귀가 stock − 미적용 합으로 키를 쓸 때 이 REVERSAL 이 이미 합에 들어 있다)
+     * 호출한 트랜잭션이 있으면 합류한다 - 사용자 취소는 취소 트랜잭션 안에서 부른다
+     */
+    @Transactional
+    public Reversal reverseSales(UUID paymentId) {
+        Map<UUID, StockMode> modes = ledger.lockSaleProductsShared(paymentId);
+        return new Reversal(ledger.insertReversals(paymentId), modes);
+    }
+
+    // lock_timeout 초과(SQLSTATE 55P03)가 아닌 오류는 그대로 던진다. 스프링이 55P03 을 CannotAcquireLockException 으로 옮기는 경우와 분류하지 못하는 경우가 모두 있다
+    private static void requireLockTimeout(DataAccessException e) {
+        boolean timeout = e instanceof CannotAcquireLockException
+                || (e instanceof UncategorizedSQLException u && "55P03".equals(u.getSQLException().getSQLState()));
+        if (!timeout) {
+            throw e;
+        }
     }
 }
