@@ -48,6 +48,13 @@ final class PaymentFixture {
                 .isActive(true).category("GENERAL").status("AVAILABLE").build()).getId();
     }
 
+    /** 플래시 세일 상품(Redis 선점 + 원장) 1개를 만든다. stock_mode 는 DB 기본값 REDIS 다 */
+    UUID flashProduct(int stock) {
+        return productRepository.save(ProductJpaEntity.builder()
+                .id(UUID.randomUUID()).name("fixture-flash-product").price(PRICE).stock(stock)
+                .isActive(true).category("GENERAL").status("AVAILABLE").flashSale(true).build()).getId();
+    }
+
     /** productId 상품 quantity 개를 담은 주문과 PENDING 결제를 만들어 결제를 돌려준다 */
     Payment payment(UUID productId, int quantity) {
         Order order = Order.builder().userId(1L).couponId(null).status(OrderStatus.PENDING).build();
@@ -108,9 +115,42 @@ final class PaymentFixture {
     void cleanup(Payment payment, UUID productId) {
         jdbc.update("DELETE FROM payment_compensation WHERE payment_id = ?", payment.getId());
         jdbc.update("DELETE FROM payment_outbox WHERE aggregate_id = ?", payment.getId());
+        jdbc.update("DELETE FROM stock_ledger WHERE payment_id = ? OR product_id = ?", payment.getId(), productId);
         paymentRepository.deleteById(payment.getId());
         orderRepository.deleteById(payment.getOrderId());
         productRepository.deleteById(productId);
+    }
+
+    /** 상품은 남기고 결제 한 벌(보상 · 아웃박스 · 원장 · 결제 · 주문)만 지운다 - 한 상품에 결제가 둘인 시험용 */
+    void cleanupPaymentOnly(Payment payment) {
+        jdbc.update("DELETE FROM payment_compensation WHERE payment_id = ?", payment.getId());
+        jdbc.update("DELETE FROM payment_outbox WHERE aggregate_id = ?", payment.getId());
+        jdbc.update("DELETE FROM stock_ledger WHERE payment_id = ?", payment.getId());
+        paymentRepository.deleteById(payment.getId());
+        orderRepository.deleteById(payment.getOrderId());
+    }
+
+    /** 원장 행(종류 · 수량 · 적용 여부)을 id 순으로 읽는다 */
+    List<java.util.Map<String, Object>> ledgerRows(UUID paymentId) {
+        return jdbc.queryForList(
+                "SELECT product_id, qty, kind, applied FROM stock_ledger WHERE payment_id = ? ORDER BY id", paymentId);
+    }
+
+    /** 상품의 아직 적용되지 않은 원장 수량 합 */
+    int unappliedSumOf(UUID productId) {
+        return jdbc.queryForObject(
+                "SELECT COALESCE(SUM(qty), 0) FROM stock_ledger WHERE product_id = ? AND applied = false",
+                Integer.class, productId);
+    }
+
+    String stockModeOf(UUID productId) {
+        return jdbc.queryForObject("SELECT stock_mode FROM product WHERE id = ?", String.class, productId);
+    }
+
+    /** 결제의 원장 수량 합(SALE + REVERSAL, 적용 여부 무관) */
+    int ledgerSumOf(UUID paymentId) {
+        return jdbc.queryForObject("SELECT COALESCE(SUM(qty), 0) FROM stock_ledger WHERE payment_id = ?",
+                Integer.class, paymentId);
     }
 
     /** 승인 직후 상태(READY, paymentKey 부착)로 맞춘다 - 컨슈머가 이벤트를 받는 시작 상태다 */
