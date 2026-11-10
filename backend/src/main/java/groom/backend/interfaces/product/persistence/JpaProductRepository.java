@@ -2,6 +2,7 @@ package groom.backend.interfaces.product.persistence;
 
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.model.enums.ProductCategory;
+import groom.backend.domain.product.model.enums.StockMode;
 import groom.backend.domain.product.model.vo.Description;
 import groom.backend.domain.product.model.vo.Name;
 import groom.backend.domain.product.model.vo.Price;
@@ -69,6 +70,8 @@ public class JpaProductRepository implements ProductRepository {
         );
         // 낙관적 락 version 을 도메인에 옮겨 담는다 (저장 시 되돌려 보내 충돌 감지)
         product.assignVersion(e.getVersion());
+        product.assignFlashSale(Boolean.TRUE.equals(e.getFlashSale()),
+                e.getStockMode() != null ? StockMode.valueOf(e.getStockMode()) : null, e.getStockModeChangedAt());
         return product;
     }
 
@@ -97,6 +100,9 @@ public class JpaProductRepository implements ProductRepository {
                 .status(p.getStatus() != null ? p.getStatus().name() : null)
                 .imageUrl(p.getImageUrl())
                 .version(p.getVersion())   // 낙관적 락 version round-trip (신규 상품은 null → INSERT)
+                .flashSale(p.isFlashSale())
+                .stockMode(p.getStockMode().name())
+                .stockModeChangedAt(p.getStockModeChangedAt())
                 .build();
     }
 }

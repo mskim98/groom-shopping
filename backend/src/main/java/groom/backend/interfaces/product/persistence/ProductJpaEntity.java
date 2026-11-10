@@ -5,6 +5,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -61,6 +62,19 @@ public class ProductJpaEntity {
     @Version
     @Column(name = "version")
     private Long version;
+
+    // 플래시 세일 상품만 Redis 선점 + 재고 원장 경로를 쓴다
+    @Column(name = "flash_sale", nullable = false)
+    @Builder.Default
+    private Boolean flashSale = false;
+
+    // 재고 판정 위치(REDIS | DB). 전환과 복귀는 StockLedgerService 가 네이티브 SQL 로 바꾼다
+    @Column(name = "stock_mode", nullable = false)
+    @Builder.Default
+    private String stockMode = "REDIS";
+
+    @Column(name = "stock_mode_changed_at")
+    private Instant stockModeChangedAt;
 }
 
 
