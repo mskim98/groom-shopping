@@ -9,6 +9,7 @@ import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -87,6 +88,35 @@ class CouponStreamAutoClaimTest {
 
         assertThat(fixture.status(requestId)).isEqualTo("SUCCESS");
         assertThat(fixture.pendingCount(couponId)).isZero();
+    }
+
+    @Test
+    @DisplayName("살아 있는 컨슈머의 유휴 전 항목이 batch-size 를 넘게 앞서 있어도 뒤의 유휴 항목을 한 번에 가져온다")
+    void pollCoupon_앞에_바쁜_항목이_많아도_유휴_항목을_한번에_가져온다() {
+        Long busyCoupon = fixture.coupon(2000);
+        stockRepository.initStock(busyCoupon, 2000L);
+        consumer.ensureGroup(busyCoupon);
+        // batch-size(500) + 1 건은 접수만 한 가짜 사용자 항목이다. 마지막 1건만 실제 사용자 항목이다
+        for (int i = 0; i < 501; i++) {
+            stockRepository.enqueue(busyCoupon, 9_000_000_000L + i, fixture.requestId());
+        }
+        Long realUser = fixture.user();
+        String realRequestId = fixture.requestId();
+        stockRepository.enqueue(busyCoupon, realUser, realRequestId);
+        // 전부 죽은 인스턴스가 읽은 뒤 유휴 한도를 넘긴다
+        List<String> ids = fixture.readAs(busyCoupon, "dead-instance-2");
+        assertThat(ids).hasSize(502);
+        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        // 앞의 501 건만 살아 있는 컨슈머가 방금 쥐었다(유휴 0). 마지막 1건은 여전히 유휴 한도를 넘었다
+        fixture.claimAllAs(busyCoupon, "live-instance", ids.subList(0, 501));
+
+        int handled = consumer.pollCoupon(busyCoupon);
+
+        assertThat(handled).isEqualTo(1);
+        assertThat(couponIssueRepository.countByCoupon_IdAndUserId(busyCoupon, realUser)).isEqualTo(1L);
+        assertThat(fixture.status(realRequestId)).isEqualTo("SUCCESS");
+        // 살아 있는 컨슈머의 항목은 건드리지 않았다
+        assertThat(fixture.pendingCount(busyCoupon)).isEqualTo(501L);
     }
 
     @Test

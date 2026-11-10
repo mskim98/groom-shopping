@@ -83,7 +83,7 @@ public class CouponStreamFixture {
     public List<String> readAs(Long couponId, String consumerName) {
         List<MapRecord<String, Object, Object>> read = redis.opsForStream().read(
                 Consumer.from(CouponStreamConsumer.GROUP, consumerName),
-                StreamReadOptions.empty().count(100),
+                StreamReadOptions.empty().count(1000),
                 StreamOffset.create(CouponStockRedisRepository.streamKey(couponId), ReadOffset.lastConsumed()));
         return read == null ? List.of() : read.stream().map(r -> r.getId().getValue()).toList();
     }
@@ -92,6 +92,12 @@ public class CouponStreamFixture {
     public void claimAs(Long couponId, String consumerName, String entryId) {
         redis.opsForStream().claim(CouponStockRedisRepository.streamKey(couponId), CouponStreamConsumer.GROUP,
                 consumerName, Duration.ZERO, RecordId.of(entryId));
+    }
+
+    /** 여러 항목을 한 번에 다른 컨슈머 이름으로 넘긴다. 넘긴 시각부터 유휴 시간이 다시 0 부터 센다 */
+    public void claimAllAs(Long couponId, String consumerName, List<String> entryIds) {
+        redis.opsForStream().claim(CouponStockRedisRepository.streamKey(couponId), CouponStreamConsumer.GROUP,
+                consumerName, Duration.ZERO, entryIds.stream().map(RecordId::of).toArray(RecordId[]::new));
     }
 
     /** 그룹의 PEL 에 남은 항목 수. 그룹이 없으면 0 이다 */
