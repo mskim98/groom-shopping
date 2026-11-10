@@ -159,6 +159,28 @@ class FlashStockThresholdNotificationTest {
         }
     }
 
+    @Test
+    @DisplayName("예약이 남긴 재고 값이 없는 승인 이벤트(옛 outbox payload)는 결제가 DONE 이 되고 알림 행을 만들지 않는다")
+    void 승인_예약_재고_값이_없는_옛_이벤트는_DONE_이고_알리지_않는다() {
+        seedFlashProduct(12);
+        // 수량 11 - 값이 없는 항목을 재고 0 으로 읽는 잘못된 처리는 12→1 통과로 보고 알린다
+        Payment payment = newPayment(11);
+        String paymentKey = "pk-" + UUID.randomUUID();
+        fixture.markReady(payment.getId(), paymentKey);
+        // 승인 전 단계(TX1)가 남겼을 판매 원장 행 - 있어야 후처리가 상품 행을 쓰지 않는 플래시 항목으로 가린다
+        jdbc.update("INSERT INTO stock_ledger (payment_id, product_id, qty, kind, applied) VALUES (?, ?, 11, 'SALE', false)",
+                payment.getId(), productId);
+        int amount = PaymentFixture.PRICE * 11;
+        PaymentApprovedEvent oldShape = new PaymentApprovedEvent(payment.getId(), payment.getOrderId(), amount,
+                PaymentFixture.tossResponse(paymentKey, amount), List.of(new PaymentApprovedEvent.ReservedItem(productId, 11)));
+
+        paymentApplicationService.applyApprovedEvent(oldShape);
+        waitUntilNotificationWorkIsIdle();
+
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
+        assertThat(totalRows()).as("알림 행").isZero();
+    }
+
     private void seedFlashProduct(int stock) {
         productId = fixture.flashProduct(stock);
         jdbc.update("UPDATE product SET threshold_value = 10 WHERE id = ?", productId);
