@@ -3,21 +3,25 @@ package groom.backend.application.coupon;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
 
 /**
- * Redis 기반 쿠폰 재고 · 발급자 집합 관리
+ * Redis 기반 쿠폰 재고 · 발급자 집합 · 요청 스트림 관리
  *
- * <p>락 획득 이후에도 "수량 확인 → 중복 체크 → 수량 차감" 은 단일 원자 연산
- * Spring {@code RedisTemplate.execute(...)} 한 번에 여러 명령을 보내도 원자성은 보장되지 않으므로 Redis Lua 스크립트로 묶어 서버 사이드에서 한 번에 수행
+ * <p>접수는 "중복 체크 → 재고 확인 → 차감 → 명단 등록 → 스트림 적재 → 상태 기록" 을 Lua 스크립트 한 번에 묶어
+ * 서버 사이드에서 수행한다. 명령을 따로 보내면 원자성이 없어 재고만 깎이고 스트림에는 없는 요청이 생길 수 있다
  * <p>
- * 키: {@code coupon:{couponId}:stock} - 남은 재고 (INT), {@code coupon:{couponId}:issued_users} - 이미 발급받은 userId SET
+ * 키: {@code coupon:{couponId}:stock} - 남은 재고 (INT), {@code coupon:{couponId}:issued_users} - 이미 발급받은 userId SET,
+ * {@code coupon:{couponId}:req} - 확정 대기 요청 스트림, {@code coupon:{couponId}:dlq} - 처리하지 못한 요청 스트림
  */
 // @Slf4j : Lombok이 log 객체 생성.
 @Slf4j
@@ -32,10 +36,9 @@ public class CouponStockRedisRepository {
     // 중괄호 안(couponId)만 슬롯 계산에 쓰이므로 두 키가 반드시 같은 노드에 놓인다
     private static final String KEY_PREFIX = "coupon:{";
 
-    // 발행 결과를 끝내 모르는 요청 표시. 값은 requestId:couponId:userId
-    // 브로커가 기록했는지 알 수 없어 재고를 되돌리지 못한 건이다. 대조(종료 쿠폰의 고아 예약 회수)가 이 목록으로 조사한다
-    private static final String PUBLISH_UNCERTAIN_KEY = "coupon:issue:publish-uncertain";
-    private static final Duration PUBLISH_UNCERTAIN_TTL = Duration.ofDays(1);
+    private static final String STATUS_KEY_PREFIX = "coupon:issue:status:";
+    // 상태 키 만료. 클라이언트가 폴링하는 기간이고 지나면 UNKNOWN 으로 보인다
+    private static final Duration STATUS_TTL = Duration.ofHours(1);
 
     public static String stockKey(Long couponId) {
         return KEY_PREFIX + couponId + "}:stock";
@@ -45,14 +48,31 @@ public class CouponStockRedisRepository {
         return KEY_PREFIX + couponId + "}:issued_users";
     }
 
+    public static String streamKey(Long couponId) {
+        return KEY_PREFIX + couponId + "}:req";
+    }
+
+    public static String dlqKey(Long couponId) {
+        return KEY_PREFIX + couponId + "}:dlq";
+    }
+
+    public static String statusKey(String requestId) {
+        return STATUS_KEY_PREFIX + requestId;
+    }
+
     /**
-     * Lua 반환 코드: 1=성공, 0=품절, -1=중복 발급, -2=미초기화. KEYS[1]=재고 키, KEYS[2]=발급자 SET 키 ARGV[1]=userId
+     * 접수 Lua. 반환 코드: 1=성공, 0=품절, -1=중복 발급, -2=미초기화.
+     * KEYS[1]=재고 키, KEYS[2]=발급자 SET 키, KEYS[3]=요청 스트림 키, KEYS[4]=상태 키,
+     * ARGV[1]=userId, ARGV[2]=requestId, ARGV[3]=상태 키 만료(초)
      *
      * <p>중복 검사를 재고 검사보다 앞에 둔다. 뒤에 두면 재고가 0 이 된 뒤로는
      * 이미 받은 사용자의 재요청까지 "품절"로 응답돼, 실패 집계에서 중복과 품절이 섞인다
      * 재고 소진은 이벤트 초반에 오므로 그 뒤의 요청이 다수다 - 오분류가 예외가 아니라 기본값이 된다
+     *
+     * <p>통과한 요청만 스트림과 상태 키에 쓴다. 거절된 요청은 아무것도 남기지 않는다
      */
-    private static final RedisScript<Long> ISSUE_SCRIPT = new DefaultRedisScript<>(
+    // shortcut: 상태 키가 쿠폰 해시 슬롯 밖이라 Redis Cluster 에서는 CROSSSLOT 이다, Cluster 로 옮길 때 상태를 스트림 응답으로 바꾼다
+    private static final RedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>(
             """
                     if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
                         return -1
@@ -66,6 +86,8 @@ public class CouponStockRedisRepository {
                     end
                     redis.call('DECR', KEYS[1])
                     redis.call('SADD', KEYS[2], ARGV[1])
+                    redis.call('XADD', KEYS[3], '*', 'userId', ARGV[1], 'requestId', ARGV[2])
+                    redis.call('SET', KEYS[4], 'WAITING', 'EX', ARGV[3])
                     return 1
                     """,
             Long.class
@@ -134,17 +156,20 @@ public class CouponStockRedisRepository {
     }
 
     /**
-     * 원자적 발급 시도. 분산 락 구간 내에서 호출
+     * 접수 - 판정하고 통과하면 같은 스크립트 안에서 스트림에 싣고 상태를 WAITING 으로 남긴다
      *
      * @return {@link IssueResult#SUCCESS} / {@link IssueResult#OUT_OF_STOCK} / {@link IssueResult#ALREADY_ISSUED} /
      * {@link IssueResult#NOT_INITIALIZED}
      */
-    public IssueResult tryIssue(Long couponId, Long userId) {
+    public IssueResult enqueue(Long couponId, Long userId, String requestId) {
         List<String> keys = List.of(
                 stockKey(couponId),
-                issuedUsersKey(couponId)
+                issuedUsersKey(couponId),
+                streamKey(couponId),
+                statusKey(requestId)
         );
-        Long result = redisTemplate.execute(ISSUE_SCRIPT, keys, userId.toString());
+        Long result = redisTemplate.execute(ENQUEUE_SCRIPT, keys, userId.toString(), requestId,
+                String.valueOf(STATUS_TTL.toSeconds()));
         if (result == null) {
             return IssueResult.NOT_INITIALIZED;
         }
@@ -166,13 +191,34 @@ public class CouponStockRedisRepository {
     }
 
     /**
-     * 발행 결과를 모르는 요청을 대조 대상으로 표시한다. 재고는 건드리지 않는다
+     * 상태 키를 한 번의 왕복으로 쓴다
      *
-     * <p>TTL 은 키 전체에 걸린다. 표시가 들어올 때마다 갱신되므로 마지막 표시 하루 뒤에 사라진다
+     * <p>건마다 왕복하면 배치로 줄인 왕복이 여기서 그대로 되살아난다.
+     * SessionCallback 을 쓰는 이유 - 템플릿이 쓰던 직렬화를 그대로 탄다. 저수준 콜백으로 바이트를 직접 넣으면
+     * 폴링이 읽는 쪽과 직렬화가 갈릴 수 있고, 그러면 상태가 늘 UNKNOWN 으로 보인다
      */
-    public void markPublishUncertain(String requestId, Long couponId, Long userId) {
-        redisTemplate.opsForSet().add(PUBLISH_UNCERTAIN_KEY, requestId + ":" + couponId + ":" + userId);
-        redisTemplate.expire(PUBLISH_UNCERTAIN_KEY, PUBLISH_UNCERTAIN_TTL);
+    public void setStatuses(Map<String, String> statusByRequestId) {
+        if (statusByRequestId.isEmpty()) {
+            return;
+        }
+        redisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public Object execute(RedisOperations operations) {
+                RedisOperations<String, String> ops = (RedisOperations<String, String>) operations;
+                statusByRequestId.forEach((requestId, status) ->
+                        ops.opsForValue().set(statusKey(requestId), status, STATUS_TTL));
+                return null;
+            }
+        });
+    }
+
+    /**
+     * 요청 스트림에 남은 항목 수(XLEN). 컨슈머가 확정하고 ack 한 항목은 스트림에서 지우므로 이 값이 곧 확정 대기분이다
+     */
+    public long streamLength(Long couponId) {
+        Long size = redisTemplate.opsForStream().size(streamKey(couponId));
+        return size == null ? 0L : size;
     }
 
     /**

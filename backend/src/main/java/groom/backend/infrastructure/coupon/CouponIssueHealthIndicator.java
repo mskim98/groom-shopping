@@ -33,7 +33,7 @@ public class CouponIssueHealthIndicator implements HealthIndicator {
 
     private final AtomicLong lastCheckAt = new AtomicLong(0L);
 
-    // 복구는 활성 쿠폰 전체의 Redis 읽기와 Kafka 랙 읽기를 포함한다. 프로브 스레드에서 돌리면 헬스 요청이 그만큼 걸려
+    // 복구는 활성 쿠폰 전체의 Redis 읽기와 DB 발급 수 COUNT 를 포함한다. 프로브 스레드에서 돌리면 헬스 요청이 그만큼 걸려
     // 로드밸런서의 제한 시간을 넘기므로 전용 스레드 하나로 넘기고, 돌고 있는 동안은 다시 예약하지 않는다
     private final AtomicBoolean recoveryScheduled = new AtomicBoolean(false);
     private final ExecutorService recoveryExecutor = Executors.newSingleThreadExecutor(runnable -> {
