@@ -21,3 +21,6 @@ CREATE INDEX idx_stock_ledger_unapplied ON stock_ledger (product_id) WHERE appli
 ALTER TABLE product ADD COLUMN flash_sale BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE product ADD COLUMN stock_mode VARCHAR(8) NOT NULL DEFAULT 'REDIS';
 ALTER TABLE product ADD COLUMN stock_mode_changed_at TIMESTAMPTZ;
+
+-- 마지막 DB 방어선. 적용 배치 · 전환 · REVERSAL 에 결함이 있어도 음수 재고를 조용히 쓰지 않고 그 트랜잭션이 실패한다(원장 행은 미적용으로 남아 보이고 재시도된다)
+ALTER TABLE product ADD CONSTRAINT ck_product_stock_non_negative CHECK (stock >= 0);
