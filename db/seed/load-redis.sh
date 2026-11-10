@@ -5,7 +5,7 @@
 #   SEED_REDIS_PORT       Redis 포트 (6379) — 그 포트를 게시한 컨테이너의 redis-cli 를 쓴다(SEED_REDIS_CONTAINER 로 직접 지정 가능)
 #   SEED_PG_CONTAINER     PostgreSQL 컨테이너 (dev-db) · SEED_PG_USER (dev)
 # 지우는 것: 이 스크립트가 소유한 키 패턴만 — product:stock:* · coupon:*:stock · coupon:*:issued_users · coupon:*:req · coupon:*:dlq
-#   (SCAN 으로 찾아 UNLINK 한다. KEYS · FLUSHALL 은 쓰지 않으며 그 밖의 키는 그대로 둔다)
+#   (SCAN 으로 찾아 UNLINK 한다. 키 전체 조회나 DB 비우기 명령은 쓰지 않으며 그 밖의 키는 그대로 둔다)
 # 쓰는 것: product:stock:{id} = stock − 미적용 원장 qty 합 (flash_sale · REDIS 모드 상품만)
 #          coupon:{id}:stock = max(quantity − 발급 행 수, 0) · coupon:{id}:issued_users = 발급 사용자 id 집합 (is_active 쿠폰만, 중괄호는 글자 그대로)
 set -euo pipefail

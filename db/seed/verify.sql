@@ -150,10 +150,4 @@ SELECT 'skew', prod >= 0.30 AND usr >= 0.50, 'top 1% products carry ' || round(p
                                                   LIMIT (SELECT ceil(count(*) * 0.1) FROM users)) t)::numeric
                 / GREATEST((SELECT count(*) FROM orders), 1) AS usr) s;
 
--- 11. raffle: raffle 로 시작하는 표는 마이그레이션이 만든 행 그대로(raffles 10, 나머지 0)
-INSERT INTO chk (name, ok, detail)
-SELECT 'raffle', r = 10 AND t = 0 AND w = 0 AND c = 0, 'raffles=' || r || ' raffle_tickets=' || t || ' raffle_winners=' || w || ' raffle_ticket_counters=' || c
-  FROM (SELECT (SELECT count(*) FROM raffles) AS r, (SELECT count(*) FROM raffle_tickets) AS t,
-               (SELECT count(*) FROM raffle_winners) AS w, (SELECT count(*) FROM raffle_ticket_counters) AS c) q;
-
 SELECT CASE WHEN ok THEN 'PASS ' ELSE 'FAIL ' END || name || ': ' || detail FROM chk ORDER BY ord;

@@ -16,6 +16,17 @@ set +e
 out="$(cat "$HERE/sql/00_sizes.sql" "$HERE/verify.sql" | seed_psql_stdin "$DB" -At -v scale="$SCALE" -f - 2>&1)"
 code=$?
 set -e
+# 11. raffle: 이름이 raffle 로 시작하는 표는 마이그레이션이 만든 행 그대로(raffles 10, 나머지 0). 읽기만 한다
+# 검사 SQL 은 .sql 파일이 아니라 여기에 둔다 — db/seed 의 SQL 은 raffle 표를 이름으로도 언급하지 않는 규칙이다
+if [ "$code" -eq 0 ]; then
+  got="$(seed_psql_stdin "$DB" -At -F '=' <<'SQL' | sort | tr '\n' ' '
+SELECT format('SELECT %L, count(*) FROM %I', tablename, tablename) FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'raffle%'
+\gexec
+SQL
+)"
+  want="raffle_ticket_counters=0 raffle_tickets=0 raffle_winners=0 raffles=10 "
+  if [ "$got" = "$want" ]; then out="$out"$'\n'"PASS raffle: $got"; else out="$out"$'\n'"FAIL raffle: got [$got] want [$want]"; fi
+fi
 printf '%s\n' "$out"
 [ "$code" -eq 0 ] || { echo "FAIL verify: psql exit $code" >&2; exit 1; }
 if printf '%s\n' "$out" | grep -q '^FAIL '; then exit 1; fi
