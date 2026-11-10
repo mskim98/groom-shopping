@@ -153,4 +153,26 @@ class StockLedgerReversalTest {
         assertThat(fixture.stockOf(productId) - fixture.unappliedSumOf(productId))
                 .as("남은 재고(stock − 미적용 합)").isEqualTo(10);
     }
+
+    @Test
+    @DisplayName("DONE 플래시 결제를 취소하면 REVERSAL 이 1번만 쓰이고 원장 합은 0 이며 Redis 는 수량만큼 한 번만 돌아온다 (Ruling R117-2)")
+    void 취소_DONE_플래시결제_REVERSAL_1행_원장합_0_Redis_한번만_복원() throws Exception {
+        productStockRedisRepository.initStock(productId, 10);
+        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        String payload = jdbc.queryForObject(
+                "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
+        PaymentApprovedEvent event = objectMapper.readValue(payload, PaymentApprovedEvent.class);
+        paymentApplicationService.applyApprovedEvent(event);
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
+        assertThat(redisValue()).isEqualTo("9");
+
+        paymentApplicationService.cancelPayment(payment.getId(), "단순 변심");
+        // 취소 경로가 한 번 더 돌아도(재시도) REVERSAL 과 Redis 복원은 한 번뿐이다
+        flashStockReservation.releaseAfterRecord(payment.getId(), event.reservedItems());
+
+        assertThat(fixture.ledgerRows(payment.getId())).extracting(r -> r.get("kind")).containsExactly("SALE", "REVERSAL");
+        assertThat(fixture.ledgerSumOf(payment.getId())).isZero();
+        assertThat(redisValue()).as("Redis 선점 복원은 한 번").isEqualTo("10");
+        assertThat(fixture.stockOf(productId)).as("상품 행에 직접 더하지 않는다").isEqualTo(10);
+    }
 }
