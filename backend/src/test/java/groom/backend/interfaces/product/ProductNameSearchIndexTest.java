@@ -63,7 +63,7 @@ class ProductNameSearchIndexTest {
                 .setCustomArgumentResolvers(new PageableHandlerMethodArgumentResolver())
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
         price = ProductListTestSupport.uniquePrice();
-        ids = ProductListTestSupport.save(productRepository, List.of("편한의자쿠션", "의자", "Hub Stand"), price, "GENERAL");
+        ids = ProductListTestSupport.save(productRepository, List.of("편한의자쿠션", "의자", "Hub Stand", "100% 면", "a_b", "axb", "C:\\tmp"), price, "GENERAL");
     }
 
     @AfterEach
@@ -103,17 +103,67 @@ class ProductNameSearchIndexTest {
                 .andExpect(jsonPath("$.content[0].name").value("Hub Stand"));
     }
 
+    // % _ \\ 는 와일드카드가 아니라 글자 그대로 찾는다
+    private void assertOnly(String keyword, String... names) throws Exception {
+        search(keyword).andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(names.length))
+                .andExpect(jsonPath("$.content[*].name").value(org.hamcrest.Matchers.containsInAnyOrder(names)));
+    }
+
     @Test
-    @DisplayName("검색_b_(밑줄이 든 2글자)_LIKE 와일드카드로 읽어 Hub Stand 를 답하고_2-gram 조건을 쓰지 않는다")
-    void search_twoCharKeywordWithWildcard_keepsLikeOnlyResult() throws Exception {
+    @DisplayName("검색_%_퍼센트 글자가 든 이름만 답한다")
+    void search_percentKeyword_matchesLiteralPercentOnly() throws Exception {
+        assertOnly("%", "100% 면");
+    }
+
+    @Test
+    @DisplayName("검색_%%_퍼센트가 연달아 든 이름이 없어 아무것도 답하지 않는다")
+    void search_doublePercentKeyword_returnsNothing() throws Exception {
+        assertOnly("%%");
+    }
+
+    @Test
+    @DisplayName("검색_a_b_밑줄 글자가 든 이름만 답하고 axb 는 답하지 않는다")
+    void search_underscoreInKeyword_doesNotMatchAnyChar() throws Exception {
+        assertOnly("a_b", "a_b");
+    }
+
+    @Test
+    @DisplayName("검색__b_(밑줄이 든 2글자)_a_b 만 답한다")
+    void search_twoCharKeywordStartingWithUnderscore_matchesLiteralOnly() throws Exception {
+        assertOnly("_b", "a_b");
+    }
+
+    @Test
+    @DisplayName("검색_b__(밑줄이 든 2글자)_그 글자가 이어 붙은 이름이 없어 아무것도 답하지 않는다")
+    void search_twoCharKeywordEndingWithUnderscore_returnsNothing() throws Exception {
+        assertOnly("b_");
+    }
+
+    @Test
+    @DisplayName("검색_백슬래시 t_백슬래시가 든 이름만 답한다")
+    void search_backslashKeyword_matchesLiteralBackslash() throws Exception {
+        assertOnly("\\t", "C:\\tmp");
+    }
+
+    @Test
+    @DisplayName("검색_밑줄이 든 2글자_2-gram 조건을 함께 쓴다")
+    void search_twoCharKeywordWithUnderscore_usesGramPredicate() throws Exception {
         RecordingStatementInspector.clear();
 
-        search("b_").andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].name").value("Hub Stand"));
+        assertOnly("_b", "a_b");
 
         assertThat(RecordingStatementInspector.productListSelects()).hasSize(1);
-        assertThat(RecordingStatementInspector.productListSelects().get(0)).doesNotContain("product_name_has_gram2");
+        assertThat(RecordingStatementInspector.productListSelects().get(0)).contains("product_name_has_gram2");
+    }
+
+    @Test
+    @DisplayName("EXPLAIN_밑줄이 든 2글자 키워드_2-gram 인덱스를 쓰고_product 표 순차 읽기가 없다")
+    void explain_twoCharKeywordWithUnderscore_usesGramIndex() throws Exception {
+        String plan = explainOfSearch("_b");
+
+        assertThat(plan).contains(GRAM_INDEX);
+        assertThat(plan).doesNotContain("Seq Scan on product");
     }
 
     @Test
@@ -144,7 +194,9 @@ class ProductNameSearchIndexTest {
         String sql = selects.get(0);
 
         // ? 의 순서: 이름 like · (2글자면 2-gram 키워드) · 최소 가격 · 최대 가격 · 시작 위치 · 쪽 크기
-        List<Object> values = new ArrayList<>(List.of("%" + keyword.toLowerCase() + "%"));
+        // like 패턴은 \\ % _ 를 \\ 로 막아 글자 그대로 읽게 한 값이다
+        String escaped = keyword.toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        List<Object> values = new ArrayList<>(List.of("%" + escaped + "%"));
         if (keyword.length() == 2 && sql.chars().filter(c -> c == '?').count() == 6) {
             values.add(keyword.toLowerCase());
         }
