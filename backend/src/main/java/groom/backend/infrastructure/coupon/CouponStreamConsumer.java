@@ -44,6 +44,7 @@ import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
+import org.springframework.data.redis.connection.RedisStreamCommands.XPendingOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -464,8 +465,6 @@ public class CouponStreamConsumer implements SmartLifecycle {
     /**
      * 대기 항목이 없고 consumer-retire-idle-ms 이상 쉰 다른 컨슈머 이름을 지운다. 자기 이름은 건드리지 않는다
      * 지우기 실패가 항목 인수를 막지 않게 삼킨다 - 이름이 조금 더 남을 뿐이다
-     *
-     * <p>shortcut: XINFO 와 DELCONSUMER 사이에 그 이름이 새로 읽으면 그 항목의 대기 기록이 함께 지워진다. 한 시간 넘게 쉰 이름이 그 사이에 돌아올 확률이라 받아들인다, 이름이 재사용되는 구성이 생기면 Lua 로 묶는다
      */
     private void retireIdleConsumers(Long couponId) {
         try {
@@ -474,6 +473,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
                 if (info.consumerName().equals(consumerName) || info.pendingCount() > 0 || info.idleTimeMs() < consumerRetireIdleMs) {
                     continue;
                 }
+                // shortcut: XINFO 와 DELCONSUMER 사이에 그 이름이 새로 읽으면 그 항목의 대기 기록이 지워진다, 한 시간 넘게 쉰 이름이 그 사이에 돌아올 확률이라 받아들이며 이름이 재사용되는 구성이 생기면 Lua 로 묶는다
                 redis.opsForStream().deleteConsumer(streamKey, Consumer.from(GROUP, info.consumerName()));
                 log.info("[COUPON_STREAM_CONSUMER_RETIRED] couponId={}, consumer={}, idleMs={}", couponId, info.consumerName(), info.idleTimeMs());
             }
@@ -531,15 +531,19 @@ public class CouponStreamConsumer implements SmartLifecycle {
         }
     }
 
-    // 가져온 항목의 배달 횟수(XAUTOCLAIM 이 이미 올린 값). 항목마다 자기 id 범위(한 건)만 읽는다 -
-    // 처음~마지막 id 범위로 읽으면 사이에 낀 살아 있는 컨슈머의 항목이 건수 한도를 차지해 가져온 항목이 빠질 수 있다
+    // 가져온 항목의 배달 횟수(XAUTOCLAIM 이 이미 올린 값). 항목마다 자기 id 한 건만 읽고 전부 한 번의 파이프라인으로 보낸다 -
+    // 처음~마지막 id 범위로 읽으면 사이에 낀 살아 있는 컨슈머의 항목이 건수 한도를 차지해 가져온 항목이 빠질 수 있고, 항목마다 왕복하면 배치 크기만큼 왕복이 는다
     private Map<String, Long> deliveryCounts(Long couponId, List<StreamEntry> claimed) {
-        String streamKey = CouponStockRedisRepository.streamKey(couponId);
+        byte[] streamKey = bytes(CouponStockRedisRepository.streamKey(couponId));
+        List<Object> replies = withGroup(couponId, () -> redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (StreamEntry entry : claimed) {
+                connection.streamCommands().xPending(streamKey, GROUP, XPendingOptions.range(Range.closed(entry.id(), entry.id()), 1L));
+            }
+            return null;
+        }));
         Map<String, Long> counts = new HashMap<>();
-        for (StreamEntry entry : claimed) {
-            PendingMessages pending = withGroup(couponId, () -> redis.opsForStream().pending(
-                    streamKey, GROUP, Range.closed(entry.id(), entry.id()), 1L));
-            if (pending != null) {
+        for (Object reply : replies) {
+            if (reply instanceof PendingMessages pending) {
                 for (PendingMessage message : pending) {
                     counts.put(message.getIdAsString(), message.getTotalDeliveryCount());
                 }

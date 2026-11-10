@@ -17,7 +17,7 @@ import org.springframework.stereotype.Repository;
  * 재고 원장(stock_ledger)과 플래시 세일 상품 행의 네이티브 SQL 모음.
  * <p>
  * 호출한 트랜잭션에 그대로 합류한다(JdbcTemplate 은 JPA 트랜잭션의 커넥션을 쓴다). 잠금은 두 층이다.
- * - 결제 경로(TX1 · DB 모드 진입 예약 · REVERSAL 기록)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다.
+ * - 결제 경로(TX1 · DB 모드 진입 예약 · REVERSAL 기록)와 전환 · 복귀는 product 행이 아니라 상품별 advisory 잠금으로 서로를 기다린다
  *   결제 경로는 공유, 전환 · 복귀는 배타라서 전환은 진행 중인 TX1 을 모두 기다리고 그동안 새 TX1 을 붙잡는다
  * - product 행 잠금(FOR UPDATE)은 적용 배치 · 전환 · 복귀 · DB 모드의 조건부 UPDATE 만 쓴다. 결제 경로는 REDIS 모드에서 행을 잡지 않으므로
  *   적용 배치가 TX1 이 이어지는 동안에도 상품 행을 집을 수 있다. 순서는 advisory → 상품 행 → 원장 행 한 가지로 고정한다

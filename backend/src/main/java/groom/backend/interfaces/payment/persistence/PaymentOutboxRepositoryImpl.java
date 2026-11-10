@@ -37,6 +37,11 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
             WHERE id = :id AND status = 'PENDING'
             """;
 
+    private static final String RELEASE_LEASE_SQL = """
+            UPDATE payment_outbox SET claimed_until = NULL
+            WHERE id IN (:ids) AND status = 'PENDING'
+            """;
+
     // 지울 행을 FOR UPDATE SKIP LOCKED 로 집는다 - 삭제 배치가 둘 동시에 돌아도 서로의 행을 기다리지 않고 각 행은 한 번만 지워진다
     private static final String DELETE_PUBLISHED_SQL = """
             WITH picked AS MATERIALIZED (
@@ -66,6 +71,15 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
                 .getResultList();
         // UPDATE ... RETURNING 은 순서를 보장하지 않는다 - 같은 결제의 이벤트 순서를 created_at 으로 되돌린다
         return rows.stream().map(this::toDomain).sorted(Comparator.comparing(PaymentOutbox::getCreatedAt)).toList();
+    }
+
+    @Override
+    @Transactional
+    public void releaseLease(List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        entityManager.createNativeQuery(RELEASE_LEASE_SQL).setParameter("ids", ids).executeUpdate();
     }
 
     @Override

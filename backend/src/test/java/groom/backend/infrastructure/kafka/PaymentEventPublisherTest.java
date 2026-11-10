@@ -68,6 +68,8 @@ class PaymentEventPublisherTest {
 
         verify(paymentEventKafkaTemplate, times(1)).send(any(ProducerRecord.class));
         verify(outboxRepository, never()).markPublished(any());
+        // 실패한 행과 보내지 못한 나머지 행의 임대를 풀어 다음 회차가 바로 집게 한다
+        verify(outboxRepository, times(1)).releaseLease(List.of(first.getId(), second.getId(), third.getId()));
     }
 
     @Test

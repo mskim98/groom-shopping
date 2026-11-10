@@ -174,7 +174,7 @@ public class StockLedgerService {
     }
 
     /**
-     * REVERSAL 기록. 결제의 SALE 상품마다 공유 advisory 잠금을 잡고 그 트랜잭션 안에서 모드를 읽은 뒤 REVERSAL 을 쓴다.
+     * REVERSAL 기록. 결제의 SALE 상품마다 공유 advisory 잠금을 잡고 그 트랜잭션 안에서 모드를 읽은 뒤 REVERSAL 을 쓴다
      * 복귀(배타 잠금)는 이 트랜잭션보다 온전히 앞서거나 온전히 뒤에 돈다 -
      * 앞서면 모드는 REDIS 라 호출한 쪽이 커밋 뒤에 Redis 를 복원하고(복귀가 쓴 키는 이 REVERSAL 을 모른다),
      * 뒤서면 모드는 DB 라 복원하지 않는다(복귀가 stock − 미적용 합으로 키를 쓸 때 이 REVERSAL 이 이미 합에 들어 있다)

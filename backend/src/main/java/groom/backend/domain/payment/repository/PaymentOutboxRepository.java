@@ -15,6 +15,9 @@ public interface PaymentOutboxRepository {
     // 임대 중이거나 다른 트랜잭션이 잠근 행은 건너뛰므로 폴러가 여럿이어도 같은 행을 동시에 집지 않는다
     List<PaymentOutbox> claimPendingBatch(int limit, long leaseMs);
 
+    // 발행하지 못한 행의 임대를 풀어 다음 회차가 바로 집게 한다. 한 문장이고 이미 PUBLISHED 가 된 행은 건드리지 않는다
+    void releaseLease(List<UUID> ids);
+
     // 발행에 성공한 행을 PUBLISHED 로 표시하고 임대를 비운다. 이미 PUBLISHED 인 행은 건드리지 않는다
     void markPublished(UUID id);
 
