@@ -70,5 +70,14 @@ printf '%s\n' "$out" | grep -q "^FAIL counts:.*payment_compensation=11/12" || fa
 # 같은 규칙에서 깨끗한 DB 는 통과한다(목표 300 이상은 ceil(1 %) 안, 300 미만은 정확히 일치)
 SEED_VERIFY_TOL_SCALE=1 bash "$SEED/verify.sh" "$BASE" 0.01 > /dev/null || fail "[tolerance scale>=1] clean $BASE must pass"
 
+# SEED_VERIFY_TOL_SCALE 는 검사를 더 엄격하게만 만든다: tol_scale < scale 이면 exit 2(느슨하게 만드는 길을 막는다)
+note "== guard: tol_scale below scale is refused"
+set +e
+SEED_VERIFY_TOL_SCALE=0.01 bash "$SEED/verify.sh" "$BASE" 1 > /dev/null 2>&1
+code=$?
+set -e
+[ "$code" -eq 2 ] || fail "[tol guard] SEED_VERIFY_TOL_SCALE=0.01 with scale 1 exit $code, want 2"
+SEED_VERIFY_TOL_SCALE=0.01 bash "$SEED/verify.sh" "$BASE" 0.01 > /dev/null || fail "[tol guard] equal tol_scale and scale must be accepted"
+
 if [ "$FAILS" -ne 0 ]; then note "verify-test: $FAILS failure(s)"; exit 1; fi
 note "verify-test: OK"
