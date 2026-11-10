@@ -1,7 +1,11 @@
 package groom.backend.infrastructure.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.application.coupon.CouponStreamFixture;
@@ -18,7 +22,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.connection.stream.PendingMessages;
+import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 죽은 인스턴스가 쥔 항목은 유휴 시간이 지나면 다른 인스턴스가 가져와 처리한다
@@ -34,7 +41,7 @@ class CouponStreamAutoClaimTest {
     private CouponStreamConsumer consumer;
     @Autowired
     private CouponStockRedisRepository stockRepository;
-    @Autowired
+    @SpyBean
     private StringRedisTemplate redis;
     @Autowired
     private CouponRepository couponRepository;
@@ -63,6 +70,7 @@ class CouponStreamAutoClaimTest {
 
     @AfterEach
     void tearDown() {
+        reset(redis);
         fixture.cleanup();
     }
 
@@ -133,6 +141,63 @@ class CouponStreamAutoClaimTest {
             consumer.pollCoupon(couponId);
             assertThat(consumer.claimScans() - before).isEqualTo(2L);
         });
+    }
+
+    @Test
+    @DisplayName("XAUTOCLAIM 패스가 던지면 스캔 시각을 남기지 않아 다음 호출이 간격을 기다리지 않고 그 쿠폰을 다시 스캔한다")
+    void pollCoupon_패스가_던지면_다음_호출이_간격을_기다리지_않고_다시_스캔한다() throws Exception {
+        ReflectionTestUtils.setField(consumer, "claimIntervalMs", 3_600_000L);
+        try {
+            Thread.sleep(300);
+            doThrow(new IllegalStateException("redis down")).doCallRealMethod().when(redis).execute(any(RedisCallback.class));
+
+            assertThatThrownBy(() -> consumer.pollCoupon(couponId)).isInstanceOf(IllegalStateException.class);
+            assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isZero();
+
+            consumer.pollCoupon(couponId);
+
+            assertThat(couponIssueRepository.countByCoupon_Id(couponId)).as("실패한 패스 직후의 스캔이 항목을 가져와 처리했다").isEqualTo(1L);
+            assertThat(fixture.status(requestId)).isEqualTo("SUCCESS");
+        } finally {
+            ReflectionTestUtils.setField(consumer, "claimIntervalMs", 0L);
+        }
+    }
+
+    @Test
+    @DisplayName("한 스캔이 가져온 항목 가운데 한도를 넘긴 것만 DLQ 로 가고 나머지는 처리되며 사이에 낀 살아 있는 컨슈머의 항목은 그대로다")
+    void pollCoupon_가져온_항목의_배달횟수만_보고_한도를_넘긴_것만_dlq로_보낸다() {
+        String liveRequestId = fixture.requestId();
+        Long liveUser = fixture.user();
+        stockRepository.enqueue(couponId, liveUser, liveRequestId);
+        Long freshUser = fixture.user();
+        String freshRequestId = fixture.requestId();
+        stockRepository.enqueue(couponId, freshUser, freshRequestId);
+        // setUp 에서 죽은 컨슈머가 읽은 것은 첫 항목. 나머지 둘은 같은 컨슈머가 이어서 읽는다
+        List<String> rest = fixture.readAs(couponId, "dead-instance-1");
+        assertThat(rest).hasSize(2);
+        // 첫 항목은 배달 횟수를 한도(3) 위로 올린다
+        String poisonId = ownerEntryIds().get(0);
+        for (int i = 0; i < 3; i++) {
+            fixture.claimAs(couponId, "dead-instance-1", poisonId);
+        }
+        // 둘째 항목(살아 있는 컨슈머가 쥔 것)은 유휴를 0 으로 만들어 이번 스캔이 건드리지 않게 한다
+        await().pollDelay(Duration.ofMillis(300)).atMost(Duration.ofSeconds(5)).until(() -> true);
+        fixture.claimAllAs(couponId, "live-instance", List.of(rest.get(0)));
+
+        int handled = consumer.pollCoupon(couponId);
+
+        assertThat(handled).isEqualTo(2);
+        assertThat(redis.opsForStream().size(CouponStockRedisRepository.dlqKey(couponId))).isEqualTo(1L);
+        assertThat(fixture.status(requestId)).startsWith("FAILED:");
+        assertThat(couponIssueRepository.countByCoupon_IdAndUserId(couponId, freshUser)).isEqualTo(1L);
+        assertThat(fixture.status(freshRequestId)).isEqualTo("SUCCESS");
+        assertThat(fixture.pendingCount(couponId)).as("살아 있는 컨슈머의 항목만 남는다").isEqualTo(1L);
+    }
+
+    private List<String> ownerEntryIds() {
+        return redis.opsForStream().pending(CouponStockRedisRepository.streamKey(couponId), CouponStreamConsumer.GROUP,
+                org.springframework.data.domain.Range.unbounded(), 10).stream()
+                .map(m -> m.getIdAsString()).sorted().toList();
     }
 
     @Test
