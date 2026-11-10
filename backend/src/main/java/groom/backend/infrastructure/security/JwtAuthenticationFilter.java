@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import groom.backend.application.auth.service.TokenBlacklistService;
 import groom.backend.common.exception.dto.ErrorResponse;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -97,22 +98,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     return;
                 }
 
-                if (jwtTokenProvider.validateToken(token)) {
-                    if (jwtTokenProvider.isAccessToken(token)) {
-                        String email = jwtTokenProvider.getEmail(token);
-                        String role = jwtTokenProvider.getRole(token).name();
-                        log.info("Authenticated user: {}, Role: {}", email, role);
+                // 서명 검증은 요청당 1번 - 클레임을 이후 단계에 그대로 넘긴다
+                Claims claims = jwtTokenProvider.parseClaims(token);
+                if (jwtTokenProvider.isAccessToken(claims)) {
+                    Authentication authentication = jwtTokenProvider.getAuthentication(claims);
 
-                        Authentication authentication = jwtTokenProvider.getAuthentication(token);
+                    ((AbstractAuthenticationToken) authentication)
+                            .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
 
-                        ((AbstractAuthenticationToken) authentication)
-                                .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                        SecurityContextHolder.getContext().setAuthentication(authentication);
-
-                        log.debug("Set authentication for user: {}", email);
-                    } else {
-                        log.warn("Refresh token used as access token");
-                    }
+                    log.debug("Set authentication for user: {}", claims.getSubject());
+                } else {
+                    log.warn("Refresh token used as access token");
                 }
             } else if (SecurityContextHolder.getContext().getAuthentication() == null) {
                 // 토큰이 없고, 앞선 필터가 인증해 두지도 않은 경우

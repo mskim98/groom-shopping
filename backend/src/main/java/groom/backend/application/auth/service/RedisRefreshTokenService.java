@@ -100,7 +100,7 @@ public class RedisRefreshTokenService {
     /**
      * Refresh Token Rotation (재발급)
      */
-    public String rotateRefreshToken(String oldToken, String userAgent, String ipAddress) {
+    public String rotateRefreshToken(String oldToken, Long userId, String userAgent, String ipAddress) {
         Optional<RefreshToken> oldRefreshToken = getRefreshToken(oldToken);
 
         if (oldRefreshToken.isEmpty()) {
@@ -114,7 +114,7 @@ public class RedisRefreshTokenService {
         deleteByToken(oldToken, email);
 
         // 2. 새 토큰 생성
-        String newToken = jwtTokenProvider.createRefreshToken(email, role);
+        String newToken = jwtTokenProvider.createRefreshToken(userId, email, role);
 
         // 3. 새 토큰 저장
         saveRefreshToken(email, newToken, userAgent, ipAddress);

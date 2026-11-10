@@ -1,5 +1,6 @@
 package groom.backend.infrastructure.security;
 
+import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Role;
 import io.jsonwebtoken.*;
 import lombok.extern.slf4j.Slf4j;
@@ -122,12 +123,16 @@ public class JwtRsaTokenProvider {
         return keyFactory.generatePublic(keySpec);
     }
 
-    public String createAccessToken(String email, Role role) {
+    // 사용자 id 클레임 이름 - 인증 필터가 이 값으로 사용자 조회 없이 principal 을 만든다
+    public static final String USER_ID_CLAIM = "uid";
+
+    public String createAccessToken(Long userId, String email, Role role) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + accessTokenValidityInMilliseconds);
 
         return Jwts.builder()
                 .setSubject(email)
+                .claim(USER_ID_CLAIM, userId)
                 .claim("role", role)
                 .claim("type", "access")
                 .setIssuedAt(now)
@@ -137,12 +142,13 @@ public class JwtRsaTokenProvider {
     }
 
 
-    public String createRefreshToken(String email, Role role) {
+    public String createRefreshToken(Long userId, String email, Role role) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + refreshTokenValidityInMilliseconds);
 
         return Jwts.builder()
                 .setSubject(email)
+                .claim(USER_ID_CLAIM, userId)
                 .claim("role", role)
                 .claim("type", "refresh")
                 .setIssuedAt(now)
@@ -152,9 +158,20 @@ public class JwtRsaTokenProvider {
     }
 
 
-    public Authentication getAuthentication(String token) {
-        String email = getEmail(token);
-        UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+    // uid 가 있으면 클레임만으로 principal 을 만든다(DB 조회 없음). uid 가 없는 옛 토큰은 만료될 때까지 이메일 조회 1번으로 인증한다
+    public Authentication getAuthentication(Claims claims) {
+        Long userId = claims.get(USER_ID_CLAIM, Long.class);
+        UserDetails userDetails;
+        if (userId == null) {
+            userDetails = userDetailsService.loadUserByUsername(claims.getSubject());
+        } else {
+            String role = claims.get("role", String.class);
+            if (role == null) {
+                throw new JwtException("토큰에서 역할 정보를 찾을 수 없습니다.");
+            }
+            userDetails = new CustomUserDetails(new User(userId, claims.getSubject(), null, null,
+                    Role.valueOf(role), null, null, null));
+        }
         return new UsernamePasswordAuthenticationToken(userDetails, "", userDetails.getAuthorities());
     }
 
@@ -171,8 +188,8 @@ public class JwtRsaTokenProvider {
     }
 
     // Token 타입 확인
-    public boolean isAccessToken(String token) {
-        return "access".equals(getClaims(token).get("type"));
+    public boolean isAccessToken(Claims claims) {
+        return "access".equals(claims.get("type"));
     }
 
     public boolean isRefreshToken(String token) {
@@ -181,9 +198,14 @@ public class JwtRsaTokenProvider {
 
 
     public boolean validateToken(String token) {
+        parseClaims(token);
+        return true;
+    }
+
+    // 서명·만료를 검증하고 클레임을 돌려준다. 필터는 요청당 이 메서드를 1번만 부른다
+    public Claims parseClaims(String token) {
         try {
-            getClaims(token);
-            return true;
+            return getClaims(token);
         } catch (ExpiredJwtException e) {
             log.debug("만료된 JWT 토큰입니다.");
             throw new ExpiredJwtException(e.getHeader(), e.getClaims(), "만료된 토큰입니다.");
