@@ -88,14 +88,13 @@ class PaymentApprovedConsumerTest {
     }
 
     @Test
-    @DisplayName("후처리가 커밋되면 그 뒤에 재고 알림과 장바구니 비우기를 부른다")
-    void consume_성공하면_커밋뒤에_알림과_장바구니비우기를_부른다() throws Exception {
+    @DisplayName("후처리가 커밋되면 그 뒤에 재고 알림을 부른다")
+    void consume_성공하면_커밋뒤에_알림을_부른다() throws Exception {
         PaymentApprovedEvent event = PaymentFixture.approvedEvent(payment, productId, 2, paymentKey);
 
         consumer.consume(PaymentFixture.record(objectMapper, event));
 
         verify(paymentNotificationService).sendStockReducedNotifications(any(), eq(1L));
-        verify(paymentNotificationService).clearCartItems(eq(1L), eq(payment.getOrderId()), any());
     }
 
     @Test

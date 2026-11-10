@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -103,6 +104,14 @@ public class StockLedgerRepository {
     public int decreaseInDbModeIfEnough(UUID productId, int quantity) {
         return jdbc.update("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
                 + " WHERE id = ? AND stock >= ? AND stock_mode = 'DB'", quantity, productId, quantity);
+    }
+
+    // decreaseInDbModeIfEnough 와 같은 UPDATE 이며 차감 뒤 재고를 같은 문장에서 돌려준다. 빈 값 = 재고 부족이거나 모드가 DB 가 아님
+    // 별도 SELECT 로 읽으면 이 문장 뒤에 커밋된 다른 차감까지 섞여 임계값 통과 알림이 어긋난다
+    public Optional<Integer> decreaseInDbModeReturningStock(UUID productId, int quantity) {
+        return jdbc.query("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
+                        + " WHERE id = ? AND stock >= ? AND stock_mode = 'DB' RETURNING stock",
+                rs -> rs.next() ? Optional.of(rs.getInt(1)) : Optional.<Integer>empty(), quantity, productId, quantity);
     }
 
     // 같은 (결제, 상품, 종류) 가 이미 있으면 아무것도 쓰지 않고 false 다

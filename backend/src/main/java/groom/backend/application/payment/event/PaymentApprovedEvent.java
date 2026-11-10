@@ -18,15 +18,21 @@ public record PaymentApprovedEvent(
     public static final String EVENT_TYPE = "PaymentApproved";
 
     // 플래시 세일 주문 항목과 예약 방식. mode 가 없는 옛 payload 는 Redis 선점으로 읽는다
-    public record ReservedItem(UUID productId, int quantity, StockMode mode) {
+    // stockAfter 는 예약이 남긴 판매 재고(REDIS: Redis 선점 결과, DB: 조건부 UPDATE 결과)로 승인 뒤 임계값 알림이 쓴다
+    // 값이 없는 옛 payload 와 예약 단계가 없는 경로는 null 이며 승인은 그 항목을 알리지 않는다
+    public record ReservedItem(UUID productId, int quantity, StockMode mode, Integer stockAfter) {
         public ReservedItem {
             if (mode == null) {
                 mode = StockMode.REDIS;
             }
         }
 
+        public ReservedItem(UUID productId, int quantity, StockMode mode) {
+            this(productId, quantity, mode, null);
+        }
+
         public ReservedItem(UUID productId, int quantity) {
-            this(productId, quantity, StockMode.REDIS);
+            this(productId, quantity, StockMode.REDIS, null);
         }
     }
 }

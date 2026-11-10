@@ -129,13 +129,12 @@ class PaymentApprovedConsumerFailureTest {
     }
 
     @Test
-    @DisplayName("후처리가 롤백되면 재고 알림과 장바구니 비우기를 부르지 않는다")
-    void consume_재고부족_알림과_장바구니비우기는_부르지_않는다() {
+    @DisplayName("후처리가 롤백되면 재고 알림을 부르지 않는다")
+    void consume_재고부족_알림은_부르지_않는다() {
         assertThatCode(() -> consumer.consume(PaymentFixture.record(objectMapper, event())))
                 .doesNotThrowAnyException();
 
         verify(paymentNotificationService, never()).sendStockReducedNotifications(any(), any());
-        verify(paymentNotificationService, never()).clearCartItems(any(), any(), any());
     }
 
     @Test

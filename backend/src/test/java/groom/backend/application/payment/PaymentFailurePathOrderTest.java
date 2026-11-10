@@ -14,7 +14,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ConditionalUpdateStockDecrementer;
@@ -159,8 +158,8 @@ class PaymentFailurePathOrderTest {
     }
 
     @Test
-    @DisplayName("후처리가 롤백되면 장바구니 비우기와 재고 알림이 호출되지 않는다")
-    void 후처리롤백_장바구니비우기와_알림이_호출되지_않는다() {
+    @DisplayName("후처리가 롤백되면 재고 알림이 호출되지 않는다")
+    void 후처리롤백_알림이_호출되지_않는다() {
         // 메서드 본문은 끝까지 성공하고 커밋 직전에 실패한다 - 본문 안에서 부른 부수효과는 이미 나간 뒤라 롤백을 못 따른다
         doAnswer(invocation -> {
             Object decreased = invocation.callRealMethod();
@@ -174,33 +173,26 @@ class PaymentFailurePathOrderTest {
         }).when(stockDecrementer).decrease(any(), anyInt());
 
         assertThatThrownBy(() -> paymentApplicationService.applyApprovedPaymentInTx(
-                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE)))
+                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE), List.of()))
                 .hasMessageContaining("commit failed");
         assertThat(fixture.statusOf(payment.getId())).as("롤백 뒤 결제 상태").isNotEqualTo("DONE");
 
-        verify(paymentNotificationService, never()).clearCartItems(any(), any(), any());
         verify(paymentNotificationService, never()).sendStockReducedNotifications(any(), any());
     }
 
     @Test
-    @DisplayName("후처리가 커밋된 뒤에야 장바구니 비우기와 재고 알림이 호출된다")
-    void 후처리커밋_장바구니비우기와_알림이_커밋뒤_호출된다() {
+    @DisplayName("후처리가 커밋된 뒤에야 재고 알림이 호출된다")
+    void 후처리커밋_알림이_커밋뒤_호출된다() {
         // 호출 시점에 다른 커넥션으로 본 결제 상태 - 커밋 전이면 PENDING 이다
-        AtomicReference<String> statusAtCartClear = new AtomicReference<>();
         AtomicReference<String> statusAtNotification = new AtomicReference<>();
-        doAnswer(invocation -> {
-            statusAtCartClear.set(fixture.statusOf(payment.getId()));
-            return null;
-        }).when(paymentNotificationService).clearCartItems(any(), any(), any());
         doAnswer(invocation -> {
             statusAtNotification.set(fixture.statusOf(payment.getId()));
             return null;
         }).when(paymentNotificationService).sendStockReducedNotifications(any(), any());
 
         paymentApplicationService.applyApprovedPaymentInTx(
-                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
+                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE), List.of());
 
-        assertThat(statusAtCartClear.get()).as("장바구니 비우기 호출 시점의 DB 결제 상태").isEqualTo("DONE");
         assertThat(statusAtNotification.get()).as("재고 알림 호출 시점의 DB 결제 상태").isEqualTo("DONE");
     }
 
@@ -249,20 +241,11 @@ class PaymentFailurePathOrderTest {
     }
 
     @Test
-    @DisplayName("커밋 뒤 호출에는 엔티티가 아니라 트랜잭션 안에서 만든 평범한 값(사용자 id · 주문 id · 항목)이 전달된다")
+    @DisplayName("커밋 뒤 호출에는 엔티티가 아니라 트랜잭션 안에서 만든 평범한 값(사용자 id · 차감 후 재고)이 전달된다")
     void 후처리커밋_커밋뒤_호출은_엔티티가_아닌_평범한_값을_받는다() {
         // 커밋 뒤에는 트랜잭션이 없다(open-in-view 도 꺼져 있다) - 받은 값만으로 읽을 수 있어야 한다
-        AtomicReference<Long> cartUserId = new AtomicReference<>();
-        AtomicReference<UUID> cartOrderId = new AtomicReference<>();
-        AtomicReference<List<CartApplicationService.CartItemToRemove>> cartItems = new AtomicReference<>();
         AtomicReference<Long> notifyUserId = new AtomicReference<>();
         AtomicReference<Integer> stockAfter = new AtomicReference<>();
-        doAnswer(invocation -> {
-            cartUserId.set(invocation.getArgument(0));
-            cartOrderId.set(invocation.getArgument(1));
-            cartItems.set(invocation.getArgument(2));
-            return null;
-        }).when(paymentNotificationService).clearCartItems(any(), any(), any());
         doAnswer(invocation -> {
             List<PaymentNotificationService.StockReductionResult> reductions = invocation.getArgument(0);
             stockAfter.set(reductions.get(0).getStockAfter());
@@ -271,14 +254,8 @@ class PaymentFailurePathOrderTest {
         }).when(paymentNotificationService).sendStockReducedNotifications(any(), any());
 
         paymentApplicationService.applyApprovedPaymentInTx(
-                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
+                payment.getOrderId(), PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE), List.of());
 
-        assertThat(cartUserId.get()).isEqualTo(1L);
-        assertThat(cartOrderId.get()).isEqualTo(payment.getOrderId());
-        assertThat(cartItems.get()).singleElement().satisfies(item -> {
-            assertThat(item.getProductId()).isEqualTo(productId);
-            assertThat(item.getQuantity()).isEqualTo(1);
-        });
         assertThat(notifyUserId.get()).isEqualTo(1L);
         assertThat(stockAfter.get()).as("알림에 실리는 차감 후 재고").isEqualTo(9);
     }

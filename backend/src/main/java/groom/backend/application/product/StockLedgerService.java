@@ -7,6 +7,7 @@ import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.enums.StockMode;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,9 @@ public class StockLedgerService {
      * REVERSAL 을 쓴 결과. written 은 이번에 새로 쓰인 행, modes 는 REVERSAL 을 쓴 같은 트랜잭션이 공유 잠금 아래에서 읽은 상품별 모드다
      * 커밋 뒤 Redis 복원은 modes 가 REDIS 인 상품에만 한다
      */
+    public record DbReserved(DbReservation result, Integer stockAfter) {
+    }
+
     public record Reversal(List<Reversed> written, Map<UUID, StockMode> modes) {
     }
 
@@ -111,18 +115,28 @@ public class StockLedgerService {
      */
     @Transactional
     public DbReservation reserveInDb(UUID paymentId, UUID productId, int quantity) {
+        return reserveInDbWithStock(paymentId, productId, quantity).result();
+    }
+
+    /**
+     * {@link #reserveInDb} 와 같은 예약이며 RESERVED 일 때 예약이 낮춘 뒤의 재고를 함께 돌려준다(그 밖의 결과는 null).
+     * 재고는 조건부 UPDATE 와 같은 문장에서 읽은 값이라 이 예약보다 늦게 커밋된 차감이 섞이지 않는다
+     */
+    @Transactional
+    public DbReserved reserveInDbWithStock(UUID paymentId, UUID productId, int quantity) {
         ledger.lockProductShared(productId);
         if (ledger.readMode(productId) == StockMode.REDIS) {
-            return DbReservation.MODE_FLIPPED;
+            return new DbReserved(DbReservation.MODE_FLIPPED, null);
         }
         if (!ledger.insertLedger(paymentId, productId, quantity, StockLedgerRepository.Kind.SALE, true)) {
-            return DbReservation.DUPLICATE;
+            return new DbReserved(DbReservation.DUPLICATE, null);
         }
-        if (ledger.decreaseInDbModeIfEnough(productId, quantity) == 1) {
-            return DbReservation.RESERVED;
+        Optional<Integer> stockAfter = ledger.decreaseInDbModeReturningStock(productId, quantity);
+        if (stockAfter.isPresent()) {
+            return new DbReserved(DbReservation.RESERVED, stockAfter.get());
         }
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-        return DbReservation.SHORT;
+        return new DbReserved(DbReservation.SHORT, null);
     }
 
     /**

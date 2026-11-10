@@ -4,7 +4,7 @@ import groom.backend.application.payment.event.PaymentApprovedEvent.ReservedItem
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.StockLedgerRepository;
 import groom.backend.application.product.StockLedgerService;
-import groom.backend.application.product.StockLedgerService.DbReservation;
+import groom.backend.application.product.StockLedgerService.DbReserved;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.model.OrderItem;
@@ -86,7 +86,8 @@ public class FlashStockReservation {
             if (ledger.readMode(productId) == StockMode.REDIS) {
                 long result = reserveInRedis(productId, quantity);
                 if (result >= 0) {
-                    return Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS));
+                    // result 는 이 선점이 남긴 Redis 재고다 - 승인 뒤 임계값 알림이 차감 전 · 후 재고를 이 값으로 구한다
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.REDIS, (int) result));
                 }
                 if (result == -1L) {
                     log.info("[STOCK_RESERVE_OUT] ProductId: {}, Quantity: {}", productId, quantity);
@@ -95,10 +96,10 @@ public class FlashStockReservation {
                 // 키 없음(-2) 또는 Redis 사용 불가 - 재고 검사를 건너뛰지 않고 DB 모드로 넘어간다
                 ledgerService.switchToDb(productId);
             }
-            DbReservation result = ledgerService.reserveInDb(paymentId, productId, quantity);
-            switch (result) {
+            DbReserved reserved = ledgerService.reserveInDbWithStock(paymentId, productId, quantity);
+            switch (reserved.result()) {
                 case RESERVED -> {
-                    return Optional.of(new ReservedItem(productId, quantity, StockMode.DB));
+                    return Optional.of(new ReservedItem(productId, quantity, StockMode.DB, reserved.stockAfter()));
                 }
                 case DUPLICATE -> {
                     return Optional.empty();
