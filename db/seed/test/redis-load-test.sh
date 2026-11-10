@@ -3,7 +3,10 @@
 #   product:stock:{id} = stock − 미적용 qty 합 (REDIS 모드 플래시 상품만) · coupon:{id}:stock = max(quantity − 발급 행, 0)
 #   coupon:{id}:issued_users 의 SCARD = 발급 행 수 (활성 쿠폰만) · 키 개수 = 행 개수 · 패턴 밖 키는 살아남는다
 # 환경 변수: SEED_PG_CONTAINER(dev-db) SEED_REDIS_PORT(6379 — 이 시험은 16380 을 넘긴다) SEED_KAFKA_CONTAINER
-# 지우는 것: shop_seed_t2b 와 load-redis.sh 가 소유한 패턴의 키, 이 시험이 심은 t2:* 키
+# 지우는 것: shop_seed_t2b(trap) · load-redis.sh 가 소유한 패턴의 키(적재 때)
+# trap 이 지우는 키: t2:keep · coupon:issue:status:t2keep · refresh:t2keep(패턴 밖 보존 확인용) · product:stock:00000000-0000-4000-8000-000000000000 ·
+#   coupon:{777777}:stock · coupon:{777777}:issued_users · coupon:{777777}:req · coupon:{777777}:dlq(소유 패턴 묵은 키 삭제 확인용)
+# 템플릿 shop_seed_t2a 가 템플릿이 아니면 scale 0.01 로 새로 만든다
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED="$(dirname "$HERE")"
@@ -13,7 +16,7 @@ TPL=shop_seed_t2a
 CLONE=shop_seed_t2b
 FAILS=0
 TMP="$(mktemp -d)"
-trap 'seed_drop_db "$CLONE"; seed_rcli DEL t2:keep coupon:issue:status:t2keep refresh:t2keep > /dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
+trap 'seed_drop_db "$CLONE"; seed_rcli DEL t2:keep coupon:issue:status:t2keep refresh:t2keep product:stock:00000000-0000-4000-8000-000000000000 "coupon:{777777}:stock" "coupon:{777777}:issued_users" "coupon:{777777}:req" "coupon:{777777}:dlq" > /dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 fail() { echo "FAIL(test) $*"; FAILS=$((FAILS + 1)); }
 
 if [ "$(seed_psql postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = '$TPL' AND datistemplate")" != "1" ]; then
