@@ -5,6 +5,8 @@
 #   SEED_BOOT_PORT(18082) SEED_BOOT_TIMEOUT(초, 기본 240)
 # 지우는 것: shop_seed_t2b(reset.sh 가 다시 만든다) · load-redis.sh 의 소유 키 패턴 · 이 시험이 띄운 백엔드 프로세스
 # 카프카 리스너는 SPRING_KAFKA_BOOTSTRAP_SERVERS 기본값(dev-kafka 9092)에 붙고 이 시험은 아무것도 보내지 않는다
+# 사본(shop_seed_t2b)만 고친다(템플릿은 그대로): PENDING outbox 행을 PUBLISHED 로, 보상의 PENDING · FAILED 재시도를 1일 뒤로 미루고,
+#   PAYMENT_RECONCILE_DELAY_MS · PAYMENT_COMPENSATION_RETRY_DELAY_MS 를 1시간으로 둔다 — 부팅한 폴러가 dev-kafka 로 발행하거나 보상 배치가 Toss 를 부르지 않게 한다
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED="$(dirname "$HERE")"
