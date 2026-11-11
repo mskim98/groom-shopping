@@ -26,6 +26,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID;
 
 
 /**
@@ -314,5 +315,31 @@ public class CartController {
         }
     }
 
-}
+    /**
+     * 확정된 주문의 항목을 장바구니에서 뺍니다. 주문 하나당 한 번만 빼며 다시 불러도 204 입니다.
+     */
+    @Operation(
+            summary = "주문한 항목을 장바구니에서 제거",
+            description = "확정된 내 주문의 항목을 장바구니에서 주문 수량만큼 뺍니다. 같은 주문을 다시 불러도 한 번만 빠지고 204 를 돌려줍니다."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "제거 성공(이미 제거된 주문 포함)"),
+            @ApiResponse(responseCode = "401", description = "인증 실패 - JWT 토큰이 필요합니다."),
+            @ApiResponse(responseCode = "403", description = "다른 사용자의 주문"),
+            @ApiResponse(responseCode = "404", description = "주문 없음"),
+            @ApiResponse(responseCode = "409", description = "확정되지 않은 주문")
+    })
+    @DeleteMapping("/ordered-items/{orderId}")
+    public ResponseEntity<Void> clearOrderedItems(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable UUID orderId) {
 
+        if (userDetails == null || userDetails.getUser() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        cartApplicationService.clearOrderedItemsOf(userDetails.getUser().getId(), orderId);
+        return ResponseEntity.noContent().build();
+    }
+
+}

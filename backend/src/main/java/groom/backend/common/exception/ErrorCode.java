@@ -109,6 +109,7 @@ public enum ErrorCode {
     CART_EMPTY                          (HttpStatus.BAD_REQUEST, "장바구니가 비어있습니다."),
     /** 주문을 찾을 수 없음 */
     ORDER_NOT_FOUND                     (HttpStatus.NOT_FOUND, "주문을 찾을 수 없습니다."),
+    ORDER_NOT_CONFIRMED                 (HttpStatus.CONFLICT, "확정되지 않은 주문입니다."),
     /** 제품 재고 부족 */
     INSUFFICIENT_STOCK                  (HttpStatus.BAD_REQUEST, "재고가 부족합니다."),
     /** 판매 중지된 제품 */

@@ -2,6 +2,9 @@ package groom.backend.application.cart;
 
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
+import groom.backend.domain.order.model.Order;
+import groom.backend.domain.order.model.enums.OrderStatus;
+import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.repository.ProductRepository;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
@@ -13,6 +16,7 @@ import groom.backend.interfaces.cart.persistence.SpringDataCartRepository;
 import groom.backend.infrastructure.resilience.TransactionBulkhead;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +38,8 @@ public class CartApplicationService {
     private final SpringDataCartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final SpringDataUserRepository userJpaRepository;
+    private final OrderRepository orderRepository; // 주문한 항목을 장바구니에서 뺄 때 주문을 읽는다
+    private final JdbcTemplate jdbc; // 주문별 한 번 표시를 INSERT ... ON CONFLICT 로 차지한다
 
     /**
      * 장바구니 추가 결과를 담는 내부 클래스
@@ -388,6 +394,32 @@ public class CartApplicationService {
                 userId, itemsToRemove.size(), results.size());
 
         return new CartRemoveBatchResult(results, results.size(), 0);
+    }
+
+    /**
+     * 확정된 주문의 항목을 주문 주인의 장바구니에서 뺀다. 주문 하나당 한 번만 빼고, 이미 뺀 주문의 재호출은 아무것도 하지 않고 돌아간다
+     * 남의 주문은 ACCESS_DENIED(주문 상세 조회와 같은 확인), 확정되지 않은 주문은 ORDER_NOT_CONFIRMED 로 거절하며 거절은 표시를 남기지 않는다
+     * 표시는 같은 트랜잭션에서 차지한다 - 동시에 온 두 호출 중 늦은 쪽은 먼저 온 쪽이 커밋할 때까지 INSERT 에서 기다렸다가 0건으로 돌아간다
+     */
+    @Transactional
+    public void clearOrderedItemsOf(Long userId, UUID orderId) {
+        Order order = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
+        if (!order.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        if (order.getStatus() != OrderStatus.CONFIRMED) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_CONFIRMED);
+        }
+        int claimed = jdbc.update(
+                "INSERT INTO cart_ordered_items_cleared (order_id) VALUES (?) ON CONFLICT (order_id) DO NOTHING", orderId);
+        if (claimed == 0) {
+            log.info("[CART_CLEAR_ORDERED_ALREADY] userId={}, orderId={}", userId, orderId);
+            return;
+        }
+        clearOrderedItems(userId, order.getOrderItems().stream()
+                .map(item -> new CartItemToRemove(item.getProductId(), item.getQuantity()))
+                .toList());
     }
 
     /**
