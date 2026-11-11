@@ -1,0 +1,2 @@
+select pje1_0.id,pje1_0.name from product pje1_0 where pje1_0.id=?	153	0.5
+SELECT 1	10	0.1

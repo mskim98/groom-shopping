@@ -1,0 +1,2 @@
+cmdstat_exists:calls=16000,usec=1
+cmdstat_get:calls=32000,usec=1

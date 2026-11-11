@@ -1,0 +1,14 @@
+{
+ "requests": 60000,
+ "rate": 2000,
+ "hold_s": 30,
+ "products": 200,
+ "max_vus": 1000,
+ "achieved_rps": 2000.0,
+ "p95_ms": 31.0,
+ "p99_ms": 113.0,
+ "avg_ms": 6.8,
+ "ok": 60000,
+ "bad": 0,
+ "dropped_iterations": 0
+}

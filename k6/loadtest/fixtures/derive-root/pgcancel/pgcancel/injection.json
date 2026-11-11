@@ -1,0 +1,6 @@
+{
+ "stub_id": "x",
+ "window_s": 180,
+ "due_rows": 1500,
+ "cancel_delay_ms": 300
+}
