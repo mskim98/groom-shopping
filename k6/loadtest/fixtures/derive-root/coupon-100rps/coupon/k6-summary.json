@@ -1,0 +1,15 @@
+{
+ "requests": 3000,
+ "rate": 100,
+ "duration_s": 30,
+ "completion_p95_ms": 244,
+ "completion_p99_ms": 380,
+ "completion_count": 1000,
+ "accept_p95_ms": 25,
+ "results": {
+  "202": 1000,
+  "409": 2000
+ },
+ "dropped_iterations": 0,
+ "max_vus": 600
+}

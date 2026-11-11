@@ -1,0 +1,1 @@
+cmdstat_exists:calls=10,usec=1

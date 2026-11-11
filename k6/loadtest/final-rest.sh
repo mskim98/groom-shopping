@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# r120 최종 측정 M-4 · M-6 · M-5 - 쿠폰 발급 · 상품 상세 조회 · PG 취소 장애. 시나리오마다 백엔드를 멈추고 새 시드 복제 → (시나리오 준비) → 앱 기동(가상 스레드, 누수 감지 끔) → 점검 → 실행
+# 최종 측정(r120 M-4 · M-6 · M-5 와 같은 방법) - 쿠폰 발급 · 상품 상세 조회 · PG 취소 장애. 시나리오마다 백엔드를 멈추고 새 시드 복제 → (시나리오 준비) → 앱 기동(가상 스레드, 누수 감지 끔) → 점검 → 실행
 # 사용: bash k6/loadtest/final-rest.sh <출력 폴더> [coupon detail pgcancel 중 돌릴 것들, 기본 셋 다 이 순서]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -7,11 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:?usage: final-rest.sh <out-dir> [coupon] [detail] [pgcancel]}"; shift
 WHAT="${*:-coupon detail pgcancel}"
 RUN="bash $ROOT/k6/loadtest/run.sh"
-SEED_STAMP="${SEED_STAMP:-/tmp/r119-measure-seed-stamp}"
 mkdir -p "$OUT"
 cd "$ROOT"
 
-stop_backends() { docker stop nginx r119-measure-backend1-1 r119-measure-backend2-1 r119-measure-backend3-1 > /dev/null 2>&1 || true; }
 boot() {
   SPRING_THREADS_VIRTUAL_ENABLED=true $RUN app > "$OUT/app-last.log" 2>&1 || { echo "app failed" >&2; return 1; }
   bash k6/loadtest/check-env.sh > "$OUT/check-last.log" 2>&1 || { echo "check-env failed" >&2; return 1; }
@@ -35,14 +33,6 @@ for l in open(os.path.join(d, "nginx.log")):
     cnt[n] = cnt.get(n, 0) + 1
 json.dump({"backend_requests": cnt, "nginx_status": st}, open(os.path.join(d, "split.json"), "w"))
 PY
-}
-# 이 시나리오의 조건 - 스레드 종류 · 누수 감지 문턱값은 떠 있는 backend1 컨테이너의 환경에서, 시드 복제 시각은 run.sh seed 가 남긴 SEED_STAMP 에서 읽는다
-write_condition() { # 시나리오 폴더
-  local vt lk
-  vt="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_THREADS_VIRTUAL_ENABLED 2> /dev/null || echo true)"
-  lk="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 2> /dev/null || echo 0)"
-  printf '{"threads": "%s", "leak_detection": %s, "diag_samplers": false, "seed_copy": "%s"}\n' \
-    "$([ "$vt" = false ] && echo platform || echo virtual)" "$([ "${lk:-0}" -gt 0 ] && echo true || echo false)" "$(cat "$SEED_STAMP" 2> /dev/null || echo unknown)" > "$1/condition.json"
 }
 nginx_lines() { docker exec nginx sh -c "wc -l < $NGINX_LOG" | tr -d ' '; }
 
@@ -74,7 +64,7 @@ coupon() {
     docker logs --since "$t0" "${PROJECT}-$b-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -100 > "$d/warn-$b.log" || true
     docker logs --since "$t0" "${PROJECT}-$b-1" 2>&1 | grep -c -iE 'coupon' > "$d/coupon-lines-$b.txt" || true
   done
-  psql_seed -At -F $'\t' -c "SELECT left(regexp_replace(query, '\s+', ' ', 'g'), 120), calls, round(mean_exec_time::numeric, 2) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') ORDER BY total_exec_time DESC LIMIT 8" > "$d/pgss.tsv" || true
+  psql_seed -At -F $'\t' -c "SELECT left(regexp_replace(query, '\s+', ' ', 'g'), 120), calls, round(mean_exec_time::numeric, 2) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') ORDER BY total_exec_time DESC LIMIT 20" > "$d/pgss.tsv" || true
   backend_split "$d" '/coupon/issue-async/[0-9]+$' "$((before + 1))"
   psql_seed -Atc "SELECT count(*) FROM coupon_issue WHERE coupon_id = $cid" > "$d/issued-db.txt"
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$d/stock-after.txt"

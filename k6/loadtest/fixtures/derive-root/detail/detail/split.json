@@ -1,0 +1,9 @@
+{
+ "backend_requests": {
+  "backend1": 32000,
+  "backend2": 32000
+ },
+ "nginx_status": {
+  "200": 64000
+ }
+}

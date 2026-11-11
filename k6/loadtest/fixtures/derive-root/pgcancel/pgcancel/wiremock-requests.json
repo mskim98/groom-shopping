@@ -1,0 +1,26 @@
+{
+ "requests": [
+  {
+   "request": {
+    "url": "/v1/payments/k1/cancel"
+   },
+   "response": {
+    "status": 500
+   },
+   "timing": {
+    "totalTime": 300
+   }
+  },
+  {
+   "request": {
+    "url": "/v1/payments/k2/cancel"
+   },
+   "response": {
+    "status": 500
+   },
+   "timing": {
+    "totalTime": 301
+   }
+  }
+ ]
+}
