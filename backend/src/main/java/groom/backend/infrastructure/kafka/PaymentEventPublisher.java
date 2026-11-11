@@ -31,7 +31,7 @@ import org.springframework.stereotype.Component;
 // 트랜잭션 없이 돈다 - 집기(임대 설정)와 PUBLISHED 표시가 각자 한 문장짜리 짧은 트랜잭션이라 확인을 기다리는 동안(Kafka 장애면 최대 40초) DB 커넥션을 쥐지 않는다
 // 인스턴스가 여럿이어도 같은 행을 동시에 발행하지 않는다 - 집은 행은 lease-ms 동안 임대돼 다른 폴러가 건너뛴다
 // 확인이 실패한 행과 보내지 못한 행의 임대는 바로 풀어 다음 회차가 created_at 순서로 다시 집고, 확인된 행은 같은 회차에서 PUBLISHED 가 된다
-// 발행은 확인됐는데 PUBLISHED 표시가 실패하면 확인된 행의 임대는 두고 나머지만 푼다 - 표시 실패는 DB 장애라 임대를 풀면 DB 가 낫기 전까지 200ms 마다 같은 행을 다시 발행한다
+// 발행은 확인됐는데 PUBLISHED 표시가 실패하면 확인된 행의 임대는 두고 나머지만 푼다 - 표시 실패는 DB 장애라 임대를 풀면 DB 가 낫기 전까지 폴링 주기마다 같은 행을 다시 발행한다
 // 그 행은 임대가 지난 뒤 다시 발행된다(at-least-once)
 // 폴러가 죽어도 임대가 지난 뒤 다시 발행된다. 컨슈머가 outbox-id 헤더와 Payment 상태로 멱등 처리한다
 @Slf4j
@@ -71,8 +71,8 @@ public class PaymentEventPublisher {
     private static final int BATCH_SIZE = 100;
 
     // @Scheduled(fixedDelay) : 이전 실행이 끝난 뒤 poll-delay 만큼 쉬고 다시 실행 (스캔 주기)
-    // 기본 200ms - 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦는다
-    @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:200}")
+    // 기본 50ms - 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦는다
+    @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:50}")
     public void publishPending() {
         // shortcut: 폴러가 집은 뒤 죽거나 발행 뒤 PUBLISHED 표시가 실패해 임대를 풀지 못한 행은 임대 시간만큼 기다리고 그동안 같은 결제의 더 새로운 행이 먼저 발행될 수 있다, 컨슈머가 결제 상태로 적용해 허용하며 순서가 필요한 소비자가 생기면 결제별 직렬 발행으로 바꾼다
         List<PaymentOutbox> batch = outboxRepository.claimPendingBatch(BATCH_SIZE, leaseMs);

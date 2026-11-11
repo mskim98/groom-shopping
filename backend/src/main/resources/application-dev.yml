@@ -106,8 +106,9 @@ payment:
     secret-key: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
     api-url: https://api.tosspayments.com
   # Outbox 폴러 주기. 승인 요청이 컨슈머 결과를 기다리는 동안 발행이 늦어지면 그만큼 응답이 늦다
+  # 50ms: 200ms 에서 줄였다(r123, 서버 1대 측정에서 outbox_wait_claim 평균 106ms 가 확정 248ms 의 43 %). 줄이면 집는 질의가 인스턴스당 초당 20번으로 늘고, 늘리면 확정이 그만큼 늦다
   outbox:
-    poll-delay-ms: 200
+    poll-delay-ms: 50
     lease-ms: 60000              # 집은 행의 임대 시간. send 상한(40초)보다 짧으면 발행 중인 행을 다른 폴러가 가로채 중복 발행하고, 너무 길면 실패한 행이 그만큼 늦게 다시 발행된다
     retention-hours: 24          # PUBLISHED 행 보관 시간. 너무 짧으면 READY 대사가 보는 발행 기록이 사라지고, 너무 길면 표와 인덱스가 커진다
     purge-batch-size: 1000       # 삭제 한 문장의 행 수. 너무 크면 한 트랜잭션의 잠금 · 로그가 커지고, 너무 작으면 삭제가 끝나는 데 오래 걸린다
