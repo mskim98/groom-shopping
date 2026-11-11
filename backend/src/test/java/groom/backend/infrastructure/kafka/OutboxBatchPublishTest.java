@@ -227,6 +227,24 @@ class OutboxBatchPublishTest {
     }
 
     @Test
+    @DisplayName("한 결제의 앞 행 확인이 실패하면 같은 결제의 뒤 행은 확인이 와도 표시하지 않고 임대를 풀며 다른 결제의 행은 표시한다")
+    void publishPending_앞_행이_실패하면_같은_결제의_뒤_행은_표시하지_않고_임대를_푼다() {
+        UUID paymentA = UUID.randomUUID();
+        UUID paymentB = UUID.randomUUID();
+        PaymentOutbox a1 = PaymentOutbox.create(paymentA, "PaymentApproved", "{}");
+        PaymentOutbox b1 = PaymentOutbox.create(paymentB, "PaymentApproved", "{}");
+        PaymentOutbox a2 = PaymentOutbox.create(paymentA, "PaymentCancelled", "{}");
+        PaymentOutbox b2 = PaymentOutbox.create(paymentB, "PaymentCancelled", "{}");
+        when(outboxRepository.claimPendingBatch(100, 60000L)).thenReturn(List.of(a1, b1, a2, b2));
+        stubSend(0);
+
+        publisher(40000).publishPending();
+
+        verify(outboxRepository, times(1)).markPublished(ids(b1, b2));
+        verify(outboxRepository, times(1)).releaseLease(ids(a1, a2));
+    }
+
+    @Test
     @DisplayName("send 가 던지면 그 행부터 보내지 않고 이미 보낸 행의 확인은 기다려 표시하며 나머지 행의 임대를 푼다")
     void publishPending_send가_던지면_보낸_행은_표시하고_못_보낸_행의_임대를_푼다() {
         PaymentOutbox first = row();
