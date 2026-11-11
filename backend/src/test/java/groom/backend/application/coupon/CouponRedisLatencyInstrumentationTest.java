@@ -18,6 +18,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisCallback;
@@ -30,6 +31,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 // 느린 호출은 Redis 의 CLIENT PAUSE 로 만든다 - 일시정지 중에 들어온 명령이 그 시간만큼 기다린다
 @SpringBootTest(properties = {"coupon.redis.slow-ms=50", "coupon.issue.stream.enabled=false"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+// 시험 컨텍스트는 메트릭 내보내기를 끈다 - 켜야 prometheus 레지스트리 빈이 생긴다
+@AutoConfigureObservability
 @DisplayName("쿠폰 Redis 지연 계측")
 class CouponRedisLatencyInstrumentationTest {
 
@@ -45,6 +48,8 @@ class CouponRedisLatencyInstrumentationTest {
     private PrometheusMeterRegistry prometheus;
     @Autowired
     private CouponRequestTimingFilter filter;
+    @Autowired
+    private CouponRedisLatency latency;
 
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
     private Logger slowLogger;
@@ -54,6 +59,7 @@ class CouponRedisLatencyInstrumentationTest {
     void setUp() {
         couponId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L) + 1_000_000L;
         stockRepository.initStock(couponId, 1000L);
+        latency.resetLogWindow();
         slowLogger = (Logger) LoggerFactory.getLogger(CouponRedisLatency.class);
         slowLogger.setLevel(Level.WARN);
         appender.start();

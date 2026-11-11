@@ -3,6 +3,7 @@ package groom.backend.infrastructure.coupon;
 import groom.backend.application.coupon.CouponIssueBatchWriter;
 import groom.backend.application.coupon.CouponIssueBatchWriter.InsertOutcome;
 import groom.backend.application.coupon.CouponIssueStatus;
+import groom.backend.application.coupon.CouponRedisLatency;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.application.coupon.MyCouponCacheEvictor;
 import groom.backend.common.exception.ErrorCode;
@@ -110,6 +111,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private final CouponStockRedisRepository stockRepository;
     private final CouponIssueBatchWriter batchWriter;
     private final MyCouponCacheEvictor myCouponCacheEvictor;
+    private final CouponRedisLatency latency;
 
     // 한 번에 읽어 한 트랜잭션으로 넣는 건수의 상한
     @Value("${coupon.issue.batch-size:500}")
@@ -153,13 +155,14 @@ public class CouponStreamConsumer implements SmartLifecycle {
     public CouponStreamConsumer(StringRedisTemplate redis, CouponRepository couponRepository,
                                 CouponIssueRepository couponIssueRepository,
                                 CouponStockRedisRepository stockRepository, CouponIssueBatchWriter batchWriter,
-                                MyCouponCacheEvictor myCouponCacheEvictor) {
+                                MyCouponCacheEvictor myCouponCacheEvictor, CouponRedisLatency latency) {
         this.redis = redis;
         this.couponRepository = couponRepository;
         this.couponIssueRepository = couponIssueRepository;
         this.stockRepository = stockRepository;
         this.batchWriter = batchWriter;
         this.myCouponCacheEvictor = myCouponCacheEvictor;
+        this.latency = latency;
     }
 
     // 호스트 이름과 프로세스 번호. 같은 호스트에서 재기동하면 이름이 바뀌어 옛 이름의 항목은 유휴 인수로 넘어온다
@@ -288,7 +291,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private List<MapRecord<String, Object, Object>> readWatched(StreamOffset<String>[] offsets, java.util.Collection<Long> couponIds) {
         StreamReadOptions options = StreamReadOptions.empty().count(batchSize).block(Duration.ofMillis(blockMs));
         try {
-            return redis.opsForStream().read(consumer(), options, offsets);
+            return latency.timed("consumer_read", "XREADGROUP coupon-issue", blockMs,
+                    () -> redis.opsForStream().read(consumer(), options, offsets));
         } catch (RuntimeException e) {
             if (!messageContains(e, "NOGROUP")) {
                 throw e;
@@ -296,7 +300,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
             log.warn("[COUPON_STREAM_NOGROUP_RECOVER] couponCount={}", couponIds.size());
             groupReady.removeAll(couponIds);
             couponIds.forEach(this::ensureGroup);
-            return redis.opsForStream().read(consumer(), options, offsets);
+            return latency.timed("consumer_read", "XREADGROUP coupon-issue", blockMs,
+                    () -> redis.opsForStream().read(consumer(), options, offsets));
         }
     }
 
@@ -496,9 +501,10 @@ public class CouponStreamConsumer implements SmartLifecycle {
         do {
             String start = cursor;
             long want = batchSize - claimed.size();
-            ClaimedMessages<byte[], byte[]> reply = withGroup(couponId, () -> redis.execute(
-                    (RedisCallback<ClaimedMessages<byte[], byte[]>>) connection -> xautoclaim(connection, streamKey,
-                            start, want)));
+            ClaimedMessages<byte[], byte[]> reply = latency.timed("consumer_autoclaim", "XAUTOCLAIM coupon-issue", 0L,
+                    () -> withGroup(couponId, () -> redis.execute(
+                            (RedisCallback<ClaimedMessages<byte[], byte[]>>) connection -> xautoclaim(connection, streamKey,
+                                    start, want))));
             if (reply == null) {
                 break;
             }
@@ -595,7 +601,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
             log.error("[COUPON_STREAM_DEAD_LETTER] couponId={}, entryId={}, deliveries={}, fields={}",
                     couponId, stream.id(), entry.getValue(), stream.fields());
         }
-        stockRepository.setStatuses(statuses);
+        latency.timed("consumer_status_write", "PIPELINE SET coupon-status", 0L, () -> stockRepository.setStatuses(statuses));
         committedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, poison.keySet().stream().map(StreamEntry::id).toList());
     }
@@ -662,7 +668,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
                 statuses.put(requestId, CouponIssueStatus.FAILED_PREFIX + ErrorCode.COUPON_ALREADY_ISSUED.name());
             }
         }
-        stockRepository.setStatuses(statuses);
+        latency.timed("consumer_status_write", "PIPELINE SET coupon-status", 0L, () -> stockRepository.setStatuses(statuses));
         insertedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, entries.stream().map(StreamEntry::id).toList());
     }
@@ -672,7 +678,9 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private void ack(Long couponId, List<String> entryIds) {
         String streamKey = CouponStockRedisRepository.streamKey(couponId);
         RecordId[] ids = entryIds.stream().map(RecordId::of).toArray(RecordId[]::new);
-        redis.opsForStream().acknowledge(streamKey, GROUP, ids);
-        redis.opsForStream().delete(streamKey, ids);
+        latency.timed("consumer_ack", "XACK+XDEL coupon-issue", 0L, () -> {
+            redis.opsForStream().acknowledge(streamKey, GROUP, ids);
+            redis.opsForStream().delete(streamKey, ids);
+        });
     }
 }

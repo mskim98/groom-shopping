@@ -62,12 +62,16 @@ class CouponAsyncIssueServiceTest {
 
     private CouponAsyncIssueService service;
 
+    private static CouponRedisLatency latency() {
+        return new CouponRedisLatency(new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 200L);
+    }
+
     @BeforeEach
     void setUp() {
         service = new CouponAsyncIssueService(couponRepository, redisTemplate, couponStockRedisRepository,
                 couponStockRecoveryService, dbLockIssueStrategy,
                 new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L),
-                new MyCouponCacheEvictor(cacheManagerProvider));
+                new MyCouponCacheEvictor(cacheManagerProvider), latency());
         given(redisTemplate.opsForValue()).willReturn(valueOps);
     }
 
