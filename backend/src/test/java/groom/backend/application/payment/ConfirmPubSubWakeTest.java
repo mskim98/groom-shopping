@@ -112,7 +112,7 @@ class ConfirmPubSubWakeTest {
                 return reached.isDone();
             });
         } finally {
-            waiters.remove(probe);
+            waiters.remove(probe, reached);
         }
     }
 
