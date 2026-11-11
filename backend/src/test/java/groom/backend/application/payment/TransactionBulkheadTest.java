@@ -72,12 +72,21 @@ class TransactionBulkheadTest {
     /** 격벽이 붙은 시험용 트랜잭션 메서드 - 안에서 연결을 쥐고 있는 트랜잭션 수를 센다 */
     @Component
     static class Probe {
-        final AtomicInteger open = new AtomicInteger();
-        final AtomicInteger maxOpen = new AtomicInteger();
+        private final AtomicInteger open = new AtomicInteger();
+        private final AtomicInteger maxOpen = new AtomicInteger();
         @Autowired
         private JdbcTemplate jdbc;
 
-        void reset() {
+        // 스프링 프록시 너머라 필드를 직접 읽으면 null 이다 - 메서드로 읽는다
+        public int open() {
+            return open.get();
+        }
+
+        public int maxOpen() {
+            return maxOpen.get();
+        }
+
+        public void reset() {
             open.set(0);
             maxOpen.set(0);
         }
@@ -208,7 +217,7 @@ class TransactionBulkheadTest {
         assertThat(outcomes).as("연결 풀 대기 시간 초과가 하나도 없다").noneMatch(o -> causedByConnectionTimeout(o.error()));
         assertThat(outcomes).as("성공도 거절도 아닌 다른 실패가 없다")
                 .allMatch(o -> o.error() == null || isBulkheadRefusal(o.error()));
-        assertThat(probe.maxOpen.get()).as("동시에 열린 트랜잭션 최대 수").isLessThanOrEqualTo(PERMITS);
+        assertThat(probe.maxOpen()).as("동시에 열린 트랜잭션 최대 수").isLessThanOrEqualTo(PERMITS);
         assertThat(outcomes.stream().filter(o -> o.error() == null).count()).as("허용을 잡은 호출은 성공한다").isGreaterThanOrEqualTo(PERMITS);
         List<Outcome> refused = outcomes.stream().filter(o -> o.error() != null).toList();
         assertThat(refused).as("호출자 50 에 허용 4 라 거절이 있다").isNotEmpty();
@@ -276,7 +285,7 @@ class TransactionBulkheadTest {
                         return null;
                     });
                 }
-                await().atMost(5, TimeUnit.SECONDS).until(() -> probe.open.get() == PERMITS);
+                await().atMost(5, TimeUnit.SECONDS).until(() -> probe.open() == PERMITS);
 
                 // 허용이 모두 차 있다는 증거 - 같은 격벽의 다음 호출은 거절된다
                 Outcome extra = burst(1, () -> probe.sleepInTx(0.01)).get(0);
