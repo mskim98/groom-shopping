@@ -37,6 +37,15 @@ render_servers() {
 }
 render_servers
 
+# 집합의 백엔드마다 /actuator/prometheus 에서 정규식에 맞는 줄을 "<시각>\t<백엔드>\t<줄>" 로 파일에 덧붙인다 - 확정 구간 · 쿠폰 단계 타이머를 시험 구간의 시작과 끝에 읽는 용도(스택이 내려가 있으면 아무것도 쓰지 않는다)
+scrape_metric() { # 정규식 · 파일
+  local b ts
+  for b in $BACKENDS; do
+    ts="$(date -u +%FT%TZ)"
+    docker exec nginx curl -fsS "http://$b:8080/api/actuator/prometheus" 2> /dev/null | grep -E "$1" | sed "s/^/$ts\t$b\t/" >> "$2" || true
+  done
+}
+
 # 이 프로젝트의 nginx 와 집합의 백엔드 컨테이너를 멈춘다 - 시드 복제 전에 DB 연결을 끊어 두는 용도
 stop_backends() {
   local b names=""

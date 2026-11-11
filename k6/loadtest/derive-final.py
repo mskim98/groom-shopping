@@ -19,7 +19,7 @@ import os
 import re
 import sys
 
-from collect import collect_step, normalize_condition
+from collect import collect_step, normalize_condition, read, stage_delta
 
 REST_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "seed_copy", "servers")
 FLASH_ORDER = ("virtual-2000", "platform-2000", "virtual-300", "virtual-600", "virtual-1000", "virtual-1500")
@@ -70,13 +70,21 @@ def coupon_one(d):
            "redis_stock_before": rd(d, "stock-before.txt"), "redis_stock_after": rd(d, "stock-after.txt"), "redis_issued_users": rd(d, "issued-users-redis.txt"),
            "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
            "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms)", "start": rd(d, "start.txt") or None}
+    out["coupon_stages"] = stage_delta(os.path.join(d, "coupon-stages-before.tsv"), os.path.join(d, "coupon-stages.tsv"), "coupon_stage_seconds")
+    slow, suppressed = {}, {}
+    for p in sorted(glob.glob(os.path.join(d, "redis-slow-*.log"))):
+        name = os.path.basename(p)[len("redis-slow-"):-len(".log")]
+        text = read(p)
+        slow[name] = text.count("[COUPON_REDIS_SLOW]")
+        suppressed[name] = sum(int(x) for x in re.findall(r"\[COUPON_REDIS_SLOW\].*suppressed=(\d+)", text))
+    out["redis_slow_lines"], out["redis_slow_suppressed"] = slow, suppressed
     out.update(condition(d))
     return out
 
 
 def coupon(d, out, others):
     res = coupon_one(d)
-    keep = ("rate", "duration_s", "requests", "issued", "completion_p95_ms", "completion_p99_ms", "accept_p95_ms", "results", "dropped_iterations", "max_vus")
+    keep = ("rate", "duration_s", "requests", "issued", "completion_p95_ms", "completion_p99_ms", "accept_p95_ms", "results", "dropped_iterations", "max_vus", "coupon_stages", "redis_slow_lines", "redis_slow_suppressed")
     if others:
         res["other_rates"] = {label: {k: coupon_one(p)[k] for k in keep} for label, p in others}
         res["note"] = "coupon.json is the main run (the lowest rate); the other runs of the same coupon path are listed under other_rates"

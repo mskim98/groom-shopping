@@ -75,6 +75,7 @@ def backend_requests(folder):
             ip_to_name[f[1]] = f[0]
     counts = {name: 0 for name in ip_to_name.values()}
     status = {}
+    by_path = {}
     unknown = 0
     for line in read(os.path.join(folder, "nginx.log")).splitlines():
         f = line.split(None, 5)
@@ -82,6 +83,8 @@ def backend_requests(folder):
             continue
         cls = "5xx" if f[3].startswith("5") and f[3] != "503" else f[3]
         status[cls] = status.get(cls, 0) + 1
+        by_path.setdefault(f[2], {}).setdefault(f[3], 0)
+        by_path[f[2]][f[3]] += 1
         # 재시도가 있으면 $upstream_addr 가 "ip:8080, ip:8080" 이다 - 마지막 주소가 응답한 쪽이다
         rest = f[5].rsplit(None, 1)[0] if " " in f[5] else f[5]
         ip = rest.split(",")[-1].strip().split(":")[0]
@@ -90,7 +93,7 @@ def backend_requests(folder):
             counts[name] += 1
         else:
             unknown += 1
-    return counts, status, unknown
+    return counts, status, unknown, by_path
 
 
 def pgss(path):
@@ -154,6 +157,26 @@ def prom_peak(path):
         elif name == "process_cpu_usage":
             b["process_cpu_usage_max"] = max(b.get("process_cpu_usage_max", 0), val)
     return out
+
+
+def stage_delta(start_path, end_path, metric):
+    """누적 타이머(<metric>_count · _sum, 태그 stage)의 두 표본 파일 차이 - {백엔드: {stage: {count, sum_s, mean_ms}}}. 파일이 없으면 {}, 시작 표본에 없는 stage 는 0 에서 센다
+    줄 형식: <시각>\\t<백엔드>\\t<metric>_count{stage="x"} <값>"""
+    def load(path):
+        out = {}
+        for line in read(path).splitlines():
+            f = line.split("\t", 2)
+            m = re.match(r"%s_(count|sum)\{[^}]*stage=\"([^\"]+)\"[^}]*\}\s+([-\d.eE+]+)$" % re.escape(metric), f[2]) if len(f) == 3 else None
+            if m:
+                out.setdefault((f[1], m.group(2)), {})[m.group(1)] = float(m.group(3))
+        return out
+    start, end = load(start_path), load(end_path)
+    res = {}
+    for (backend, stage), v in sorted(end.items()):
+        b = start.get((backend, stage), {})
+        cnt, sm = v.get("count", 0) - b.get("count", 0), v.get("sum", 0) - b.get("sum", 0)
+        res.setdefault(backend, {})[stage] = {"count": int(cnt), "sum_s": round(sm, 3), "mean_ms": round(sm / cnt * 1000, 2) if cnt > 0 else None}
+    return res
 
 
 def orders(folder):
@@ -249,7 +272,7 @@ def collect_step(folder, target):
     k6 = json.loads(read(os.path.join(folder, "k6-summary.json"), "{}") or "{}")
     before, after = offsets(os.path.join(folder, "offsets_before.txt")), offsets(os.path.join(folder, "offsets_after.txt"))
     msgs = [a - b for a, b in zip(after, before)]
-    be, nginx_status, unknown = backend_requests(folder)
+    be, nginx_status, unknown, by_path = backend_requests(folder)
     m = re.search(r"setup: logins=(\d+) carts_cleared=(\d+) extra_requests=(\d+)", read(os.path.join(folder, "k6.log")))
     # 포화로 한 요청도 끝내지 못한 엔드포인트는 결과다 - 건수 0 · p95 · p99 는 값 없음(null)으로 쓴다(R119-11)
     for ep in k6.get("endpoints", {}).values():
@@ -272,7 +295,9 @@ def collect_step(folder, target):
         "errors": k6.get("errors", {}),
         "backend_requests": be,
         "nginx_status_all_phases": nginx_status,
+        "nginx_status_by_path": by_path,
         "nginx_unmatched_upstream": unknown,
+        "confirm_stages": stage_delta(os.path.join(folder, "confirm-stages-start.tsv"), os.path.join(folder, "confirm-stages-end.tsv"), "payment_confirm_stage_seconds"),
         "partitions": {"messages": msgs, "max_min_ratio": (max(msgs) / min(msgs)) if min(msgs) > 0 else None},
         "lag": {"max_per_partition": lag_max(os.path.join(folder, "lag.log"))},
         "ledger_apply_ms": ledger(folder),

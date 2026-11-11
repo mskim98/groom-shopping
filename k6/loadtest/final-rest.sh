@@ -54,15 +54,19 @@ coupon() {
   docker exec redis redis-cli CONFIG RESETSTAT > /dev/null
   docker exec redis redis-cli SLOWLOG RESET > /dev/null
   local t0; t0="$(date -u +%FT%TZ)"
+  scrape_metric '^coupon_stage_seconds_(count|sum)[{]' "$d/coupon-stages-before.tsv"
   k6 run -q --no-usage-report -e COUPON_ID="$cid" -e RATE="$rate" -e DURATION_S="$dur" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$d/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$d/k6.log" 2>&1 || echo "k6 exit $?" >> "$d/k6.log"
   sleep 5
+  scrape_metric '^coupon_stage_seconds_(count|sum)[{]' "$d/coupon-stages.tsv"
   # 증거 - Redis 명령 통계 · 느린 명령, 백엔드 로그의 경고 · 오류와 쿠폰 소비자 줄
   docker exec redis redis-cli INFO commandstats > "$d/redis-commandstats.txt"
   docker exec redis redis-cli SLOWLOG GET 20 > "$d/redis-slowlog.txt"
   for b in $BACKENDS; do
     docker logs --since "$t0" "${PROJECT}-$b-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -100 > "$d/warn-$b.log" || true
     docker logs --since "$t0" "${PROJECT}-$b-1" 2>&1 | grep -c -iE 'coupon' > "$d/coupon-lines-$b.txt" || true
+    # 느린 Redis 호출 줄([COUPON_REDIS_SLOW], 백엔드당 초당 1줄) - 건수는 derive-final.py 가 redis_slow_lines 로 센다
+    docker logs --since "$t0" "${PROJECT}-$b-1" 2>&1 | grep 'COUPON_REDIS_SLOW' > "$d/redis-slow-$b.log" || true
   done
   psql_seed -At -F $'\t' -c "SELECT left(regexp_replace(query, '\s+', ' ', 'g'), 120), calls, round(mean_exec_time::numeric, 2) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') ORDER BY total_exec_time DESC LIMIT 20" > "$d/pgss.tsv" || true
   backend_split "$d" '/coupon/issue-async/[0-9]+$' "$((before + 1))"

@@ -144,6 +144,17 @@ sample_prom() {
   done
 }
 
+# 유지 구간의 시작과 끝에 확정 구간 타이머(payment_confirm_stage_seconds)를 백엔드마다 한 번씩 읽는다 - 유지 구간은 k6 준비 단계(setup)가 끝난 줄 + 램프 초부터 유지 초 동안
+# 두 표본의 차이가 유지 구간의 구간별 건수 · 합이다(collect.py 의 stage_delta). 시각은 초 단위이고 k6 와 같은 시계를 쓰므로 오차는 1~2 초
+sample_confirm_stages() { # 폴더 · 램프 초 · 유지 초 · k6 로그
+  local waited=0
+  until grep -q 'setup:' "$4" 2> /dev/null || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
+  sleep "$2"
+  scrape_metric '^payment_confirm_stage_seconds_(count|sum)[{]' "$1/confirm-stages-start.tsv"
+  sleep "$3"
+  scrape_metric '^payment_confirm_stage_seconds_(count|sum)[{]' "$1/confirm-stages-end.tsv"
+}
+
 # pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션(유휴라도 xact_start 가 찍힌 것은 포함)을 1 초마다 읽는다. 컨테이너 안에서 psql 연결 하나를 열어 두고 \watch 1 로 같은 문장을 되풀이한다
 # (매번 docker exec · psql 을 새로 치면 CPU 가 찬 때 표본 간격이 1.3 초 넘게 늘어난다 - 첫 시험에서 중앙값 1.32 초 · 최대 4.6 초). 표본 하나의 비용은
 # pg_stat_activity 한 번 읽기(수 ms)와 측정 DB 에 붙은 연결 1 개이고, 활동 행이 없는 시각에도 빈 행 하나를 남겨 표본 시각이 끊기지 않게 한다
@@ -219,6 +230,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_lag "$dir" & local p1=$!
   sample_stats "$dir" & local p2=$!
   sample_prom "$dir" & local p3=$!
+  sample_confirm_stages "$dir" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & local p7=$!
   # 진단 표본(pg_stat_activity 1 초)은 요청마다 DB 에 연결 하나를 더 쓰므로 DIAG_SAMPLERS=1 일 때만 돈다 - 최종 측정은 끈다
   local p5=""
   if [ "${DIAG_SAMPLERS:-0}" = 1 ]; then sample_pg "$out" & p5=$!; fi
@@ -227,7 +239,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
     for b in $BACKENDS; do follow_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt" & done
     sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!
   fi
-  trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
+  trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 $p7 2> /dev/null || true' EXIT
 
   write_condition "$dir" "$HOLD_S" "$RAMP_S"
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
@@ -240,6 +252,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_k6_cpu "$dir" "$kpid" & local p4=$!
   wait "$kpid" || echo "k6 exit $?" >> "$dir/k6.log"
   wait "$p4" 2> /dev/null || true
+  wait "$p7" 2> /dev/null || true # 유지 구간 끝 표본이 파일에 쓰일 때까지(kill 하지 않는다)
   db_now > "$dir/db_window_end.txt"
   end="$(date -u +%FT%TZ)"
   echo "$end" > "$dir/end.txt"
