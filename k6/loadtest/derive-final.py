@@ -47,7 +47,9 @@ def pct(v, p):
 
 
 def flash(src, out):
-    res = {"tiny": collect_step(os.path.join(src, "tiny", "tiny"), 50), "steps": []}
+    # tiny 를 돌리지 않은 재측정(1 대 단계 등)도 단계 결과는 만든다
+    tiny_dir = os.path.join(src, "tiny", "tiny")
+    res = {"tiny": collect_step(tiny_dir, 50) if os.path.isdir(tiny_dir) else None, "steps": []}
     found = sorted(os.path.basename(p) for p in glob.glob(os.path.join(src, "*")) if glob.glob(os.path.join(p, "step-*")))
     for label in [l for l in FLASH_ORDER if l in found] + [l for l in found if l not in FLASH_ORDER]:
         step_dir = glob.glob(os.path.join(src, label, "step-*"))[0]
@@ -55,7 +57,7 @@ def flash(src, out):
         step["run_label"] = label
         res["steps"].append(step)
     json.dump(res, open(out, "w"), ensure_ascii=False, indent=1)
-    print("wrote %s (tiny + %d steps)" % (out, len(res["steps"])))
+    print("wrote %s (tiny=%s, %d steps)" % (out, res["tiny"] is not None, len(res["steps"])))
 
 
 def coupon_one(d):
@@ -172,10 +174,10 @@ def all_scenarios(root, out_dir):
     """raw root 의 배치에서 네 JSON 을 만든다 - 없는 시나리오 폴더는 건너뛰고 한 줄 알린다"""
     os.makedirs(out_dir, exist_ok=True)
     p = lambda *x: os.path.join(root, *x)
-    if os.path.isdir(p("flash", "tiny")):
+    if os.path.isdir(p("flash", "tiny")) or glob.glob(p("flash", "*", "step-*")):
         flash(p("flash"), os.path.join(out_dir, "result.json"))
     else:
-        print("skipped result.json: no flash/tiny folder under %s" % root)
+        print("skipped result.json: no flash/tiny or flash/<label>/step-* folder under %s" % root)
     runs = []
     for d in glob.glob(p("coupon-*", "coupon")):
         runs.append((json.load(open(os.path.join(d, "k6-summary.json")))["rate"], d))
