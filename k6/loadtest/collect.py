@@ -13,6 +13,14 @@ import sys
 
 ENDPOINT_URIS = {"/api/v1/cart/add": "cart_add", "/api/v1/order": "order", "/api/v1/payment/confirm": "confirm"}
 PARTITIONS = 12
+# 단계 조건(run.sh 의 write_condition 이 쓴다) - 폴더의 condition.json 에 없는 값은 추측하지 않고 null 로 쓰고 필드 이름을 condition_inferred 에 적는다
+STEP_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "hold_s", "ramp_s", "seed_copy", "servers")
+
+
+def normalize_condition(cond, fields):
+    out = {f: cond.get(f) for f in fields}
+    out["condition_inferred"] = [f for f in fields if cond.get(f) is None]
+    return out
 
 
 def read(path, default=""):
@@ -65,7 +73,7 @@ def backend_requests(folder):
         f = line.split()
         if len(f) == 2:
             ip_to_name[f[1]] = f[0]
-    counts = {"backend1": 0, "backend2": 0, "backend3": 0}
+    counts = {name: 0 for name in ip_to_name.values()}
     status = {}
     unknown = 0
     for line in read(os.path.join(folder, "nginx.log")).splitlines():
@@ -153,11 +161,13 @@ def orders(folder):
     start = read(os.path.join(folder, "db_window_start.txt")).strip()
     end = read(os.path.join(folder, "db_window_end.txt")).strip()
     cached = os.path.join(folder, "orders.json")
+    # 앞서 센 값이 있으면 그것을 쓴다 - 스택이 다시 떠 있어도 시드가 바뀐 DB 에서 다시 세면 다른 값이 나온다(원시 폴더만으로 같은 결과를 다시 만들기 위해)
+    try:
+        return json.loads(read(cached))
+    except ValueError:
+        pass
     if not start or not end:
-        try:
-            return json.loads(read(cached))
-        except ValueError:
-            return {}
+        return {}
     env = {}
     for line in read(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env")).splitlines():
         if "=" in line:
@@ -246,9 +256,10 @@ def collect_step(folder, target):
         if ep.get("count", 0) == 0:
             ep["p95"] = ep["p99"] = None
     try:
-        cond = json.loads(read(os.path.join(folder, "condition.json"), "{}") or "{}")
+        raw_cond = json.loads(read(os.path.join(folder, "condition.json"), "{}") or "{}")
     except ValueError:
-        cond = {}
+        raw_cond = {}
+    cond = normalize_condition(raw_cond, STEP_CONDITION_FIELDS)
     step = {
         "target_rps": target,
         "threads": cond.get("threads"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 측정 환경 점검 - backend1..3 건강 UP · nginx 80 번이 상품 목록 응답 · wiremock 이 결제 승인에 200 · 시드 DB 가 verify.sh 통과 + pg_stat_statements 확장 있음
+# 측정 환경 점검 - SERVERS 대의 백엔드 건강 UP · nginx 80 번이 상품 목록 응답 · wiremock 이 결제 승인에 200 · 시드 DB 가 verify.sh 통과 + pg_stat_statements 확장 있음
 # 하나라도 어긋나면 exit 1 (한 줄에 검사 하나: PASS/FAIL 이름)
 # 사용: bash k6/loadtest/check-env.sh   (run.sh app 이 끝난 뒤)
 set -uo pipefail

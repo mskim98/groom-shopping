@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 3대 부하 측정 구동기 - 루트 compose 스택을 프로젝트 이름 r119-measure 로 띄우고 단계별로 재서 수집한다
+# 부하 측정 구동기(백엔드 대수는 환경 변수 SERVERS, 기본 3) - 루트 compose 스택을 프로젝트 이름 r119-measure 로 띄우고 단계별로 재서 수집한다
 # 사용: bash k6/loadtest/run.sh <명령> [인자]
 #   keys                      secrets/jwt-keys.pem 이 없으면 만든다(저장소 밖 · .gitignore 의 secrets/ 대상)
 #   infra                     db redis kafka wiremock 을 띄우고 준비될 때까지 기다린다
 #   seed                      시드 템플릿이 없을 때만 만들고(SEED_REBUILD_TEMPLATE=1 이면 다시) shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성
-#   app                       백엔드 이미지 빌드 후 backend1..3 · nginx 를 띄우고 건강 UP 을 기다린다
+#   app                       백엔드 이미지 빌드 후 SERVERS 대의 백엔드 · nginx 를 띄우고 건강 UP 을 기다린다
 #   tiny <out-dir>            초당 50 요청 10 초 + 램프 2 초 (<out-dir>/tiny)
 #   step <rps> <out-dir>      초당 <rps> 요청 램프 10 초 + 유지 30 초 (<out-dir>/step-<rps>)
 #   collect <out-dir> <result.json>   단계 폴더를 result.json 한 개로 모은다(collect.py)
@@ -13,11 +13,10 @@
 #   backend<N>.log(단계 구간의 백엔드 로그 전체) · leak-digest.txt · pg-digest.txt(leak_digest.py · pg_activity_digest.py 의 요약)
 #   THREAD_DUMP_EVERY_S 가 0 보다 크면 유지 구간 동안 그 간격(초)마다 백엔드마다 SIGQUIT 를 보내 JVM 이 컨테이너 로그에 찍은 스레드 덤프를 threads-backend<N>.txt 로 자르고 thread-digest.txt 를 쓴다(thread_digest.py)
 # 지우는 것: down 이 이 프로젝트의 컨테이너와 네트워크만. 볼륨 · dev-* 컨테이너 · 다른 DB 는 건드리지 않는다. seed 는 shop_seed_template · shop_seed_m1 두 DB 를 다시 만든다
-# 환경 변수(기본값): LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
+# 환경 변수(기본값): SERVERS(3) 백엔드 대수 · APP_SETTLE_S(20) app 이 건강 UP 뒤 내려간 백엔드를 다시 보기 전에 쉬는 초 · LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
-SEED_STAMP="${SEED_STAMP:-/tmp/r119-measure-seed-stamp}"
 
 RAMP_S="${RAMP_S:-10}"
 HOLD_S="${HOLD_S:-30}"
@@ -79,12 +78,12 @@ cmd_seed() {
 backend_healthy() { docker exec nginx curl -fsS "http://$1:8080/api/actuator/health" | grep -q '"status":"UP"'; }
 
 cmd_app() {
-  # 세 서비스가 같은 이미지 이름(groom-backend)을 쓰므로 한 번만 빌드한다
-  $DC build backend1
-  $DC up -d --no-build backend1 backend2 backend3 nginx
+  # 백엔드 서비스는 같은 이미지 이름(groom-backend)을 쓰므로 한 번만 빌드한다
+  $DC build "${BACKENDS%% *}"
+  $DC up -d --no-build $BACKENDS nginx
   for b in $BACKENDS; do wait_for "$b health" 300 backend_healthy "$b"; done
   # 기동 직후 한 대가 Redis 연결 전에 러너가 실패해 스스로 내려간 적이 있다(CouponRedisKeyMigrationRunner) - 20 초 뒤 다시 보고 내려간 대는 한 번 다시 띄운다
-  sleep 20
+  sleep "${APP_SETTLE_S:-20}"
   for b in $BACKENDS; do
     if ! backend_healthy "$b"; then
       echo "$b is not healthy after boot, starting it once more" >&2
@@ -197,16 +196,6 @@ sample_k6_cpu() { # 폴더 · k6 pid
 # 시험 창(DB 시계) - 주문 시각은 앱이 Asia/Seoul 시각으로 timestamp 열에 쓰므로 같은 기준으로 읽는다
 db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS.US')"; }
 
-# 이 단계가 어떤 조건에서 돌았는지 단계 폴더에 남긴다 - 스레드 종류 · 누수 감지 문턱값은 실제로 떠 있는 backend1 컨테이너의 환경에서 읽는다
-write_condition() { # 단계 폴더 · 목표 요청률
-  local vt lk
-  vt="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_THREADS_VIRTUAL_ENABLED 2> /dev/null || echo true)"
-  lk="$(docker exec "${PROJECT}-backend1-1" printenv SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 2> /dev/null || echo 0)"
-  printf '{"threads": "%s", "leak_detection": %s, "diag_samplers": %s, "hold_s": %s, "ramp_s": %s, "seed_copy": "%s"}\n' \
-    "$([ "$vt" = false ] && echo platform || echo virtual)" "$([ "${lk:-0}" -gt 0 ] && echo true || echo false)" \
-    "$([ "${DIAG_SAMPLERS:-0}" = 1 ] && echo true || echo false)" "$HOLD_S" "$RAMP_S" "$(cat "$SEED_STAMP" 2> /dev/null || echo unknown)" > "$1/condition.json"
-}
-
 run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출력 폴더(진단 파일이 가는 곳)
   local name="$1" rps="$2" vus="$3" dir="$4" out="$5"
   mkdir -p "$dir"
@@ -239,7 +228,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   fi
   trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 2> /dev/null || true' EXIT
 
-  write_condition "$dir" "$rps"
+  write_condition "$dir" "$HOLD_S" "$RAMP_S"
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
   # 종료 코드는 임계값 실패 등 k6 자체 판정이다 - 측정값은 요약 파일에서 읽으므로 여기서 멈추지 않는다
   k6 run -q --no-usage-report \

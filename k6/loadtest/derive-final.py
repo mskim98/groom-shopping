@@ -2,12 +2,16 @@
 """r120 최종 측정의 결과 JSON 을 원시 파일에서 다시 만든다 - 스택 없이 돈다(docker · psql 을 부르지 않는다)
 
 usage:
-  derive-final.py flash  <flash-dir> <out result.json>             tiny 와 단계별 result-<라벨>.json 을 result.json 한 개로 합친다(run.sh collect 가 만든 result-*.json 이 입력)
+  derive-final.py all    <raw root> <out dir>                      네 JSON 을 한 번에 만든다. raw root 의 배치(final-flash.sh · final-rest.sh 의 <출력 폴더> 이름이 정한다):
+                                                                     flash/{tiny/tiny, <라벨>/step-<rps>} · coupon-<rate>rps/coupon (가장 낮은 요청률이 주 실행, 나머지는 other_rates) ·
+                                                                     detail/detail · pgcancel/pgcancel → <out dir>/{result,coupon,pg-cancel,detail}.json
+                                                                     상세의 배경 상품 select 는 주 쿠폰 실행의 pgss.tsv(상품 조회 요청이 없는 실행)에서 센 횟수를 본문 적재 수에서 뺀다
+  derive-final.py flash  <flash-dir> <out result.json>             tiny 와 단계 폴더(<flash-dir>/tiny/tiny · <flash-dir>/<라벨>/step-<rps>)를 collect.py 로 모아 result.json 한 개로 합친다
   derive-final.py coupon <coupon-dir> <out coupon.json> [--other 라벨=<coupon-dir> ...]   <coupon-dir> = final-rest.sh coupon 의 <out>/coupon 폴더
   derive-final.py detail <detail-dir> <out detail.json> [--background-pgss <pgss.tsv>]
   derive-final.py pgcancel <pgcancel-dir> <out pg-cancel.json>
-조건 필드(threads · leak_detection · seed_copy)는 폴더의 condition.json(final-rest.sh 가 실행 때 쓴다)에서 읽는다. 없으면 이 도구를 쓴 스크립트의 고정 값을 쓰고 이유를 적는다:
-final-rest.sh 의 boot 는 SPRING_THREADS_VIRTUAL_ENABLED=true 로 백엔드를 띄우고 compose 의 누수 감지 기본값은 0(끔)이다. seed_copy 는 그 실행이 남기지 않았으면 null 이다
+조건 필드(threads · leak_detection · diag_samplers · seed_copy · servers)는 폴더의 condition.json(env.sh 의 write_condition 이 실행 때 쓴다)에서 읽는다.
+condition.json 에 없는 값은 추측하지 않고 null 로 쓰고, 그 필드 이름을 condition_inferred 목록에 적는다(전부 있으면 빈 목록). servers 는 JSON 최상위에도 쓴다
 """
 import glob
 import json
@@ -15,7 +19,10 @@ import os
 import re
 import sys
 
-FALLBACK_REASON = "no condition.json in the raw folder (the run predates the field): threads and leak_detection are the values final-rest.sh boots with (virtual threads, LEAK_DETECTION_MS 0); seed_copy was not recorded"
+from collect import collect_step, normalize_condition
+
+REST_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "seed_copy", "servers")
+FLASH_ORDER = ("virtual-2000", "platform-2000", "virtual-300", "virtual-600", "virtual-1000", "virtual-1500")
 
 
 def rd(d, name, default=""):
@@ -31,9 +38,7 @@ def condition(d):
         c = json.loads(rd(d, "condition.json", "") or "null")
     except ValueError:
         c = None
-    if c:
-        return {"threads": c.get("threads"), "leak_detection": c.get("leak_detection"), "seed_copy": c.get("seed_copy"), "diag_samplers": c.get("diag_samplers")}
-    return {"threads": "virtual", "leak_detection": False, "seed_copy": None, "diag_samplers": False, "condition_note": FALLBACK_REASON}
+    return normalize_condition(c or {}, REST_CONDITION_FIELDS)
 
 
 def pct(v, p):
@@ -42,9 +47,11 @@ def pct(v, p):
 
 
 def flash(src, out):
-    res = {"tiny": json.load(open(os.path.join(src, "result-tiny.json")))["tiny"], "steps": []}
-    for label in ("virtual-2000", "platform-2000", "virtual-300", "virtual-600", "virtual-1000", "virtual-1500"):
-        step = json.load(open(os.path.join(src, "result-%s.json" % label)))["steps"][0]
+    res = {"tiny": collect_step(os.path.join(src, "tiny", "tiny"), 50), "steps": []}
+    found = sorted(os.path.basename(p) for p in glob.glob(os.path.join(src, "*")) if glob.glob(os.path.join(p, "step-*")))
+    for label in [l for l in FLASH_ORDER if l in found] + [l for l in found if l not in FLASH_ORDER]:
+        step_dir = glob.glob(os.path.join(src, label, "step-*"))[0]
+        step = collect_step(step_dir, int(step_dir.rsplit("-", 1)[1]))
         step["run_label"] = label
         res["steps"].append(step)
     json.dump(res, open(out, "w"), ensure_ascii=False, indent=1)
@@ -61,7 +68,7 @@ def coupon_one(d):
            "completion_count": k["completion_count"], "accept_p95_ms": k["accept_p95_ms"], "results": k["results"],
            "dropped_iterations": k["dropped_iterations"], "max_vus": k["max_vus"], "backend_requests": s["backend_requests"], "nginx_status": s["nginx_status"],
            "redis_stock_before": rd(d, "stock-before.txt"), "redis_stock_after": rd(d, "stock-after.txt"), "redis_issued_users": rd(d, "issued-users-redis.txt"),
-           "backends": 3, "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
+           "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
            "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms)", "start": rd(d, "start.txt") or None}
     out.update(condition(d))
     return out
@@ -72,12 +79,12 @@ def coupon(d, out, others):
     keep = ("rate", "duration_s", "requests", "issued", "completion_p95_ms", "completion_p99_ms", "accept_p95_ms", "results", "dropped_iterations", "max_vus")
     if others:
         res["other_rates"] = {label: {k: coupon_one(p)[k] for k in keep} for label, p in others}
-        res["note"] = "coupon.json is the main run; the other runs of the same coupon path are listed under other_rates (500 rps saturated: accept p95 12-13 s)"
+        res["note"] = "coupon.json is the main run (the lowest rate); the other runs of the same coupon path are listed under other_rates"
     json.dump(res, open(out, "w"), indent=2)
     print({x: res[x] for x in ("requests", "quantity", "issued", "rate", "completion_p95_ms")})
 
 
-def detail(d, out, background):
+def detail(d, out, background, background_source=None):
     k6 = json.load(open(os.path.join(d, "k6-summary.json")))
     sp = json.load(open(os.path.join(d, "split.json")))
     cmd = lambda txt, name: int((re.search(r"cmdstat_%s:calls=(\d+)" % name, txt) or [0, 0])[1])
@@ -106,7 +113,7 @@ def detail(d, out, background):
         "l2_hit_ratio": 1 - body_loads / l2_lookups if l2_lookups else None,
         "l2_definition": "1 - DB body loads / L2 lookups; L2 = Redis pointer+body, 30 s TTL; DB body loads = pg_stat_statements calls of the Product select by id (pje1_0)",
         "l2_lookups": l2_lookups, "db_body_loads": body_loads, "db_body_loads_raw_two_statements": raw_loads, "db_body_loads_background_excluded": bg,
-        "db_body_loads_background_source": background,
+        "db_body_loads_background_source": (background_source or background) if background else None,
         "quantity_note": "the stock quantity has only an L1 (1 s) and no L2: every L1 expiry reads SELECT stock, stock_mode FROM product (db_quantity_reads) regardless of the body cache",
         "db_quantity_reads": qty_reads, "db_quantity_reads_per_request": qty_reads / n if n else None,
         "redis_exists_baseline_per_10s": cmd(base, "exists"), "redis_exists_after": cmd(after, "exists"), "redis_get_after": cmd(after, "get"),
@@ -153,13 +160,46 @@ def pgcancel(d, out):
     print(json.dumps({k: res[k] for k in ("cancel_calls", "cancel_p95_ms", "pg_not_reached_ratio", "batch_cycles_run", "batch_cycles_skipped_open")}))
 
 
+def all_scenarios(root, out_dir):
+    """raw root 의 배치에서 네 JSON 을 만든다 - 없는 시나리오 폴더는 건너뛰고 한 줄 알린다"""
+    os.makedirs(out_dir, exist_ok=True)
+    p = lambda *x: os.path.join(root, *x)
+    if os.path.isdir(p("flash", "tiny")):
+        flash(p("flash"), os.path.join(out_dir, "result.json"))
+    else:
+        print("skipped result.json: no flash/tiny folder under %s" % root)
+    runs = []
+    for d in glob.glob(p("coupon-*", "coupon")):
+        runs.append((json.load(open(os.path.join(d, "k6-summary.json")))["rate"], d))
+    runs.sort()
+    background = None
+    if runs:
+        main_dir = runs[0][1]
+        others = [(os.path.basename(os.path.dirname(d))[len("coupon-"):], d) for _, d in runs[1:]]
+        coupon(main_dir, os.path.join(out_dir, "coupon.json"), others)
+        background = os.path.join(main_dir, "pgss.tsv")
+    else:
+        print("skipped coupon.json: no coupon-*/coupon folder under %s" % root)
+    if os.path.isdir(p("detail", "detail")):
+        bg = background if background and os.path.isfile(background) else None
+        detail(p("detail", "detail"), os.path.join(out_dir, "detail.json"), bg, os.path.relpath(bg, root) if bg else None)
+    else:
+        print("skipped detail.json: no detail/detail folder under %s" % root)
+    if os.path.isdir(p("pgcancel", "pgcancel")):
+        pgcancel(p("pgcancel", "pgcancel"), os.path.join(out_dir, "pg-cancel.json"))
+    else:
+        print("skipped pg-cancel.json: no pgcancel/pgcancel folder under %s" % root)
+
+
 def main(argv):
     if len(argv) < 4:
         print(__doc__)
         return 2
     sub, src, out = argv[1:4]
     rest = argv[4:]
-    if sub == "flash":
+    if sub == "all":
+        all_scenarios(src, out)
+    elif sub == "flash":
         flash(src, out)
     elif sub == "coupon":
         coupon(src, out, [tuple(x.split("=", 1)) for x in rest if x != "--other" and "=" in x])
