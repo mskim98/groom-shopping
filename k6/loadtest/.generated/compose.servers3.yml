@@ -1,8 +1,0 @@
-services:
-  nginx:
-    volumes:
-      - /Users/mskim/orca/workspaces/groom-shopping/r121-t1-measure/k6/loadtest/.generated/nginx.loadtest.3.conf:/etc/nginx/nginx.conf:ro
-    depends_on: !override
-      - backend1
-      - backend2
-      - backend3
