@@ -149,6 +149,18 @@ class DeriveFinalTest(unittest.TestCase):
         by_path = collect.collect_step(d, 300)["nginx_status_by_path"]
         self.assertEqual(by_path, {"/api/v1/order": {"200": 2}, "/api/v1/cart/add": {"503": 1}})
 
+    def test_tiny_폴더가_없어도_단계_폴더가_있으면_result_json_을_만들고_tiny_는_null(self):
+        root = tempfile.mkdtemp()
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        self.addCleanup(shutil.rmtree, out, True)
+        shutil.copytree(ROOT, os.path.join(root, "raw"))
+        shutil.rmtree(os.path.join(root, "raw", "flash", "tiny"))
+        run("all", os.path.join(root, "raw"), out)
+        res = jload(os.path.join(out, "result.json"))
+        self.assertIsNone(res["tiny"])
+        self.assertEqual(len(res["steps"]), len(self.j["result"]["steps"]))
+
     def test_같은_원시_폴더에서_두_번_만들면_같다(self):
         again = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, again, True)
