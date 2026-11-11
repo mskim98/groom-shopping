@@ -259,6 +259,18 @@ public class CouponIssueService {
         evictAfterCommit(couponIssueId, userId);
     }
 
+    /**
+     * 결제 취소 트랜잭션에 합류해 주문의 쿠폰을 되돌린다. 만료됐거나 사용 상태가 아니면 바꾸지 않고 취소는 그대로 진행한다
+     */
+    @Transactional
+    public void returnOnCancel(Long couponIssueId, Long userId) {
+        if (couponIssueRepository.returnIfUsed(couponIssueId, userId, LocalDateTime.now()) == 0) {
+            log.info("[COUPON_RETURN_SKIPPED] 만료되었거나 사용 상태가 아니라 되돌리지 않음 - couponIssueId: {}", couponIssueId);
+            return;
+        }
+        evictAfterCommit(couponIssueId, userId);
+    }
+
     private void evictAfterCommit(Long couponIssueId, Long userId) {
         Runnable evict = () -> {
             try {

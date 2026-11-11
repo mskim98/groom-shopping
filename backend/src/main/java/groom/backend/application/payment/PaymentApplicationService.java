@@ -692,6 +692,11 @@ public class PaymentApplicationService {
         order.changeStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
 
+        // 취소를 기록하는 같은 트랜잭션에서 쿠폰을 돌려준다 - 환불받고 쿠폰도 쓴 채로 남는 일이 없게 한다(만료된 쿠폰은 그대로 사용 상태)
+        if (order.getCouponId() != null) {
+            couponIssueService.returnOnCancel(order.getCouponId(), order.getUserId());
+        }
+
         // 재고 복구
         restoreProductStock(order, paymentId);
 

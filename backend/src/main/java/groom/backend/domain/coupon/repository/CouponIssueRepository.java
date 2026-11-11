@@ -51,4 +51,13 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
   @Query("UPDATE CouponIssue ci SET ci.isActive = false, ci.deletedAt = :now "
       + "WHERE ci.id = :id AND ci.userId = :userId AND ci.isActive = true AND ci.deletedAt > :now")
   int consumeIfUsable(@Param("id") Long id, @Param("userId") Long userId, @Param("now") LocalDateTime now);
+
+  // 결제 취소가 쿠폰을 한 문장으로 되돌린다 - 사용된 행(소유자 일치)만, 쿠폰 만료일이 아직 안 지났을 때만 활성으로 바꾼다
+  // 사용하면 deletedAt 이 사용 시각으로 덮이므로 만료일을 쿠폰 행에서 되살린다(발급기가 만료일 0시를 넣는 것과 같은 값)
+  // shortcut: 만료일 0시 규칙이 발급기와 같다고 가정, 발급기가 다른 만료 시각을 쓰게 되면 이 식도 함께 바꾼다
+  @Modifying(flushAutomatically = true)
+  @Query(value = "UPDATE coupon_issue ci SET is_active = true, deleted_at = c.expire_date::timestamp "
+      + "FROM coupon c WHERE c.id = ci.coupon_id AND ci.id = :id AND ci.user_id = :userId "
+      + "AND ci.is_active = false AND c.expire_date::timestamp > :now", nativeQuery = true)
+  int returnIfUsed(@Param("id") Long id, @Param("userId") Long userId, @Param("now") LocalDateTime now);
 }
