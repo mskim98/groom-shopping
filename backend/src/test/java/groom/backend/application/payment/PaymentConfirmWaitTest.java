@@ -29,7 +29,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 
 // confirm 이 Outbox 적재 뒤 Payment 상태를 다시 읽으며 DONE · FAILED 를 기다리는 동작을 본다
-// 컨슈머는 꺼 두고, 컨슈머가 하는 일(DONE · FAILED 기록)은 다른 스레드가 SQL 로 대신한다
+// 컨슈머는 꺼 두고, 컨슈머가 하는 일(DONE · FAILED 기록과 완료 신호)은 다른 스레드가 SQL 과 신호 기록으로 대신한다
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {
@@ -61,6 +61,8 @@ class PaymentConfirmWaitTest {
     private SpringDataPaymentRepository paymentRepository;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private ConfirmCompletionSignal completionSignal; // 컨슈머 대역이 컨슈머처럼 커밋 뒤에 세우는 완료 신호
 
     private PaymentFixture fixture;
     private UUID productId;
@@ -96,6 +98,8 @@ class PaymentConfirmWaitTest {
             long readyAt = System.nanoTime();
             sleep(FLIP_AFTER_MS);
             jdbc.update(sql, args);
+            // 진짜 컨슈머는 상태를 커밋한 뒤 Redis 완료 신호를 세운다(Ruling R121-2) - 대역도 같은 두 가지를 한다
+            completionSignal.complete(payment.getId());
             return readyAt;
         });
     }

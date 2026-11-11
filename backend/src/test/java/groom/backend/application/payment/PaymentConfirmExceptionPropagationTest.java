@@ -77,6 +77,11 @@ class PaymentConfirmExceptionPropagationTest {
     private StockLedgerRepository stockLedgerRepository;
     @Mock
     private FlashStockReservation flashStockReservation;
+    // 생성자 인자로 추가된 완료 신호 · 구간 타이머. 빠뜨리면 Mockito 가 null 을 넣어 확정 경로가 NPE 로 터진다
+    @Mock
+    private ConfirmCompletionSignal confirmCompletionSignal;
+    @Mock
+    private ConfirmStageTimers stageTimers;
     @Mock
     private ObjectMapper objectMapper;
     @Mock

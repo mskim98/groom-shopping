@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import groom.backend.infrastructure.resilience.TransactionBulkhead;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,7 @@ public class OrderApplicationService {
     // 4) 금액 계산 → 5) 쿠폰 할인 적용 → 6) 주문 저장 → 7) 결제(PENDING) 자동 생성
     // @Transactional : 위 단계 중 하나라도 실패하면 전부 롤백되어 어중간한 주문이 남지 않게 한다.
     @Transactional
+    @TransactionBulkhead
     public Order createOrder(Long userId, Long couponId) {
 
         // 사용자 장바구니의 상품 정보 조회하여 (productId, quantity) 리스트로 받기
@@ -155,6 +157,7 @@ public class OrderApplicationService {
     }
 
     // 주문 상세 조회
+    @TransactionBulkhead
     public Order getOrderById(UUID orderId, Long userId) {
         // 컨트롤러가 트랜잭션 밖에서 주문 항목을 읽으므로(open-in-view: false) fetch join 으로 항목까지 가져온다
         Order order = orderRepository.findByIdWithItems(orderId)

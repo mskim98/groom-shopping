@@ -1,13 +1,16 @@
 package groom.backend.infrastructure.kafka;
 
+import groom.backend.application.payment.ConfirmStageTimers;
 import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -22,11 +25,26 @@ import org.springframework.stereotype.Component;
 // 폴러가 죽어도 임대가 지난 뒤 다시 발행된다. 컨슈머가 outbox-id 헤더와 Payment 상태로 멱등 처리한다
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class PaymentEventPublisher {
 
     private final PaymentOutboxRepository outboxRepository;
     private final KafkaTemplate<String, String> paymentEventKafkaTemplate;
+    private final ConfirmStageTimers stageTimers; // 대기 · 발행 확인 구간 기록(payment.confirm.stage)
+
+    // 구간 기록 없이 만드는 시험용 생성자
+    public PaymentEventPublisher(PaymentOutboxRepository outboxRepository,
+                                 KafkaTemplate<String, String> paymentEventKafkaTemplate) {
+        this(outboxRepository, paymentEventKafkaTemplate, ConfirmStageTimers.noop());
+    }
+
+    @Autowired
+    public PaymentEventPublisher(PaymentOutboxRepository outboxRepository,
+                                 KafkaTemplate<String, String> paymentEventKafkaTemplate,
+                                 ConfirmStageTimers stageTimers) {
+        this.outboxRepository = outboxRepository;
+        this.paymentEventKafkaTemplate = paymentEventKafkaTemplate;
+        this.stageTimers = stageTimers;
+    }
 
     // send().get() 에 상한이 없으면 Kafka 장애 때 폴러가 영원히 멈추고 같은 스케줄러의 다른 작업도 밀린다
     // producer 의 delivery.timeout(35초)보다 약간 길게 둔다 - 그보다 먼저 끊으면 발행은 성사됐는데 PENDING 으로 남아 중복 발행한다
@@ -51,8 +69,14 @@ public class PaymentEventPublisher {
             return;
         }
 
+        LocalDateTime claimedAt = LocalDateTime.now();
         for (int i = 0; i < batch.size(); i++) {
             PaymentOutbox outbox = batch.get(i);
+            // 처음 발행하는 결제 승인 행만 잰다 - 재발행 행의 createdAt 은 처음 적재한 때라 대기 시간이 부풀려진다
+            if (outbox.getRepublishCount() == 0 && outbox.getTopic() == null && outbox.getCreatedAt() != null) {
+                stageTimers.record(ConfirmStageTimers.OUTBOX_WAIT_CLAIM,
+                        Duration.between(outbox.getCreatedAt(), claimedAt).toNanos());
+            }
             try {
                 // key = 결제 ID → 같은 결제 이벤트는 같은 파티션으로 라우팅(순서 보장)
                 // topic 이 비어 있으면 결제 완료 이벤트(payment-events), 있으면 그 토픽(예: GIVEN_UP DLQ)
@@ -63,7 +87,9 @@ public class PaymentEventPublisher {
                 record.headers().add("outbox-id", outbox.getId().toString().getBytes(StandardCharsets.UTF_8));
 
                 // 발행 결과를 확인(get)해 성공한 건만 PUBLISHED 로 표시
+                long sendStartedAt = System.nanoTime();
                 paymentEventKafkaTemplate.send(record).get(sendTimeoutMs, TimeUnit.MILLISECONDS);
+                stageTimers.record(ConfirmStageTimers.KAFKA_PUBLISH_ACK, System.nanoTime() - sendStartedAt);
             } catch (InterruptedException e) {
                 // 인터럽트는 플래그를 복원하고 즉시 중단
                 Thread.currentThread().interrupt();

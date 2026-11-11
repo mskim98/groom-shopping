@@ -82,6 +82,8 @@ public class PaymentApplicationService {
     private final ConditionalUpdateStockDecrementer stockDecrementer; // 플래시가 아닌 상품의 차감(조건부 UPDATE)
     private final StockLedgerRepository stockLedgerRepository; // 후처리가 원장에 판매가 있는 상품을 가려내는 데 쓴다
     private final FlashStockReservation flashStockReservation; // 플래시 상품 진입 예약 · TX1 원장 기록 · 실패 되돌림
+    private final ConfirmCompletionSignal confirmCompletionSignal; // 컨슈머가 커밋 뒤에 세우는 완료 신호 - confirm 이 DB 대신 읽는다
+    private final ConfirmStageTimers stageTimers; // 확정 구간별 시간(payment.confirm.stage)
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -146,10 +148,12 @@ public class PaymentApplicationService {
 
         // [2] Toss 승인 API 호출 (Idempotency-Key: paymentKey → 재시도해도 이중 결제 없음)
         TossPaymentResponse response;
+        long tossStartedAt = System.nanoTime();
         try {
             TossPaymentConfirmRequest request = new TossPaymentConfirmRequest(
                     paymentKey, orderId.toString(), amount);
             response = tossPaymentClient.confirmPayment(request, paymentKey);
+            stageTimers.record(ConfirmStageTimers.TOSS_CALL, System.nanoTime() - tossStartedAt);
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
@@ -180,7 +184,9 @@ public class PaymentApplicationService {
         // [3] READY 전이 + Outbox 적재 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
         // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
+            long readyStartedAt = System.nanoTime();
             boolean recorded = selfProvider.getObject().recordApprovedInTx(payment.getId(), response, reservedItems);
+            stageTimers.record(ConfirmStageTimers.READY_OUTBOX_COMMIT, System.nanoTime() - readyStartedAt);
             if (!recorded) {
                 // 먼저 온 확정 요청이 이미 READY + Outbox 를 남겼다 - 이 요청이 선점한 Redis 재고는 중복이라 돌려준다
                 log.info("[PAYMENT_IDEMPOTENT_HIT] Already recorded by earlier confirm - PaymentKey: {}", paymentKey);
@@ -232,32 +238,72 @@ public class PaymentApplicationService {
         return awaitResult(payment.getId());
     }
 
-    // Outbox 적재 뒤 Payment 상태를 poll-interval 간격으로 다시 읽어 DONE 이면 그 결제를, FAILED 면 컨슈머가 기록한 실패를
-    // 예외로, 상한을 넘기면 READY 결제를 돌려준다. 각 조회는 트랜잭션 밖(NOT_SUPPORTED)이라 매번 DB 의 최신 상태를 읽는다
+    // Outbox 적재 뒤 컨슈머가 끝내길 기다린다. poll-interval 간격으로 Redis 완료 신호만 읽고(DB 연결을 빌리지 않는다),
+    // 신호가 서거나 대기 상한이 지나면 Payment 를 DB 에서 한 번 읽어 DONE 이면 그 결제를, FAILED 면 컨슈머가 기록한 실패를 예외로,
+    // 아직 READY 면 READY 결제를 돌려준다. 답은 항상 그 마지막 DB 읽기가 정한다 - 신호가 유실돼도 늦을 뿐 202 로 틀리게 답하지 않는다
+    // Redis 를 읽지 못하면 그 시점부터 기존 방식(매 간격 DB 조회)으로 돌아간다. 각 조회는 트랜잭션 밖(NOT_SUPPORTED)이라 최신 상태를 읽는다
     private Payment awaitResult(UUID paymentId) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(confirmWaitTimeoutMs);
+        boolean signalUsable = true;
         while (true) {
-            Payment current = paymentRepository.findById(paymentId)
-                    .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
-            if (current.isAlreadyApproved()) {
-                return current;
-            }
-            if (current.getStatus() == PaymentStatus.FAILED) {
-                throw postProcessFailureOf(current);
-            }
             long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-            if (remainingMs <= 0) {
-                log.info("[PAYMENT_CONFIRM_WAIT_TIMEOUT] 대기 상한 초과, READY 로 응답 - PaymentId: {}, WaitMs: {}",
-                        paymentId, confirmWaitTimeoutMs);
-                return current;
+            Long completedAt = null;
+            if (signalUsable) {
+                try {
+                    completedAt = confirmCompletionSignal.completedAt(paymentId);
+                } catch (RuntimeException redisError) {
+                    signalUsable = false;
+                    log.warn("[PAYMENT_CONFIRM_SIGNAL_UNAVAILABLE] Redis 를 읽지 못해 DB 폴링으로 돌아감 - PaymentId: {}, Error: {}",
+                            paymentId, redisError.getMessage());
+                }
+            }
+            if (signalUsable) {
+                if (completedAt != null || remainingMs <= 0) {
+                    if (completedAt != null) {
+                        stageTimers.record(ConfirmStageTimers.COMMIT_TO_CONFIRM_SEEN,
+                                TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - completedAt));
+                    }
+                    return settle(paymentId, completedAt == null);
+                }
+            } else {
+                Payment current = paymentRepository.findById(paymentId)
+                        .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+                if (current.isAlreadyApproved()) {
+                    return current;
+                }
+                if (current.getStatus() == PaymentStatus.FAILED) {
+                    throw postProcessFailureOf(current);
+                }
+                if (remainingMs <= 0) {
+                    log.info("[PAYMENT_CONFIRM_WAIT_TIMEOUT] 대기 상한 초과, READY 로 응답 - PaymentId: {}, WaitMs: {}",
+                            paymentId, confirmWaitTimeoutMs);
+                    return current;
+                }
             }
             try {
                 Thread.sleep(Math.min(confirmPollIntervalMs, remainingMs));
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                return current;
+                return settle(paymentId, false);
             }
         }
+    }
+
+    // 대기를 끝내며 결제를 DB 에서 한 번 읽어 답을 정한다
+    private Payment settle(UUID paymentId, boolean timedOut) {
+        Payment current = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+        if (current.isAlreadyApproved()) {
+            return current;
+        }
+        if (current.getStatus() == PaymentStatus.FAILED) {
+            throw postProcessFailureOf(current);
+        }
+        if (timedOut) {
+            log.info("[PAYMENT_CONFIRM_WAIT_TIMEOUT] 대기 상한 초과, READY 로 응답 - PaymentId: {}, WaitMs: {}",
+                    paymentId, confirmWaitTimeoutMs);
+        }
+        return current;
     }
 
     // 컨슈머가 FAILED 로 남긴 failureCode 가 ErrorCode 이름이면 그 코드의 BusinessException 으로 복원한다(HTTP 상태 보존)
@@ -329,6 +375,7 @@ public class PaymentApplicationService {
     // NOT_SUPPORTED : 상태 확인과 실패 처리는 각자 짧은 트랜잭션이고, 후처리 트랜잭션은 매 시도마다 REQUIRES_NEW 로 새로 연다
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void applyApprovedEvent(PaymentApprovedEvent event) {
+        long receivedAt = System.nanoTime();
         Payment payment = paymentRepository.findById(event.paymentId()).orElse(null);
         if (payment == null || payment.getStatus() != PaymentStatus.READY) {
             log.info("[PAYMENT_APPROVED_SKIP] READY 가 아니라 건너뜀 - PaymentId: {}, Status: {}", event.paymentId(),
@@ -340,6 +387,7 @@ public class PaymentApplicationService {
             // 프록시 경유 호출이라야 @Transactional 경계가 새로 열린다
             selfProvider.getObject().applyApprovedPaymentInTx(event.orderId(), event.tossResponse(),
                     event.reservedItems() != null ? event.reservedItems() : List.of());
+            stageTimers.record(ConfirmStageTimers.CONSUMER_RECEIVE_TO_COMMIT, System.nanoTime() - receivedAt);
         } catch (Exception dbError) {
             handlePostProcessFailure(event, dbError);
         }
@@ -469,6 +517,8 @@ public class PaymentApplicationService {
                 checkoutJson
         );
         paymentRepository.save(payment);
+        // 기다리는 confirm 이 DB 를 읽지 않고도 알도록 커밋 뒤에 완료 신호를 세운다. 알림(아래)보다 먼저 등록해 알림이 느려도 신호는 먼저 선다
+        runAfterCommit("CONFIRM_SIGNAL", () -> confirmCompletionSignal.complete(payment.getId()));
 
         Order order = payment.getOrder();
         order.changeStatus(OrderStatus.CONFIRMED);
@@ -517,6 +567,8 @@ public class PaymentApplicationService {
                     p.fail(code, message);
                     p.attachPaymentKeyIfAbsent(paymentKey);
                     paymentRepository.save(p);
+                    // 컨슈머 실패 · 대사 · 확정 자신의 실패 모두 FAILED 커밋 뒤에 신호를 세워 기다리는 confirm 이 실패 코드를 바로 읽게 한다
+                    runAfterCommit("CONFIRM_SIGNAL", () -> confirmCompletionSignal.complete(paymentId));
                 } catch (IllegalStateException ignored) {
                     // 이미 종료 상태면 더 이상 전이하지 않음 (State Machine이 차단).
                 }

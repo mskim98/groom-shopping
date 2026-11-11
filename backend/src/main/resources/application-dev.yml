@@ -119,10 +119,11 @@ payment:
     max-republish: 2             # 이벤트 재발행 상한. ③④ 는 outbox 발행 뒤 stale 기준(5분)이 지나야 하므로 READY 5분 → 재발행 1 → 5분 → 재발행 2 → 5분 → 환불, 약 15분
   consumer:
     circuit-check-ms: 1000       # db-ledger 회로를 보고 결제 컨슈머를 멈추거나 재개하는 확인 주기. 길면 DB 가 돌아와도 그만큼 늦게 재개하고, 짧으면 확인마다 Redis 공유 키 조회가 늘어난다
-  # 결제 확정 요청이 컨슈머의 후처리 결과를 기다리는 상한과 상태 재조회 간격
+  # 결제 확정 요청이 컨슈머의 후처리 결과를 기다리는 상한과 확인 간격
   confirm:
     wait-timeout-ms: 10000       # 넘으면 READY 로 202 응답 - 클라이언트가 GET /v1/payment/{id} 로 확인. Toss 응답 한도(60초)보다 짧아야 한다
-    poll-interval-ms: 200        # DB 재조회 간격. 이보다 짧으면 대기 중인 요청마다 조회가 늘고 길면 응답이 그만큼 늦다
+    poll-interval-ms: 200        # Redis 완료 신호 확인 간격(Redis 를 못 읽으면 DB 재조회 간격). 이보다 짧으면 대기 중인 요청마다 Redis 조회가 늘고 길면 응답이 그만큼 늦다
+    signal-ttl-ms: 30000         # 컨슈머가 커밋 뒤 세우는 완료 신호의 수명. 대기 상한(10초)보다 짧으면 신호가 사라져 상한까지 기다리고, 너무 길면 끝난 결제의 키가 Redis 에 그만큼 남는다
   # 보상 재시도 배치 (PaymentCompensationBatchProperties). 결정 C - 취소는 배치가 유일 경로
   compensation:
     retry-delay-ms: 30000        # 배치 주기. toss-cancel OPEN 45초보다 짧아야 강제 OPEN 뒤 다음 회차가 쉰다
@@ -317,6 +318,12 @@ resilience4j:
         max-concurrent-calls: 50
         # 0: 자리가 없으면 기다리지 않고 바로 거절한다. 양수로 두면 Toss 가 느릴 때 그 시간만큼 요청 스레드가 묶여 승인 응답 한도(60초) 안에 거절을 못 돌려준다
         max-wait-duration: 0
+      # 장바구니 · 주문 요청이 DB 트랜잭션을 열기 전에 잡는 허용(인스턴스당) - 넘으면 대기 상한 뒤 TRANSACTION_BULKHEAD_FULL(503) 로 거절한다
+      # 40: 풀 50 에서 REQUIRES_NEW(READY + outbox · 승인 후처리) · 컨슈머 · 폴러가 쓸 10 을 남긴 값. 크면 그 연결이 풀 대기에 밀려 승인 후처리가 늦고, 작으면 정상 부하에서도 503 이 나온다
+      transaction:
+        max-concurrent-calls: 40
+        # 200ms: 짧으면 순간 몰림에도 503 이 나오고, 길면 요청 스레드가 그만큼 묶여 응답이 늘어진다(트랜잭션 하나는 보통 수십 ms)
+        max-wait-duration: 200ms
 
   # 플래시 세일 결제 진입 속도(인스턴스당) - 넘으면 Redis 를 부르지 않고 FLASH_ENTRY_LIMITED(429) 로 거절한다
   # 2000/초: Redis 스크립트 1건이 1ms 안팎이라 한 인스턴스가 감당하는 상한. 크면 Redis 가 몰리고, 작으면 정상 트래픽도 429 를 받는다
