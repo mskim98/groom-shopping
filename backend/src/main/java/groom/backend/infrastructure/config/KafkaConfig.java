@@ -312,7 +312,7 @@ public class KafkaConfig {
         return monitoredConsumerFactory(configProps);
     }
 
-    // concurrency 4 : 인스턴스당 컨슈머 스레드 수. payment-events 파티션 12개를 인스턴스 3대가 4개씩 나눠 받는다. 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
+    // concurrency 6 : 인스턴스당 컨슈머 스레드 수. payment-events 파티션 12개를 인스턴스 2대 x 6 = 스레드 12개가 하나씩 맡는다(3대면 스레드 6개가 놀고, 4 였을 때는 2대에서 스레드 4개가 파티션 2개씩 받았다). 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
     // 비즈니스 실패는 서비스가 처리하고 정상 반환하므로 여기 오류 처리기는 DB 장애·파싱 실패만 본다:
     // 1s · 2s · 4s · 8s · 16s 로 5회 재시도한 뒤 payment-events-dlq 로 보낸다
     @Bean
@@ -320,7 +320,7 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(paymentApprovedConsumerFactory());
-        factory.setConcurrency(4);
+        factory.setConcurrency(6);
         factory.setAutoStartup(paymentConsumerAutoStartup);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
 
@@ -339,7 +339,7 @@ public class KafkaConfig {
         return factory;
     }
 
-    // 파티션 12개 : 인스턴스 3대 x 컨슈머 concurrency 4 가 각자 한 파티션을 맡는다
+    // 파티션 12개 : 인스턴스 2대 x 컨슈머 concurrency 6 이 각자 한 파티션을 맡는다
     // 파티션은 줄일 수 없다(줄이려면 토픽 삭제) - 인스턴스가 늘면 12 를 넘겨 다시 정해야 한다
     @Bean
     public NewTopic paymentEventsTopic() {
