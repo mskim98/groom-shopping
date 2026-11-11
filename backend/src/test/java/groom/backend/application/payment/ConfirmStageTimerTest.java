@@ -56,7 +56,10 @@ class ConfirmStageTimerTest {
             "outbox_wait_claim",          // outbox 행이 폴러가 집어 가기까지 기다린 시간
             "kafka_publish_ack",          // Kafka 발행 확인
             "consumer_receive_to_commit", // 컨슈머가 받은 뒤 승인 커밋까지
-            "commit_to_confirm_seen");    // 승인 커밋 뒤 기다리던 확정이 그것을 보기까지
+            "commit_to_confirm_seen",     // 승인 커밋 뒤 기다리던 확정이 그것을 보기까지
+            "confirm_entry_to_toss",      // confirmPayment 진입 → Toss 호출 직전
+            "topic_wait",                 // Kafka 레코드 발행 시각 → 리스너 진입
+            "confirm_total");             // confirmPayment 진입 → 끝(컨슈머 대기 포함)
 
     @MockBean
     private StockWarmUpRunner stockWarmUpRunner; // 1M 시드 워밍업 무력화
@@ -103,10 +106,19 @@ class ConfirmStageTimerTest {
         return timer == null ? 0 : timer.count();
     }
 
+    private double sumMsOf(String stage) {
+        Timer timer = registry.find(TIMER).tag("stage", stage).timer();
+        return timer == null ? 0 : timer.totalTime(TimeUnit.MILLISECONDS);
+    }
+
     @Test
-    @DisplayName("컨슈머 경로로 확정 한 번이 끝나면 여섯 구간 모두 타이머 count 가 늘고 prometheus 에 나온다")
-    void 구간타이머_확정한번_여섯구간_모두_count가_늘고_prometheus에_나온다() {
+    @DisplayName("컨슈머 경로로 확정 한 번이 끝나면 아홉 구간 모두 타이머 count 가 늘고 prometheus 에 나온다")
+    void 구간타이머_확정한번_아홉구간_모두_count가_늘고_prometheus에_나온다() {
         long[] before = STAGES.stream().mapToLong(this::countOf).toArray();
+        double entryBefore = sumMsOf("confirm_entry_to_toss");
+        double tossBefore = sumMsOf("toss_call");
+        double readyBefore = sumMsOf("ready_outbox_commit");
+        double totalBefore = sumMsOf("confirm_total");
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
 
@@ -119,6 +131,10 @@ class ConfirmStageTimerTest {
                 assertThat(countOf(STAGES.get(i))).as("구간 " + STAGES.get(i)).isGreaterThan(before[i]);
             }
         });
+        // confirm_total 은 컨슈머 대기 뒤에 기록되므로 앞 세 구간의 합 이상이다(대기 전에 기록하면 이 합보다 작다)
+        double frontSum = (sumMsOf("confirm_entry_to_toss") - entryBefore)
+                + (sumMsOf("toss_call") - tossBefore) + (sumMsOf("ready_outbox_commit") - readyBefore);
+        assertThat(sumMsOf("confirm_total") - totalBefore).as("confirm_total 합(ms)").isGreaterThanOrEqualTo(frontSum);
         String scrape = prometheus.scrape();
         for (String stage : STAGES) {
             assertThat(scrape.lines()
