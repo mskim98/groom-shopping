@@ -132,14 +132,14 @@ public class RedisRefreshTokenService {
         redisRefreshTokenRepository.deleteByToken(token, email);
     }
 
-    /**
-     * Refresh Token 조회
-     */
     // 로그에서 같은 토큰을 서로 맞춰 보기 위한 식별자 - 원문 복원은 불가
     private static String shortHash(String token) {
         return String.format("%08x", token.hashCode());
     }
 
+    /**
+     * Refresh Token 조회
+     */
     public Optional<RefreshToken> getRefreshToken(String token) {
         return redisRefreshTokenRepository.getRefreshToken(token);
     }

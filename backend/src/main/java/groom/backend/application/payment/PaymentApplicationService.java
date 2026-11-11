@@ -114,14 +114,8 @@ public class PaymentApplicationService {
     // propagation = NOT_SUPPORTED : 클래스 기본값 @Transactional(readOnly=true) 를 메서드 레벨에서 덮어써
     // 이 메서드를 '비트랜잭션'으로 실행한다. 이렇게 해야 ① Toss API 호출 · 결과 대기 동안 커넥션을 점유하지 않고
     // ② 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에 합류(REQUIRED)해 쓰기가 유실되는 일을 막는다.
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
-        return confirmPayment(null, paymentKey, orderId, amount);
-    }
-
     /**
-     * 결제 승인 - 호출자 검사 포함. {@code callerUserId} 가 결제 주인이 아니면 Toss 를 부르기 전에 거절한다.
-     * null 이면 검사를 건너뛴다(HTTP 경로는 항상 사용자 id 를 넘긴다 - 컨트롤러는 이 메서드만 부른다)
+     * 결제 승인 - 호출자 검사 포함. {@code callerUserId} 가 결제 주인이 아니면(null 포함) Toss 를 부르기 전에 거절한다
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(Long callerUserId, String paymentKey, UUID orderId, Integer amount) {
@@ -727,9 +721,9 @@ public class PaymentApplicationService {
         return payment;
     }
 
-    // 결제 주인이 아니면 ACCESS_DENIED(403). callerUserId 가 null 이면 호출자 검사를 하지 않는 내부 호출이다
+    // 결제 주인이 아니면 ACCESS_DENIED(403). null 호출자도 거절한다 - 호출자가 id 를 빠뜨려 검사가 꺼지는 일을 막는다
     private void requireOwner(Long callerUserId, Payment payment) {
-        if (callerUserId != null && !callerUserId.equals(payment.getUserId())) {
+        if (callerUserId == null || !callerUserId.equals(payment.getUserId())) {
             log.warn("[PAYMENT_OWNER_MISMATCH] PaymentId: {}, CallerUserId: {}", payment.getId(), callerUserId);
             throw new BusinessException(ErrorCode.ACCESS_DENIED);
         }
