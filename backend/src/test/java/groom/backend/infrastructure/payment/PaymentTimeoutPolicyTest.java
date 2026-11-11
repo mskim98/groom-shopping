@@ -50,9 +50,9 @@ class PaymentTimeoutPolicyTest {
     }
 
     @Test
-    @DisplayName("결제 outbox 폴링 주기는 200ms다")
-    void 결제_outbox_폴링_주기는_200ms다() {
-        assertThat(number("payment", "outbox", "poll-delay-ms")).isEqualTo(200L);
+    @DisplayName("결제 outbox 폴링 주기는 50ms다")
+    void 결제_outbox_폴링_주기는_50ms다() {
+        assertThat(number("payment", "outbox", "poll-delay-ms")).isEqualTo(50L);
     }
 
     @Test

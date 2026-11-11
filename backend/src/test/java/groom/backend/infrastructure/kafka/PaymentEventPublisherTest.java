@@ -77,9 +77,9 @@ class PaymentEventPublisherTest {
     }
 
     @Test
-    void publishPending_폴링_주기는_payment_outbox_poll_delay_ms_설정을_200ms_기본값으로_읽는다() throws Exception {
+    void publishPending_폴링_주기는_payment_outbox_poll_delay_ms_설정을_50ms_기본값으로_읽는다() throws Exception {
         Scheduled scheduled = PaymentEventPublisher.class.getMethod("publishPending").getAnnotation(Scheduled.class);
 
-        assertThat(scheduled.fixedDelayString()).isEqualTo("${payment.outbox.poll-delay-ms:200}");
+        assertThat(scheduled.fixedDelayString()).isEqualTo("${payment.outbox.poll-delay-ms:50}");
     }
 }
