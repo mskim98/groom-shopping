@@ -15,6 +15,8 @@ x-loadtest-env: &loadtest-env
   SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD: ${LEAK_DETECTION_MS:-0}
   # 요청 스레드를 가상(기본) 대신 플랫폼 스레드로 바꾸는 손잡이 - 가상 스레드는 SIGQUIT 스레드 덤프에 나오지 않는다. 호스트 환경 변수 SPRING_THREADS_VIRTUAL_ENABLED=false 로 켠다
   SPRING_THREADS_VIRTUAL_ENABLED: ${SPRING_THREADS_VIRTUAL_ENABLED:-true}
+  # 서버당 Hikari 풀 크기 - 기본 50 은 루트 compose 의 값 그대로이고, 풀 크기 비교 측정(호스트 환경 변수 HIKARI_POOL=25)에만 바꾼다
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_POOL:-50}
 
 services:
   wiremock:
