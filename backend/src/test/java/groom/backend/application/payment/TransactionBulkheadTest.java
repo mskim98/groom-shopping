@@ -60,8 +60,8 @@ import org.springframework.transaction.annotation.Transactional;
         "payment.confirm.poll-interval-ms=50",
         "spring.datasource.hikari.maximum-pool-size=5",
         "spring.datasource.hikari.connection-timeout=1000",
-        "transaction.bulkhead.permits=4",
-        "transaction.bulkhead.acquire-timeout-ms=200"
+        "resilience4j.bulkhead.instances.transaction.max-concurrent-calls=4",
+        "resilience4j.bulkhead.instances.transaction.max-wait-duration=200ms"
 })
 @DisplayName("트랜잭션 격벽(장바구니 · 주문)")
 class TransactionBulkheadTest {
