@@ -247,7 +247,7 @@ class TransactionBulkheadTest {
     }
 
     @Test
-    @DisplayName("장바구니 · 주문 요청 진입점에는 격벽이 붙고, 승인 후처리가 부르는 clearOrderedItems 에는 붙지 않는다")
+    @DisplayName("장바구니 · 주문 요청 진입점에는 격벽이 붙고, 결제 흐름에서 더는 부르지 않는 clearOrderedItems 에는 붙지 않는다")
     void 격벽_진입점에만_붙고_후처리용_메서드에는_안붙는다() throws Exception {
         for (String name : List.of("addToCart", "getCartItems", "removeCartItems", "increaseQuantity", "decreaseQuantity")) {
             assertThat(methodNamed(CartApplicationService.class, name).isAnnotationPresent(TransactionBulkhead.class))
@@ -258,7 +258,7 @@ class TransactionBulkheadTest {
                     .as("OrderApplicationService." + name).isTrue();
         }
         assertThat(methodNamed(CartApplicationService.class, "clearOrderedItems").isAnnotationPresent(TransactionBulkhead.class))
-                .as("승인 트랜잭션 안에서 불리는 메서드는 거절되면 안 된다").isFalse();
+                .as("결제 흐름에서 부르지 않는 메서드이고, 나중에 별도 API 가 불러도 진입점이 아닌 쪽에 둔다").isFalse();
     }
 
     private static Method methodNamed(Class<?> type, String name) {

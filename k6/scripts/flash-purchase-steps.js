@@ -195,7 +195,7 @@ export default function (data) {
         JSON.stringify({paymentKey, orderId: order.json('orderId'), amount: order.json('totalAmount')}),
         {headers, tags: {name: 'confirm'}, responseType: 'none'});
     record('confirm', confirm, hold);
-    // 200 은 서버가 비동기로 장바구니를 비운다 - 끝났는지는 다음 반복 시작에 조회로 확인한다. 202(컨슈머 대기 초과)나 실패는 서버가 비우지 않으므로 직접 뺀다
+    // 서버는 승인(200) 뒤에도 장바구니를 비우지 않는다 - 다음 반복 시작에 장바구니를 읽어 남은 항목을 DELETE /cart/remove 로 뺀다. 202(컨슈머 대기 초과)나 실패는 바로 뺀다
     cartKnownEmpty = confirm.status === 200 ? false : removeItem(headers, productId);
 }
 

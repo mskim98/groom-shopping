@@ -2,7 +2,6 @@ package groom.backend.application.payment;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import groom.backend.application.cart.CartApplicationService;
 import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ConditionalUpdateStockDecrementer;
@@ -76,7 +75,6 @@ public class PaymentApplicationService {
     private final RaffleTicketApplicationService raffleTicketApplicationService;
     private final RaffleTicketAllocationService raffleTicketAllocationService;
     private final PaymentNotificationService paymentNotificationService;
-    private final CartApplicationService cartApplicationService; // 승인 트랜잭션이 주문한 수량을 장바구니에서 뺀다
     private final PaymentCompensationService paymentCompensationService; // 결제 후 실패 시 자동 환불
     private final PaymentOutboxRepository paymentOutboxRepository; // 결제 승인(PaymentApproved) 이벤트 Outbox 적재
     private final ProductStockService productStockService; // 취소 복원(increase) 경로 전용 - 낙관적 락 + 재시도
@@ -455,13 +453,6 @@ public class PaymentApplicationService {
         return flashStockReservation.reserve(paymentId, order.getOrderItems());
     }
 
-    // 주문 항목을 장바구니에서 뺄 평범한 값으로 바꾼다. 트랜잭션 안에서 불러야 한다(order 의 지연 로딩 컬렉션을 읽는다)
-    private List<CartApplicationService.CartItemToRemove> cartItemsOf(Order order) {
-        return order.getOrderItems().stream()
-                .map(item -> new CartApplicationService.CartItemToRemove(item.getProductId(), item.getQuantity()))
-                .toList();
-    }
-
     // 트랜잭션이 있으면 커밋 뒤에, 없으면 바로 실행한다. 롤백된 후처리가 알림을 남기지 않게 한다
     // 커밋 뒤 작업의 실패는 이미 커밋된 결제를 되돌릴 수 없으므로 삼키고 로그만 남긴다
     private void runAfterCommit(String name, Runnable task) {
@@ -552,9 +543,6 @@ public class PaymentApplicationService {
         List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order, payment.getId());
         processTicketProducts(order);
 
-        // 장바구니 비우기는 결제 DONE 과 같은 커밋에 든다 - 커밋 뒤 비동기로 미루면 DONE 응답이 먼저 나가 다음 주문이 옛 항목을 집어 간다
-        cartApplicationService.clearOrderedItems(order.getUserId(), cartItemsOf(order));
-
         // 성공 로그 · 알림은 커밋 뒤에만 나간다. 본문에서 바로 부르면 R9 처럼 커밋이 실패한 200건에도 성공 로그와 알림이 나간다
         // 커밋 뒤 콜백은 트랜잭션도 영속성 컨텍스트도 없다 - 필요한 값(사용자 id · 알림 대상)을 지금 평범한 값으로 만들어 넘긴다
         // order 엔티티를 넘기면 지연 로딩 필드를 읽는 순간 LazyInitializationException 이다
@@ -643,9 +631,6 @@ public class PaymentApplicationService {
         // 차감 후 재고량을 함께 전달하여 정확한 값이 알림에 표시되도록 함
         // 주문한 사용자는 알림에서 제외
         paymentNotificationService.sendStockReducedNotifications(stockReductions, order.getUserId());
-
-        // 장바구니 비우기는 이 @Transactional 안에서 한다 - 승인 후처리와 같은 규칙이다
-        cartApplicationService.clearOrderedItems(order.getUserId(), cartItemsOf(order));
 
         return payment;
     }
