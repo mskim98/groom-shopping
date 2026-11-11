@@ -83,6 +83,7 @@ public class PaymentApplicationService {
     private final StockLedgerRepository stockLedgerRepository; // 후처리가 원장에 판매가 있는 상품을 가려내는 데 쓴다
     private final FlashStockReservation flashStockReservation; // 플래시 상품 진입 예약 · TX1 원장 기록 · 실패 되돌림
     private final ConfirmCompletionSignal confirmCompletionSignal; // 컨슈머가 커밋 뒤에 세우는 완료 신호 - confirm 이 DB 대신 읽는다
+    private final ConfirmStageTimers stageTimers; // 확정 구간별 시간(payment.confirm.stage)
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -147,10 +148,12 @@ public class PaymentApplicationService {
 
         // [2] Toss 승인 API 호출 (Idempotency-Key: paymentKey → 재시도해도 이중 결제 없음)
         TossPaymentResponse response;
+        long tossStartedAt = System.nanoTime();
         try {
             TossPaymentConfirmRequest request = new TossPaymentConfirmRequest(
                     paymentKey, orderId.toString(), amount);
             response = tossPaymentClient.confirmPayment(request, paymentKey);
+            stageTimers.record(ConfirmStageTimers.TOSS_CALL, System.nanoTime() - tossStartedAt);
             log.info("[PAYMENT_CONFIRM] Toss API response - PaymentKey: {}, Status: {}",
                     response.getPaymentKey(), response.getStatus());
         } catch (Exception e) {
@@ -181,7 +184,9 @@ public class PaymentApplicationService {
         // [3] READY 전이 + Outbox 적재 트랜잭션 - 실패하면 롤백되고 보상 트랜잭션이 실행
         // 프록시 경유 호출이라야 @Transactional 경계가 적용된다(자기호출 우회).
         try {
+            long readyStartedAt = System.nanoTime();
             boolean recorded = selfProvider.getObject().recordApprovedInTx(payment.getId(), response, reservedItems);
+            stageTimers.record(ConfirmStageTimers.READY_OUTBOX_COMMIT, System.nanoTime() - readyStartedAt);
             if (!recorded) {
                 // 먼저 온 확정 요청이 이미 READY + Outbox 를 남겼다 - 이 요청이 선점한 Redis 재고는 중복이라 돌려준다
                 log.info("[PAYMENT_IDEMPOTENT_HIT] Already recorded by earlier confirm - PaymentKey: {}", paymentKey);
@@ -255,6 +260,10 @@ public class PaymentApplicationService {
             }
             if (signalUsable) {
                 if (completedAt != null || remainingMs <= 0) {
+                    if (completedAt != null) {
+                        stageTimers.record(ConfirmStageTimers.COMMIT_TO_CONFIRM_SEEN,
+                                TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - completedAt));
+                    }
                     return settle(paymentId, completedAt == null);
                 }
             } else {
@@ -367,6 +376,7 @@ public class PaymentApplicationService {
     // NOT_SUPPORTED : 상태 확인과 실패 처리는 각자 짧은 트랜잭션이고, 후처리 트랜잭션은 매 시도마다 REQUIRES_NEW 로 새로 연다
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void applyApprovedEvent(PaymentApprovedEvent event) {
+        long receivedAt = System.nanoTime();
         Payment payment = paymentRepository.findById(event.paymentId()).orElse(null);
         if (payment == null || payment.getStatus() != PaymentStatus.READY) {
             log.info("[PAYMENT_APPROVED_SKIP] READY 가 아니라 건너뜀 - PaymentId: {}, Status: {}", event.paymentId(),
@@ -378,6 +388,7 @@ public class PaymentApplicationService {
             // 프록시 경유 호출이라야 @Transactional 경계가 새로 열린다
             selfProvider.getObject().applyApprovedPaymentInTx(event.orderId(), event.tossResponse(),
                     event.reservedItems() != null ? event.reservedItems() : List.of());
+            stageTimers.record(ConfirmStageTimers.CONSUMER_RECEIVE_TO_COMMIT, System.nanoTime() - receivedAt);
         } catch (Exception dbError) {
             handlePostProcessFailure(event, dbError);
         }
