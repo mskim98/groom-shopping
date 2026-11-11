@@ -8,6 +8,7 @@
 #   app                       백엔드 이미지 빌드 후 SERVERS 대의 백엔드 · nginx 를 띄우고 건강 UP 을 기다린다
 #   tiny <out-dir>            초당 50 요청 10 초 + 램프 2 초 (<out-dir>/tiny)
 #   step <rps> <out-dir>      초당 <rps> 요청 램프 10 초 + 유지 30 초 (<out-dir>/step-<rps>)
+#                             결제 전용: K6_SCRIPT=k6/scripts/payment-only-steps.js K6_PREPARE_SCRIPT=k6/scripts/payment-only-prepare.js 를 붙이면 <rps> 는 초당 확정 요청 수이고 주문은 측정 창 밖에서 미리 만든다
 #   collect <out-dir> <result.json>   단계 폴더를 result.json 한 개로 모은다(collect.py)
 #   down                      스택의 컨테이너를 멈추고 지운다 - 볼륨은 지우지 않는다
 # tiny · step 은 <out-dir> 자체에 진단 파일도 쓴다(같은 <out-dir> 로 두 단계를 돌리면 뒤의 단계가 덮어쓴다): pg-activity.tsv(pg_stat_activity 1 초 표본) ·
@@ -211,6 +212,12 @@ db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY
 run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출력 폴더(진단 파일이 가는 곳)
   local name="$1" rps="$2" vus="$3" dir="$4" out="$5"
   mkdir -p "$dir"
+  # 결제 전용 단계: K6_PREPARE_SCRIPT 가 램프 + 유지 동안 확정할 주문(목표 요청률 x (램프/2 + 유지) 의 1.1 배 + 20)을 측정 창 밖에서 미리 만든다
+  if [ -n "${K6_PREPARE_SCRIPT:-}" ]; then
+    k6 run -q --no-usage-report -e ORDERS_COUNT="$(( rps * (RAMP_S + 2 * HOLD_S) * 11 / 20 + 20 ))" -e ORDERS_FILE="$dir/payonly-orders.json" \
+      -e BASE_URL=http://localhost/api/v1 "$K6_PREPARE_SCRIPT" > "$dir/prepare.log" 2>&1 || { echo "prepare failed" >&2; tail -5 "$dir/prepare.log" >&2; return 1; }
+    tail -1 "$dir/prepare.log"
+  fi
   local before_lines start end
   # 단계 전에 랙이 남아 있으면 앞 단계의 일이 섞인다
   echo "lag_wait_before_s=$(wait_lag_zero)" > "$dir/wait.txt"
@@ -246,8 +253,8 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   # 종료 코드는 임계값 실패 등 k6 자체 판정이다 - 측정값은 요약 파일에서 읽으므로 여기서 멈추지 않는다
   k6 run -q --no-usage-report \
     -e TARGET_RPS="$rps" -e RAMP_S="$RAMP_S" -e HOLD_S="$HOLD_S" -e MAX_VUS="$vus" \
-    -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$dir/k6-summary.json" \
-    k6/scripts/flash-purchase-steps.js > "$dir/k6.log" 2>&1 &
+    -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$dir/k6-summary.json" -e ORDERS_FILE="$dir/payonly-orders.json" \
+    "${K6_SCRIPT:-k6/scripts/flash-purchase-steps.js}" > "$dir/k6.log" 2>&1 &
   local kpid=$!
   sample_k6_cpu "$dir" "$kpid" & local p4=$!
   wait "$kpid" || echo "k6 exit $?" >> "$dir/k6.log"
