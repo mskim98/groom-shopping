@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import groom.backend.application.payment.ConfirmStageTimers;
 import groom.backend.domain.payment.model.PaymentOutbox;
 import groom.backend.domain.payment.repository.PaymentOutboxRepository;
 import java.util.List;
@@ -30,6 +31,9 @@ class PaymentEventPublisherTest {
     private PaymentOutboxRepository outboxRepository;
     @Mock
     private KafkaTemplate<String, String> paymentEventKafkaTemplate;
+    // 발행기가 생성자로 받는 확정 구간 기록기 - 비워 두면 @InjectMocks 가 null 을 넣어 발행 회차가 NPE 로 멈춘다
+    @Mock
+    private ConfirmStageTimers stageTimers;
     @InjectMocks
     private PaymentEventPublisher publisher;
 
