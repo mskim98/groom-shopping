@@ -273,7 +273,7 @@ public class PaymentApplicationService {
                 }
             }
             try {
-                Thread.sleep(Math.max(1, Math.min(confirmPollIntervalMs, remainingMs)));
+                Thread.sleep(Math.min(confirmPollIntervalMs, remainingMs));
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return settle(paymentId, false);
