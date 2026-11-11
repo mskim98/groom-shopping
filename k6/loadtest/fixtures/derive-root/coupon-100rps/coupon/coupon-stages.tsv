@@ -1,0 +1,6 @@
+2026-11-11T00:00:40Z	backend1	coupon_stage_seconds_count{stage="accept_lua"} 1500.0
+2026-11-11T00:00:40Z	backend1	coupon_stage_seconds_sum{stage="accept_lua"} 3.0
+2026-11-11T00:00:40Z	backend2	coupon_stage_seconds_count{stage="accept_lua"} 1500.0
+2026-11-11T00:00:40Z	backend2	coupon_stage_seconds_sum{stage="accept_lua"} 6.0
+2026-11-11T00:00:40Z	backend2	coupon_stage_seconds_count{stage="status_redis_read"} 100.0
+2026-11-11T00:00:40Z	backend2	coupon_stage_seconds_sum{stage="status_redis_read"} 0.5

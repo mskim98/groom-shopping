@@ -1,0 +1,2 @@
+2026-11-11T00:00:00Z	backend1	coupon_stage_seconds_count{stage="accept_lua"} 0.0
+2026-11-11T00:00:00Z	backend1	coupon_stage_seconds_sum{stage="accept_lua"} 0.0

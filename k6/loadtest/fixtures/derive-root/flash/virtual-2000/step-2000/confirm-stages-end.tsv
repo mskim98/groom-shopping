@@ -1,0 +1,6 @@
+2026-11-11T00:00:40Z	backend1	payment_confirm_stage_seconds_count{stage="toss_call"} 110.0
+2026-11-11T00:00:40Z	backend1	payment_confirm_stage_seconds_sum{stage="toss_call"} 21.0
+2026-11-11T00:00:40Z	backend1	payment_confirm_stage_seconds_count{stage="consumer_receive_to_commit"} 58.0
+2026-11-11T00:00:40Z	backend1	payment_confirm_stage_seconds_sum{stage="consumer_receive_to_commit"} 5.8
+2026-11-11T00:00:40Z	backend2	payment_confirm_stage_seconds_count{stage="toss_call"} 5.0
+2026-11-11T00:00:40Z	backend2	payment_confirm_stage_seconds_sum{stage="toss_call"} 0.5

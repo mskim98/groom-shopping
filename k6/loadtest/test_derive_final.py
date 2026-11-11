@@ -116,6 +116,39 @@ class DeriveFinalTest(unittest.TestCase):
         self.assertEqual((p["cancel_calls"], p["cancel_p95_ms"], p["batch_cycles_run"], p["batch_cycles_skipped_open"], p["fault_window_s"]), (2, 314, 1, 1, 180))
         self.assertEqual(p["pg_not_reached_ratio"], 0.5)
 
+    def test_확정_구간_타이머는_유지_구간_시작과_끝_표본의_차이를_백엔드_구간별로_쓴다(self):
+        cs = self.j["result"]["steps"][0]["confirm_stages"]
+        self.assertEqual(cs["backend1"]["toss_call"], {"count": 100, "sum_s": 20.0, "mean_ms": 200.0})
+        self.assertEqual(cs["backend1"]["consumer_receive_to_commit"], {"count": 50, "sum_s": 5.0, "mean_ms": 100.0})
+        # 시작 표본에 없는 구간은 0 에서 센다
+        self.assertEqual(cs["backend2"]["toss_call"]["count"], 5)
+
+    def test_확정_구간_파일이_없는_단계는_빈_dict(self):
+        self.assertEqual(self.j["result"]["tiny"]["confirm_stages"], {})
+
+    def test_쿠폰_단계_타이머와_느린_Redis_줄이_coupon_json_에_든다(self):
+        c = self.j["coupon"]
+        self.assertEqual(c["coupon_stages"]["backend1"]["accept_lua"], {"count": 1500, "sum_s": 3.0, "mean_ms": 2.0})
+        self.assertEqual(c["coupon_stages"]["backend2"]["status_redis_read"]["count"], 100)
+        self.assertEqual(c["redis_slow_lines"], {"backend1": 2, "backend2": 0})
+        self.assertEqual(c["redis_slow_suppressed"], {"backend1": 4, "backend2": 0})
+
+    def test_쿠폰_파일이_없는_실행은_coupon_stages_가_빈_dict_이고_줄_수는_빈_dict(self):
+        o = self.j["coupon"]["other_rates"]["500rps"]
+        self.assertEqual((o["coupon_stages"], o["redis_slow_lines"]), ({}, {}))
+
+    def test_nginx_상태는_경로별로도_센다(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        d = os.path.join(tmp, "step-300")
+        shutil.copytree(os.path.join(ROOT, "flash", "virtual-2000", "step-2000"), d)
+        with open(os.path.join(d, "nginx.log"), "a") as f:
+            f.write("2026-11-11T00:00:02+00:00 POST /api/v1/cart/add 503 0.201 10.0.0.1:8080 0.201\n")
+        sys.path.insert(0, HERE)
+        import collect
+        by_path = collect.collect_step(d, 300)["nginx_status_by_path"]
+        self.assertEqual(by_path, {"/api/v1/order": {"200": 2}, "/api/v1/cart/add": {"503": 1}})
+
     def test_같은_원시_폴더에서_두_번_만들면_같다(self):
         again = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, again, True)

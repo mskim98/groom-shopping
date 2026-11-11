@@ -1,0 +1,2 @@
+2026-11-11 00:00:12.000 WARN 1 --- [x] g.b.a.c.CouponRedisLatency : [COUPON_REDIS_SLOW] command=EVALSHA elapsedMs=312 suppressed=0
+2026-11-11 00:00:13.000 WARN 1 --- [x] g.b.a.c.CouponRedisLatency : [COUPON_REDIS_SLOW] command=GET elapsedMs=250 suppressed=4
