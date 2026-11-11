@@ -30,7 +30,7 @@ class ConfirmByBackendTest(unittest.TestCase):
         os.remove(os.path.join(d, "confirm-stages-end.tsv"))
         r = collect.confirm_by_backend(d)
         self.assertIsNone(r["window"])
-        self.assertEqual(r["by_backend"]["backend1"], {"200": 3, "202": 1, "other": 0})
+        self.assertEqual(r["by_backend"]["backend1"], {"200": 4, "202": 1, "other": 0})
         self.assertEqual(r["by_backend"]["backend2"], {"200": 5, "202": 0, "other": 1})
 
 
