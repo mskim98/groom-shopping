@@ -1,0 +1,30 @@
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      5.0   kernel_task
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      90.0  WindowServer
+2      95.0  com.apple.Virtualization.VirtualMachine
+3      92.0  k6
+4      91.0  Orca Helper (Renderer)
+5      93.0  chrome_crashpad_handler
+6      94.0  claude
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      90.0  WindowServer
+2      95.0  com.apple.Virtualization.VirtualMachine
+3      92.0  k6
+4      91.0  Orca Helper (Renderer)
+5      93.0  chrome_crashpad_handler
+6      94.0  claude
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      90.0  WindowServer
+2      95.0  com.apple.Virtualization.VirtualMachine
+3      92.0  k6
+4      91.0  Orca Helper (Renderer)
+5      93.0  chrome_crashpad_handler
+6      94.0  claude

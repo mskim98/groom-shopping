@@ -1,0 +1,15 @@
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      5.0   Google Chrome Helper (Renderer)
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      60.0  Google Chrome Helper (Renderer)
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      45.0  Google Chrome Helper (Renderer)
+
+Processes: 400 total, 3 running
+PID    %CPU COMMAND
+1      4.0   Google Chrome Helper (Renderer)

@@ -1,0 +1,5 @@
+2026-11-12T00:00:40Z	backend1	payment_confirm_wake_total{application="groom",source="pubsub"} 110.0
+2026-11-12T00:00:40Z	backend1	payment_confirm_wake_total{application="groom",source="key"} 4.0
+2026-11-12T00:00:40Z	backend1	payment_confirm_wake_total{application="groom",source="timeout"} 2.0
+2026-11-12T00:00:41Z	backend2	payment_confirm_wake_total{application="groom",source="pubsub"} 90.0
+2026-11-12T00:00:41Z	backend2	payment_confirm_stage_seconds_count{stage="toss_call"} 95.0
