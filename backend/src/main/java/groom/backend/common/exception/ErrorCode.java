@@ -156,6 +156,9 @@ public enum ErrorCode {
     /** 플래시 세일 진입 속도 제한(rate limiter flash-entry)을 넘었다 - Redis 를 부르지 않고 거절한다 */
     FLASH_ENTRY_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "구매 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해주세요."),
 
+    /** 장바구니 · 주문 트랜잭션 격벽(resilience4j bulkhead transaction)의 허용이 찼다 - 트랜잭션을 열기 전에 거절해 DB 에는 아무것도 쓰지 않았다 */
+    TRANSACTION_BULKHEAD_FULL(HttpStatus.SERVICE_UNAVAILABLE, "요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해주세요."),
+
     /** 보상 레코드가 종단 상태(SUCCEEDED·GIVEN_UP)에서 다시 전이되려 함 */
     PAYMENT_COMPENSATION_ILLEGAL_TRANSITION(HttpStatus.CONFLICT, "허용되지 않은 보상 상태 전이입니다."),
 

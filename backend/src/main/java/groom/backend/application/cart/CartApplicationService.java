@@ -10,6 +10,7 @@ import groom.backend.interfaces.cart.persistence.CartItemJpaEntity;
 import groom.backend.interfaces.cart.persistence.CartJpaEntity;
 import groom.backend.interfaces.cart.persistence.SpringDataCartItemRepository;
 import groom.backend.interfaces.cart.persistence.SpringDataCartRepository;
+import groom.backend.infrastructure.resilience.TransactionBulkhead;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -71,6 +72,7 @@ public class CartApplicationService {
      * @return 저장된 장바구니 정보
      */
     @Transactional
+    @TransactionBulkhead
     public CartAddResult addToCart(Long userId, UUID productId, Integer quantity) {
         log.info("[CART_ADD_START] userId={}, productId={}, quantity={}", userId, productId, quantity);
 
@@ -147,6 +149,7 @@ public class CartApplicationService {
      * @return 장바구니 정보
      */
     @Transactional(readOnly = true)
+    @TransactionBulkhead
     public CartViewResult getCartItems(Long userId) {
         log.info("[CART_VIEW_START] userId={}", userId);
 
@@ -292,6 +295,7 @@ public class CartApplicationService {
      * @return 제거 결과 리스트
      */
     @Transactional
+    @TransactionBulkhead
     public CartRemoveBatchResult removeCartItems(Long userId, List<CartItemToRemove> itemsToRemove) {
         log.info("[CART_REMOVE_BATCH_START] userId={}, itemCount={}", userId, itemsToRemove.size());
 
@@ -434,6 +438,7 @@ public class CartApplicationService {
      * @return 수량 변경 결과
      */
     @Transactional
+    @TransactionBulkhead
     public CartQuantityUpdateResult increaseQuantity(Long userId, UUID productId) {
         log.info("[CART_INCREASE_QUANTITY_START] userId={}, productId={}", userId, productId);
 
@@ -485,6 +490,7 @@ public class CartApplicationService {
      * @return 수량 변경 결과 (isRemoved: true면 제거됨)
      */
     @Transactional
+    @TransactionBulkhead
     public CartQuantityUpdateResult decreaseQuantity(Long userId, UUID productId) {
         log.info("[CART_DECREASE_QUANTITY_START] userId={}, productId={}", userId, productId);
 
