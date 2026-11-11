@@ -201,8 +201,7 @@ public class PaymentApplicationService {
                 log.info("[PAYMENT_IDEMPOTENT_HIT] Concurrent confirm lost - PaymentKey: {}, Status: {}, Cause: {}",
                         paymentKey, current.getStatus(), dbError.getClass().getSimpleName());
                 flashStockReservation.releaseRedisOnly(reservedItems);
-                // 이미 승인됐으면 신호가 수명(signal-ttl-ms)을 넘겨 사라졌을 수 있다 - 기다리지 않고 바로 돌려준다
-                return current.isAlreadyApproved() ? current : awaitResult(current.getId());
+                return awaitResult(current.getId());
             }
             // Toss 승인은 되었는데 READY 전이 · Outbox 적재가 실패한 경우 → 자동 환불(보상 트랜잭션) 의도 기록 + 선점 복원
             log.error("[PAYMENT_CONFIRM_DB_FAILED] OrderId: {}, PaymentKey: {}, Error: {}",
