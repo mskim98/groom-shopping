@@ -26,6 +26,8 @@ import org.springframework.stereotype.Component;
 // 행마다 send 확인을 기다리고 UPDATE 하던 때는 한 회차가 Kafka · PostgreSQL 왕복 100번이라 뒤의 행이 기다렸다 - r121 부하 측정에서 outbox 행 생성 → 폴러가 집기까지(outbox_wait_claim)가 초당 1,500건에 평균 3.8~4.0초였다
 // 프로듀서가 보낸 행을 묶어 한꺼번에 내보내므로 한 회차가 왕복 한 번 값이다
 // 같은 결제의 행은 키(결제 ID)가 같아 같은 파티션으로 가고, payment-events 프로듀서의 멱등 전송(enable.idempotence)과 in-flight 5 이하가 재시도가 있어도 집은 순서(created_at)대로 쌓이게 한다
+// 한 결제의 앞 행 확인이 실패하면 같은 회차의 뒤 행은 확인이 와도 PUBLISHED 로 표시하지 않고 임대를 풀어 실패한 행 뒤에 다시 보낸다(컨슈머의 outbox-id 멱등 처리가 반복을 흡수한다)
+// 따라서 한 결제의 행은 집은 순서대로 확인·표시되며, 이 보장은 모든 인스턴스가 이 폴러를 쓰고 한 결제의 앞 행이 임대로 묶여 있지 않을 때 성립한다
 // 트랜잭션 없이 돈다 - 집기(임대 설정)와 PUBLISHED 표시가 각자 한 문장짜리 짧은 트랜잭션이라 확인을 기다리는 동안(Kafka 장애면 최대 40초) DB 커넥션을 쥐지 않는다
 // 인스턴스가 여럿이어도 같은 행을 동시에 발행하지 않는다 - 집은 행은 lease-ms 동안 임대돼 다른 폴러가 건너뛴다
 // 확인이 실패한 행과 보내지 못한 행의 임대는 바로 풀어 다음 회차가 created_at 순서로 다시 집고, 확인된 행은 같은 회차에서 PUBLISHED 가 된다
@@ -73,7 +75,6 @@ public class PaymentEventPublisher {
     @Scheduled(fixedDelayString = "${payment.outbox.poll-delay-ms:200}")
     public void publishPending() {
         // shortcut: 폴러가 집은 뒤 죽거나 발행 뒤 PUBLISHED 표시가 실패해 임대를 풀지 못한 행은 임대 시간만큼 기다리고 그동안 같은 결제의 더 새로운 행이 먼저 발행될 수 있다, 컨슈머가 결제 상태로 적용해 허용하며 순서가 필요한 소비자가 생기면 결제별 직렬 발행으로 바꾼다
-        // shortcut: 한 행의 확인이 실패해도 같은 회차의 뒤 행은 이미 보냈다면 PUBLISHED 가 된다 - 실패한 행은 다음 회차에 다시 나가 같은 결제 안에서 순서가 뒤바뀔 수 있다, 컨슈머가 결제 상태로 적용해 허용하며 순서가 필요한 소비자가 생기면 실패 행 뒤의 같은 결제 행도 풀어 준다
         List<PaymentOutbox> batch = outboxRepository.claimPendingBatch(BATCH_SIZE, leaseMs);
         if (batch.isEmpty()) {
             return;
@@ -114,11 +115,16 @@ public class PaymentEventPublisher {
         // 2) 확인을 기다린다 - 회차 전체가 상한 하나를 나눠 쓰므로 상한이 지나면 확인이 안 온 행은 바로 실패로 센다
         List<UUID> acknowledged = new ArrayList<>(pending.size());
         List<PaymentOutbox> acknowledgedRows = new ArrayList<>(pending.size());
+        Set<UUID> blockedAggregates = new HashSet<>(); // 확인이 실패한 행의 결제 - 같은 결제의 뒤 행은 먼저 표시하지 않는다
         for (int i = 0; i < pending.size(); i++) {
             PaymentOutbox outbox = batch.get(i);
             try {
                 pending.get(i).get(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
                 stageTimers.record(ConfirmStageTimers.KAFKA_PUBLISH_ACK, System.nanoTime() - sendStartedAt[i]);
+                // 앞 행이 실패한 결제의 뒤 행은 확인이 와도 표시하지 않고 임대를 풀어 실패한 행 뒤에 다시 보낸다 - 먼저 표시하면 컨슈머가 승인보다 취소를 먼저 본다
+                if (blockedAggregates.contains(outbox.getAggregateId())) {
+                    continue;
+                }
                 acknowledged.add(outbox.getId());
                 acknowledgedRows.add(outbox);
             } catch (InterruptedException e) {
@@ -128,6 +134,7 @@ public class PaymentEventPublisher {
                 break;
             } catch (Exception e) {
                 // 실패 건은 PENDING 으로 남고 임대는 아래에서 바로 푼다 (at-least-once)
+                blockedAggregates.add(outbox.getAggregateId());
                 log.error("[OUTBOX_PUBLISH_FAILED] outboxId={}, error={}", outbox.getId(), e.getMessage());
             }
         }
