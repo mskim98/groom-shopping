@@ -83,7 +83,7 @@ class FlashSaleConsumerNoRowDecrementTest {
     }
 
     private void confirmThenConsume() throws Exception {
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         String payload = jdbc.queryForObject(
                 "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
         paymentApplicationService.applyApprovedEvent(objectMapper.readValue(payload, PaymentApprovedEvent.class));
@@ -112,7 +112,7 @@ class FlashSaleConsumerNoRowDecrementTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE * 3));
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE * 3);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE * 3);
         String payload = jdbc.queryForObject(
                 "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
         paymentApplicationService.applyApprovedEvent(objectMapper.readValue(payload, PaymentApprovedEvent.class));

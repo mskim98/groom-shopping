@@ -118,7 +118,7 @@ class PaymentConfirmWaitTest {
     void 대기_다른스레드가_300ms뒤_DONE으로_바꾸면_1초안에_DONE을_반환한다() throws Exception {
         CompletableFuture<Long> readyAt = flipWhenReady("UPDATE payment SET status = 'DONE' WHERE id = ?", payment.getId());
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         long returnedAt = System.nanoTime();
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.DONE);
@@ -131,7 +131,7 @@ class PaymentConfirmWaitTest {
     void 대기_아무도_바꾸지_않으면_상한뒤_READY를_반환한다() {
         long start = System.nanoTime();
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
@@ -144,8 +144,8 @@ class PaymentConfirmWaitTest {
         flipWhenReady("UPDATE payment SET status = 'FAILED', failure_code = ?, failure_message = ? WHERE id = ?",
                 ErrorCode.INSUFFICIENT_STOCK.name(), "재고가 부족합니다.", payment.getId());
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(
-                paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment,
+                paymentKey, PaymentFixture.PRICE))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.INSUFFICIENT_STOCK);

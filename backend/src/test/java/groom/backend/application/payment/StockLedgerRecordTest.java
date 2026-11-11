@@ -113,7 +113,7 @@ class StockLedgerRecordTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE * 2));
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE * 2);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE * 2);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_outbox WHERE aggregate_id = ?",
@@ -133,7 +133,7 @@ class StockLedgerRecordTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE * 4));
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE * 4);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE * 4);
 
         assertThat(fixture.ledgerRows(payment.getId())).hasSize(2)
                 .allSatisfy(row -> assertThat(row).containsEntry("kind", "SALE").containsEntry("applied", false));

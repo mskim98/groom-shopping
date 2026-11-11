@@ -134,8 +134,8 @@ class FlashStockThresholdNotificationTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_REJECTED));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(
-                "pk-" + UUID.randomUUID(), payment.getOrderId(), PaymentFixture.PRICE * 3))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment,
+                "pk-" + UUID.randomUUID(), PaymentFixture.PRICE * 3))
                 .isInstanceOf(BusinessException.class);
         waitUntilNotificationWorkIsIdle();
 
@@ -204,7 +204,7 @@ class FlashStockThresholdNotificationTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, amount));
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), amount);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, amount);
         String payload = jdbc.queryForObject(
                 "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
         paymentApplicationService.applyApprovedEvent(objectMapper.readValue(payload, PaymentApprovedEvent.class));

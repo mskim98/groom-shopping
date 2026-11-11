@@ -135,7 +135,7 @@ class PaymentFailurePathOrderTest {
         failPostProcessAndRedisRelease();
 
         // 확정은 READY 로 돌아오고(컨슈머는 꺼 둠) 후처리는 이벤트를 받은 서비스 진입점이 한다
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000);
         driveConsumer();
 
         assertThat(jdbc.queryForList("SELECT status FROM payment_compensation WHERE payment_id = ?",
@@ -149,7 +149,7 @@ class PaymentFailurePathOrderTest {
         makeFlash();
         failPostProcessAndRedisRelease();
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000);
         driveConsumer();
 
         InOrder order = inOrder(compensationService, productStockRedisRepository);
@@ -202,7 +202,7 @@ class PaymentFailurePathOrderTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000))
                 .isInstanceOf(BusinessException.class);
 
         assertThat(jdbc.queryForList("SELECT payment_key FROM payment_compensation WHERE payment_id = ?",
@@ -216,7 +216,7 @@ class PaymentFailurePathOrderTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_REJECTED));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000))
                 .isInstanceOf(BusinessException.class);
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_compensation WHERE payment_id = ?",
@@ -231,7 +231,7 @@ class PaymentFailurePathOrderTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_TIMEOUT));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000))
                 .isInstanceOf(BusinessException.class);
 
         InOrder order = inOrder(compensationService, productStockRedisRepository);

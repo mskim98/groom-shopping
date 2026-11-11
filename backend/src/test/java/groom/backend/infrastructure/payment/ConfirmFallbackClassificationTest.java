@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
+import groom.backend.application.payment.ConfirmAsOwner;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
@@ -147,7 +148,7 @@ class ConfirmFallbackClassificationTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_REJECTED));
         try {
-            assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000))
+            assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000))
                     .isInstanceOf(BusinessException.class);
 
             assertThat(jdbc.queryForMap("SELECT status, failure_code, payment_key FROM payment WHERE id = ?",

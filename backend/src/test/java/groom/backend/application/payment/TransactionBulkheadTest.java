@@ -291,8 +291,8 @@ class TransactionBulkheadTest {
                 Outcome extra = burst(1, () -> probe.sleepInTx(0.01)).get(0);
                 assertThat(isBulkheadRefusal(extra.error())).as("허용 4 를 다 쥔 동안의 다섯 번째 호출").isTrue();
 
-                Payment result = paymentApplicationService.confirmPayment(
-                        paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+                Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment,
+                        paymentKey, PaymentFixture.PRICE);
 
                 assertThat(result.getStatus()).as("컨슈머가 후처리를 끝내 DONE 을 돌려받는다").isEqualTo(PaymentStatus.DONE);
                 assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");

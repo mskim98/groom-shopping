@@ -108,12 +108,12 @@ class FlashEntryRateLimitTest {
     @Test
     @DisplayName("한도 2 에서 세 번째 플래시 확정은 429 이고 Redis 재고 키에는 선점 2건만 남으며 Redis 호출도 원장 행도 없고, 플래시 아닌 주문은 제한받지 않는다")
     void confirmPayment_한도_초과_세번째는_429이고_Redis와_원장을_건드리지_않는다() {
-        paymentApplicationService.confirmPayment(key(payments[0]), payments[0].getOrderId(), PaymentFixture.PRICE);
-        paymentApplicationService.confirmPayment(key(payments[1]), payments[1].getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payments[0], key(payments[0]), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payments[1], key(payments[1]), PaymentFixture.PRICE);
         clearInvocations(stockRedisRepository);
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(
-                key(payments[2]), payments[2].getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payments[2],
+                key(payments[2]), PaymentFixture.PRICE))
                 .isInstanceOfSatisfying(BusinessException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(ErrorCode.FLASH_ENTRY_LIMITED);
                     assertThat(e.getErrorCode().getStatus().value()).isEqualTo(429);
@@ -123,8 +123,8 @@ class FlashEntryRateLimitTest {
         verify(stockRedisRepository, never()).preReserve(any(), org.mockito.ArgumentMatchers.anyInt());
         assertThat(fixture.ledgerRows(payments[2].getId())).isEmpty();
 
-        Payment result = paymentApplicationService.confirmPayment(
-                key(plainPayment), plainPayment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, plainPayment,
+                key(plainPayment), PaymentFixture.PRICE);
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
     }
 }

@@ -181,8 +181,8 @@ class TossBulkheadTest {
         assertThat(bulkhead.tryAcquirePermission()).isTrue();
         assertThat(bulkhead.tryAcquirePermission()).isTrue();
         try {
-            assertThatThrownBy(() -> paymentApplicationService.confirmPayment(
-                    "pk-" + UUID.randomUUID(), payment.getOrderId(), PaymentFixture.PRICE))
+            assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment,
+                    "pk-" + UUID.randomUUID(), PaymentFixture.PRICE))
                     .isInstanceOfSatisfying(BusinessException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_PG_BUSY));
         } finally {

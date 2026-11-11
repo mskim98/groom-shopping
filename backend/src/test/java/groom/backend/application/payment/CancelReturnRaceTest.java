@@ -96,7 +96,7 @@ class CancelReturnRaceTest {
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
         // DONE 플래시 결제 하나: Redis 키 9, 미적용 SALE 1행
         productStockRedisRepository.initStock(productId, 10);
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         String payload = jdbc.queryForObject("SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
         paymentApplicationService.applyApprovedEvent(objectMapper.readValue(payload, PaymentApprovedEvent.class));
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");
