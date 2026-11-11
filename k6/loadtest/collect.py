@@ -96,6 +96,41 @@ def backend_requests(folder):
     return counts, status, unknown, by_path
 
 
+def confirm_by_backend(folder):
+    """유지 구간에 끝난 결제 확정(/payment/confirm) 응답을 백엔드별 200 · 202 · 그 밖으로 센다 - nginx 로그의 $time_iso8601 · 상태 · $upstream_addr 에서
+    유지 구간 = 확정 구간 타이머 표본의 시작 시각 중 늦은 것 ~ 끝 시각 중 이른 것(두 백엔드가 모두 표본된 구간, 초 단위라 오차 1~2 초). 표본 파일이 없으면 로그 전체(window = None)"""
+    from datetime import datetime
+
+    def ts(s):
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+
+    def sample_times(name):
+        return [ts(l.split("\t")[0]) for l in read(os.path.join(folder, name)).splitlines() if l.strip()]
+
+    starts, ends = sample_times("confirm-stages-start.tsv"), sample_times("confirm-stages-end.tsv")
+    window = None
+    if starts and ends:
+        lo, hi = max(starts), min(ends)
+        window = {"start": lo.isoformat(), "end": hi.isoformat(), "seconds": int((hi - lo).total_seconds())}
+    ip_to_name = {}
+    for line in read(os.path.join(folder, "backends.tsv")).splitlines():
+        f = line.split()
+        if len(f) == 2:
+            ip_to_name[f[1]] = f[0]
+    by_backend = {name: {"200": 0, "202": 0, "other": 0} for name in ip_to_name.values()}
+    for line in read(os.path.join(folder, "nginx.log")).splitlines():
+        f = line.split(None, 5)
+        if len(f) < 6 or f[2] != "/api/v1/payment/confirm":
+            continue
+        if window and not (lo <= ts(f[0]).replace(tzinfo=None) <= hi):
+            continue
+        rest = f[5].rsplit(None, 1)[0] if " " in f[5] else f[5]
+        name = ip_to_name.get(rest.split(",")[-1].strip().split(":")[0])
+        if name:
+            by_backend[name][f[3] if f[3] in ("200", "202") else "other"] += 1
+    return {"window": window, "by_backend": by_backend}
+
+
 def pgss(path):
     top = []
     for line in read(path).splitlines():
@@ -297,6 +332,7 @@ def collect_step(folder, target):
         "nginx_status_all_phases": nginx_status,
         "nginx_status_by_path": by_path,
         "nginx_unmatched_upstream": unknown,
+        "confirm_by_backend": confirm_by_backend(folder),
         "confirm_stages": stage_delta(os.path.join(folder, "confirm-stages-start.tsv"), os.path.join(folder, "confirm-stages-end.tsv"), "payment_confirm_stage_seconds"),
         "partitions": {"messages": msgs, "max_min_ratio": (max(msgs) / min(msgs)) if min(msgs) > 0 else None},
         "lag": {"max_per_partition": lag_max(os.path.join(folder, "lag.log"))},
