@@ -1,0 +1,2 @@
+2026-11-11T00:00:10Z	backend1	payment_confirm_stage_seconds_count{stage="toss_call"} 10.0
+2026-11-11T00:00:11Z	backend2	payment_confirm_stage_seconds_count{stage="toss_call"} 10.0
