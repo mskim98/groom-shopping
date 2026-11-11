@@ -30,8 +30,9 @@ public class ConfirmWaiters {
         return waiter;
     }
 
-    public void remove(UUID paymentId) {
-        waiters.remove(paymentId);
+    // 자기 future 일 때만 지운다 - 같은 결제의 confirm 이 동시에 둘이면 먼저 끝난 쪽이 나중 쪽의 등록을 지워 그쪽이 메시지를 놓친다
+    public void remove(UUID paymentId, CompletableFuture<Long> waiter) {
+        waiters.remove(paymentId, waiter);
     }
 
     // 메시지 본문 "<결제 id>:<신호 시각 epoch ms>". 깨질 수 없는 본문은 버린다 - 대기자는 폴링 간격 뒤 키 읽기로 깬다

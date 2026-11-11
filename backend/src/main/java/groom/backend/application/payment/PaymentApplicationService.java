@@ -330,7 +330,7 @@ public class PaymentApplicationService {
                 }
             }
         } finally {
-            confirmWaiters.remove(paymentId);
+            confirmWaiters.remove(paymentId, waiter);
         }
     }
 
