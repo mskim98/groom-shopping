@@ -116,11 +116,22 @@ public class PaymentApplicationService {
     // ② 위임 메서드의 REQUIRES_NEW 가 readOnly 트랜잭션에 합류(REQUIRED)해 쓰기가 유실되는 일을 막는다.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(String paymentKey, UUID orderId, Integer amount) {
+        return confirmPayment(null, paymentKey, orderId, amount);
+    }
+
+    /**
+     * 결제 승인 - 호출자 검사 포함. {@code callerUserId} 가 결제 주인이 아니면 Toss 를 부르기 전에 거절한다.
+     * null 이면 검사를 건너뛴다(HTTP 경로는 항상 사용자 id 를 넘긴다 - 컨트롤러는 이 메서드만 부른다)
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Payment confirmPayment(Long callerUserId, String paymentKey, UUID orderId, Integer amount) {
         // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
         Payment approved = paymentRepository.findByPaymentKey(paymentKey)
                 .filter(Payment::isAlreadyApproved)
                 .orElse(null);
         if (approved != null) {
+            // 남의 승인 완료 결제의 paymentKey 로 그 결제 내용을 돌려받는 것을 막는다
+            requireOwner(callerUserId, approved);
             log.info("[PAYMENT_IDEMPOTENT_HIT] Already approved - PaymentKey: {}, Status: {}",
                     paymentKey, approved.getStatus());
             return approved;
@@ -129,6 +140,8 @@ public class PaymentApplicationService {
         // 결제 조회
         Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + orderId));
+        // 남의 orderId 로 Toss 승인을 시도해 남의 결제 상태를 바꾸는 것을 막으려고 Toss 호출 전에 주인을 확인한다
+        requireOwner(callerUserId, payment);
 
         if (payment.isAlreadyApproved()) {
             log.info("[PAYMENT_IDEMPOTENT_HIT] Order already has approved payment - OrderId: {}, Status: {}",
@@ -695,17 +708,31 @@ public class PaymentApplicationService {
     /**
      * 결제 조회
      */
-    public Payment getPayment(UUID paymentId) {
-        return paymentRepository.findById(paymentId)
+    public Payment getPayment(Long callerUserId, UUID paymentId) {
+        Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
+        // 결제 ID 를 아는 다른 사용자가 금액 · 결제 키를 읽는 것을 막는다
+        requireOwner(callerUserId, payment);
+        return payment;
     }
 
     /**
      * 주문의 결제 조회
      */
-    public Payment getPaymentByOrderId(UUID orderId) {
-        return paymentRepository.findByOrderId(orderId)
+    public Payment getPaymentByOrderId(Long callerUserId, UUID orderId) {
+        Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("주문의 결제를 찾을 수 없습니다: " + orderId));
+        // 주문 ID 를 아는 다른 사용자가 결제 내용을 읽는 것을 막는다
+        requireOwner(callerUserId, payment);
+        return payment;
+    }
+
+    // 결제 주인이 아니면 ACCESS_DENIED(403). callerUserId 가 null 이면 호출자 검사를 하지 않는 내부 호출이다
+    private void requireOwner(Long callerUserId, Payment payment) {
+        if (callerUserId != null && !callerUserId.equals(payment.getUserId())) {
+            log.warn("[PAYMENT_OWNER_MISMATCH] PaymentId: {}, CallerUserId: {}", payment.getId(), callerUserId);
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
     }
 
     /**

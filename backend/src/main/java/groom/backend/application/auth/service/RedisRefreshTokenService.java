@@ -67,12 +67,13 @@ public class RedisRefreshTokenService {
 
         Optional<RefreshToken> refreshToken = getRefreshToken(token);
         if (refreshToken.isEmpty()) {
-            log.warn("Refresh token not found in Redis: token={}", token);
+            // 리프레시 토큰 원문이 로그에 남아 로그를 읽는 사람이 세션을 가로채는 것을 막으려고 해시 앞 8자리만 쓴다
+            log.warn("Refresh token not found in Redis: tokenHash={}", shortHash(token));
             return false;
         }
 
         if (refreshToken.get().getExpiresAt().isBefore(LocalDateTime.now())) {
-            log.warn("Refresh token expired: token={}", refreshToken);
+            log.warn("Refresh token expired: email={}, tokenHash={}", refreshToken.get().getEmail(), shortHash(token));
             String email = refreshToken.get().getEmail();
             deleteByToken(token, email);
 
@@ -93,7 +94,7 @@ public class RedisRefreshTokenService {
 
             deleteByToken(token, email);
 
-            log.info("Refresh token deleted: email={}, token={}", email, token);
+            log.info("Refresh token deleted: email={}, tokenHash={}", email, shortHash(token));
         }
     }
 
@@ -134,6 +135,11 @@ public class RedisRefreshTokenService {
     /**
      * Refresh Token 조회
      */
+    // 로그에서 같은 토큰을 서로 맞춰 보기 위한 식별자 - 원문 복원은 불가
+    private static String shortHash(String token) {
+        return String.format("%08x", token.hashCode());
+    }
+
     public Optional<RefreshToken> getRefreshToken(String token) {
         return redisRefreshTokenRepository.getRefreshToken(token);
     }

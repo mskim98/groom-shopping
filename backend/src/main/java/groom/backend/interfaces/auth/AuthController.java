@@ -101,8 +101,8 @@ public class AuthController {
     }
 
     @Operation(
-            summary = "사용자 정보 수정",
-            description = "회원 권한과 등급을 수정합니다.",
+            summary = "사용자 이름 수정",
+            description = "본인의 이름을 수정합니다.",
             responses = {
                     @ApiResponse(responseCode = "200", description = "정보 수정 성공",
                             content = @Content(schema = @Schema(implementation = UserUpdateResponse.class))),

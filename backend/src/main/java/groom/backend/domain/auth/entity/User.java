@@ -30,15 +30,9 @@ public class User {
         this.updatedAt = updatedAt;
     }
 
-    public void updateUser(String name, Role role, Grade grade) {
+    public void updateName(String name) {
         if (name != null && !name.isBlank()) {
             this.name = name;
-        }
-        if (role != null) {
-            this.role = role;
-        }
-        if (grade != null) {
-            this.grade = grade;
         }
     }
 
