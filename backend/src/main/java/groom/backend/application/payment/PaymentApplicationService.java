@@ -121,6 +121,16 @@ public class PaymentApplicationService {
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Payment confirmPayment(Long callerUserId, String paymentKey, UUID orderId, Integer amount) {
+        long enteredAt = System.nanoTime();
+        try {
+            return confirmPaymentTimed(enteredAt, callerUserId, paymentKey, orderId, amount);
+        } finally {
+            // 멱등 조기 반환과 예외도 한 번 센다 - 컨슈머 대기까지 포함한 요청 스레드 총시간
+            stageTimers.record(ConfirmStageTimers.CONFIRM_TOTAL, System.nanoTime() - enteredAt);
+        }
+    }
+
+    private Payment confirmPaymentTimed(long enteredAt, Long callerUserId, String paymentKey, UUID orderId, Integer amount) {
         // [1] 멱등성 선조회: 같은 paymentKey로 이미 승인이 끝난 결제면 재처리하지 않는다.
         Payment approved = paymentRepository.findByPaymentKey(paymentKey)
                 .filter(Payment::isAlreadyApproved)
@@ -158,6 +168,7 @@ public class PaymentApplicationService {
         // [2] Toss 승인 API 호출 (Idempotency-Key: paymentKey → 재시도해도 이중 결제 없음)
         TossPaymentResponse response;
         long tossStartedAt = System.nanoTime();
+        stageTimers.record(ConfirmStageTimers.CONFIRM_ENTRY_TO_TOSS, tossStartedAt - enteredAt);
         try {
             TossPaymentConfirmRequest request = new TossPaymentConfirmRequest(
                     paymentKey, orderId.toString(), amount);

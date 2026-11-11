@@ -2,12 +2,14 @@ package groom.backend.infrastructure.kafka;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.ConfirmStageTimers;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.payment.event.PaymentEventParseException;
 import groom.backend.infrastructure.resilience.DbLedgerCircuit;
 import groom.backend.infrastructure.resilience.DbLedgerOpenException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -28,6 +30,7 @@ public class PaymentEventConsumer {
     private final ObjectMapper objectMapper;
     // 필수 의존성 - 빠지면 기동이 실패해야 한다(선택 주입이면 db-ledger 보호가 조용히 꺼진다)
     private final DbLedgerCircuit dbLedgerCircuit;
+    private final ConfirmStageTimers stageTimers; // 토픽 대기 구간 기록(payment.confirm.stage)
 
     @KafkaListener(
             id = DbLedgerCircuit.LISTENER_ID,
@@ -35,6 +38,9 @@ public class PaymentEventConsumer {
             groupId = "payment-event-group",
             containerFactory = "paymentApprovedKafkaListenerContainerFactory")
     public void consume(ConsumerRecord<String, String> record) {
+        // 레코드 시각(프로듀서 생성 시각)과 같은 벽시계로 잰다 - 두 백엔드가 한 Docker VM 이라 시계 차이가 없다
+        stageTimers.record(ConfirmStageTimers.TOPIC_WAIT,
+                TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - record.timestamp()));
         PaymentApprovedEvent event;
         try {
             event = objectMapper.readValue(record.value(), PaymentApprovedEvent.class);

@@ -27,6 +27,13 @@ public class ConfirmStageTimers {
     /** 승인 커밋 뒤 완료 신호가 서고 → 기다리던 confirm 이 그것을 볼 때까지(신호 경로, 서버 시계 차이만큼 오차) */
     public static final String COMMIT_TO_CONFIRM_SEEN = "commit_to_confirm_seen";
 
+    /** confirmPayment 진입 → Toss 호출 직전(멱등 조회 · 결제 조회와 주인 확인 · 금액 검증 · 플래시 재고 예약) */
+    public static final String CONFIRM_ENTRY_TO_TOSS = "confirm_entry_to_toss";
+    /** PaymentApproved 레코드의 Kafka 시각(발행 요청 시점) → 컨슈머 리스너 진입(두 백엔드가 한 Docker VM 의 시계를 쓴다) */
+    public static final String TOPIC_WAIT = "topic_wait";
+    /** confirmPayment 진입 → 끝(DONE · 대기 만료 READY · 예외 모두, 컨슈머 대기 포함) */
+    public static final String CONFIRM_TOTAL = "confirm_total";
+
     private final MeterRegistry registry;
 
     @Autowired

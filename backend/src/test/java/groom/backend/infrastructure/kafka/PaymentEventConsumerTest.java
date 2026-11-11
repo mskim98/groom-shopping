@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.ConfirmStageTimers;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.payment.event.PaymentEventParseException;
@@ -45,7 +46,7 @@ class PaymentEventConsumerTest {
             ((Runnable) call.getArgument(0)).run();
             return null;
         }).when(dbLedgerCircuit).run(any());
-        consumer = new PaymentEventConsumer(paymentApplicationService, objectMapper, dbLedgerCircuit);
+        consumer = new PaymentEventConsumer(paymentApplicationService, objectMapper, dbLedgerCircuit, ConfirmStageTimers.noop());
     }
 
     @Test

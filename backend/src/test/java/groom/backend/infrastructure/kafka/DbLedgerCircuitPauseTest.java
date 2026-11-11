@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.ConfirmStageTimers;
 import groom.backend.application.payment.PaymentApplicationService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.infrastructure.payment.dto.TossPaymentResponse;
@@ -106,7 +107,7 @@ class DbLedgerCircuitPauseTest {
             return null;
         }).when(service).applyApprovedEvent(any());
 
-        PaymentEventConsumer consumer = new PaymentEventConsumer(service, mapper, circuit);
+        PaymentEventConsumer consumer = new PaymentEventConsumer(service, mapper, circuit, ConfirmStageTimers.noop());
 
         Map<String, Object> props = KafkaTestUtils.consumerProps(GROUP, "false", broker);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
