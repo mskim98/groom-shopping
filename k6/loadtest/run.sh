@@ -14,8 +14,10 @@
 # tiny · step 은 <out-dir> 자체에 진단 파일도 쓴다(같은 <out-dir> 로 두 단계를 돌리면 뒤의 단계가 덮어쓴다): pg-activity.tsv(pg_stat_activity 1 초 표본) ·
 #   backend<N>.log(단계 구간의 백엔드 로그 전체) · leak-digest.txt · pg-digest.txt(leak_digest.py · pg_activity_digest.py 의 요약)
 #   THREAD_DUMP_EVERY_S 가 0 보다 크면 유지 구간 동안 그 간격(초)마다 백엔드마다 SIGQUIT 를 보내 JVM 이 컨테이너 로그에 찍은 스레드 덤프를 threads-backend<N>.txt 로 자르고 thread-digest.txt 를 쓴다(thread_digest.py)
+# tiny · step 은 기본으로 호스트의 사용자 앱 부하도 잰다(Ruling R123-18, hostnoise.py): 시작 전 top 한 표본에서 사용자 앱이 코어 하나의 30 % 를 넘으면 20 초 쉬고 다시 보며 3 번 모두 넘으면 아무것도 돌리지 않고 종료 코드 3 으로 끝난다.
+#   단계 동안 top 을 5 초마다 <단계 폴더>/host-top.txt 에 쓰고(시작 전 표본은 host-before.txt · host-start-check.log) collect.py 가 결과의 host = {noise, offenders, samples} 로 쓴다. HOST_SAMPLING=0 이면 끈다
 # 지우는 것: down 이 이 프로젝트의 컨테이너와 네트워크만. 볼륨 · dev-* 컨테이너 · 다른 DB 는 건드리지 않는다. seed 는 shop_seed_template · shop_seed_m1 두 DB 를 다시 만든다
-# 환경 변수(기본값): SERVERS(3) 백엔드 대수 · APP_SETTLE_S(20) app 이 건강 UP 뒤 내려간 백엔드를 다시 보기 전에 쉬는 초 · LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · TINY_RPS(50) tiny 의 초당 요청 수 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
+# 환경 변수(기본값): SERVERS(3) 백엔드 대수 · APP_SETTLE_S(20) app 이 건강 UP 뒤 내려간 백엔드를 다시 보기 전에 쉬는 초 · LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · TINY_RPS(50) tiny 의 초당 요청 수 · HOST_SAMPLING(1) 0 이면 호스트 부하 표본을 끈다 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
@@ -151,15 +153,15 @@ sample_prom() {
   done
 }
 
-# 유지 구간의 시작과 끝에 확정 구간 타이머(payment_confirm_stage_seconds)를 백엔드마다 한 번씩 읽는다 - 유지 구간은 k6 준비 단계(setup)가 끝난 줄 + 램프 초부터 유지 초 동안
+# 유지 구간의 시작과 끝에 확정 구간 타이머(payment_confirm_stage_seconds)와 대기 종료 방식 카운터(payment_confirm_wake_total)를 백엔드마다 한 번씩 읽는다 - 유지 구간은 k6 준비 단계(setup)가 끝난 줄 + 램프 초부터 유지 초 동안
 # 두 표본의 차이가 유지 구간의 구간별 건수 · 합이다(collect.py 의 stage_delta). 시각은 초 단위이고 k6 와 같은 시계를 쓰므로 오차는 1~2 초
 sample_confirm_stages() { # 폴더 · 램프 초 · 유지 초 · k6 로그
   local waited=0
   until grep -q 'setup:' "$4" 2> /dev/null || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
   sleep "$2"
-  scrape_metric '^payment_confirm_stage_seconds_(count|sum)[{]' "$1/confirm-stages-start.tsv"
+  scrape_metric '^payment_confirm_(stage_seconds_(count|sum)|wake_total)[{]' "$1/confirm-stages-start.tsv"
   sleep "$3"
-  scrape_metric '^payment_confirm_stage_seconds_(count|sum)[{]' "$1/confirm-stages-end.tsv"
+  scrape_metric '^payment_confirm_(stage_seconds_(count|sum)|wake_total)[{]' "$1/confirm-stages-end.tsv"
 }
 
 # pg_stat_activity 표본(진단용) - 측정 DB 의 유휴가 아닌 세션(유휴라도 xact_start 가 찍힌 것은 포함)을 1 초마다 읽는다. 컨테이너 안에서 psql 연결 하나를 열어 두고 \watch 1 로 같은 문장을 되풀이한다
@@ -212,12 +214,28 @@ sample_k6_cpu() { # 폴더 · k6 pid
   done
 }
 
+# 시작 전 호스트 검사 - top 한 표본에서 사용자 앱이 코어 하나의 30 % 를 넘으면 20 초 쉬고 다시 본다(3 번). 3 번 모두 넘으면 실패를 돌려준다(호출자가 종료 코드 3 으로 끝낸다)
+host_guard() { # 단계 폴더
+  local dir="$1" try b=""
+  for try in 1 2 3; do
+    top -l 2 -s 3 -o cpu -n 12 -stats pid,cpu,command 2> /dev/null | awk '/^PID/{n++} n==2' > "$dir/host-before.txt"
+    b="$(python3 -B "$ROOT/k6/loadtest/hostnoise.py" "$dir/host-before.txt" 30 --any)"
+    [ "$b" = "{}" ] && return 0
+    echo "host busy before start (try $try): $b" >> "$dir/host-start-check.log"
+    [ "$try" -lt 3 ] && sleep 20
+  done
+  echo "host busy: $b" >&2
+  return 1
+}
+
 # 시험 창(DB 시계) - 주문 시각은 앱이 Asia/Seoul 시각으로 timestamp 열에 쓰므로 같은 기준으로 읽는다
 db_now() { psql_seed -Atc "SELECT to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS.US')"; }
 
 run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출력 폴더(진단 파일이 가는 곳)
   local name="$1" rps="$2" vus="$3" dir="$4" out="$5"
   mkdir -p "$dir"
+  # 사용자 앱이 호스트를 쓰고 있으면 아무것도 돌리지 않는다(주문 준비도 하지 않는다) - 종료 코드 3
+  if [ "${HOST_SAMPLING:-1}" = 1 ]; then host_guard "$dir" || exit 3; fi
   # 결제 전용 단계: K6_PREPARE_SCRIPT 가 램프 + 유지 동안 확정할 주문(목표 요청률 x (램프/2 + 유지) 의 1.1 배 + 20)을 측정 창 밖에서 미리 만든다
   if [ -n "${K6_PREPARE_SCRIPT:-}" ]; then
     k6 run -q --no-usage-report -e ORDERS_COUNT="$(( rps * (RAMP_S + 2 * HOLD_S) * 11 / 20 + 20 ))" -e ORDERS_FILE="$dir/payonly-orders.json" \
@@ -252,7 +270,10 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
     for b in $BACKENDS; do follow_thread_dumps "$start" "${PROJECT}-$b-1" "$out/threads-$b.txt" & done
     sample_threads "$THREAD_DUMP_EVERY_S" "$RAMP_S" "$HOLD_S" "$dir/k6.log" & p6=$!
   fi
-  trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 $p7 2> /dev/null || true' EXIT
+  # 호스트 부하 표본 - 단계 동안 5 초마다 top 을 host-top.txt 에 쓰고 k6 가 끝나면 멈춘다
+  local p8=""
+  if [ "${HOST_SAMPLING:-1}" = 1 ]; then top -l 100000 -s 5 -o cpu -n 12 -stats pid,cpu,command > "$dir/host-top.txt" 2>&1 & p8=$!; fi
+  trap 'stop_pg_sample; kill $p1 $p2 $p3 $p6 $p7 $p8 2> /dev/null || true' EXIT
 
   write_condition "$dir" "$HOLD_S" "$RAMP_S"
   echo "== $name: $rps requests/s, ramp ${RAMP_S}s + hold ${HOLD_S}s, max VUs $vus"
@@ -265,6 +286,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
   sample_k6_cpu "$dir" "$kpid" & local p4=$!
   wait "$kpid" || echo "k6 exit $?" >> "$dir/k6.log"
   wait "$p4" 2> /dev/null || true
+  if [ -n "$p8" ]; then kill "$p8" 2> /dev/null || true; wait "$p8" 2> /dev/null || true; fi
   wait "$p7" 2> /dev/null || true # 유지 구간 끝 표본이 파일에 쓰일 때까지(kill 하지 않는다)
   db_now > "$dir/db_window_end.txt"
   end="$(date -u +%FT%TZ)"

@@ -11,6 +11,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hostnoise  # noqa: E402
+
 ENDPOINT_URIS = {"/api/v1/cart/add": "cart_add", "/api/v1/order": "order", "/api/v1/payment/confirm": "confirm"}
 # 단계 조건(run.sh 의 write_condition 이 쓴다) - 폴더의 condition.json 에 없는 값은 추측하지 않고 null 로 쓰고 필드 이름을 condition_inferred 에 적는다
 STEP_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "hold_s", "ramp_s", "seed_copy", "servers")
@@ -214,6 +217,34 @@ def stage_delta(start_path, end_path, metric):
     return res
 
 
+def wake_delta(start_path, end_path):
+    """확정 대기가 무엇으로 끝났는지 세는 누적 카운터(payment_confirm_wake_total, 태그 source = pubsub · key · timeout · db)의 두 표본 파일 차이 - {백엔드: {source: 건수}}
+    파일이 없으면 {}, 시작 표본에 없는 source 는 0 에서 센다. 줄 형식: <시각>\\t<백엔드>\\tpayment_confirm_wake_total{source="x"} <값>"""
+    def load(path):
+        out = {}
+        for line in read(path).splitlines():
+            f = line.split("\t", 2)
+            m = re.match(r"payment_confirm_wake_total\{[^}]*source=\"([^\"]+)\"[^}]*\}\s+([-\d.eE+]+)$", f[2]) if len(f) == 3 else None
+            if m:
+                out[(f[1], m.group(1))] = float(m.group(2))
+        return out
+    start, end = load(start_path), load(end_path)
+    res = {}
+    for (backend, source), v in sorted(end.items()):
+        res.setdefault(backend, {})[source] = int(v - start.get((backend, source), 0))
+    return res
+
+
+def host_of(folder):
+    """단계 구간의 호스트 부하 판정 - host-top.txt(run.sh 가 단계 동안 5 초마다 뜬 top)를 hostnoise 의 규칙으로 읽는다
+    파일이 없는 옛 폴더는 noise null(모름)로 쓴다 - 조용하다고 추측하지 않는다"""
+    path = os.path.join(folder, "host-top.txt")
+    if not os.path.isfile(path):
+        return {"noise": None, "offenders": {}, "samples": 0}
+    offenders = hostnoise.noisy(path)
+    return {"noise": bool(offenders), "offenders": offenders, "samples": hostnoise.sample_count(path)}
+
+
 def orders(folder):
     """시험 창(db_window_start/end.txt, DB 시계 · Asia/Seoul) 안에 만들어진 주문 수와 그 주문의 order_item 행 수 - 데이터베이스에서 센다"""
     start = read(os.path.join(folder, "db_window_start.txt")).strip()
@@ -335,6 +366,8 @@ def collect_step(folder, target):
         "nginx_unmatched_upstream": unknown,
         "confirm_by_backend": confirm_by_backend(folder),
         "confirm_stages": stage_delta(os.path.join(folder, "confirm-stages-start.tsv"), os.path.join(folder, "confirm-stages-end.tsv"), "payment_confirm_stage_seconds"),
+        "confirm_wake": wake_delta(os.path.join(folder, "confirm-stages-start.tsv"), os.path.join(folder, "confirm-stages-end.tsv")),
+        "host": host_of(folder),
         "partitions": {"messages": msgs, "max_min_ratio": (max(msgs) / min(msgs)) if msgs and min(msgs) > 0 else None},
         "lag": {"max_per_partition": lag_max(os.path.join(folder, "lag.log"))},
         "ledger_apply_ms": ledger(folder),
