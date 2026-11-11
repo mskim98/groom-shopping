@@ -15,7 +15,7 @@
 #   backend<N>.log(단계 구간의 백엔드 로그 전체) · leak-digest.txt · pg-digest.txt(leak_digest.py · pg_activity_digest.py 의 요약)
 #   THREAD_DUMP_EVERY_S 가 0 보다 크면 유지 구간 동안 그 간격(초)마다 백엔드마다 SIGQUIT 를 보내 JVM 이 컨테이너 로그에 찍은 스레드 덤프를 threads-backend<N>.txt 로 자르고 thread-digest.txt 를 쓴다(thread_digest.py)
 # 지우는 것: down 이 이 프로젝트의 컨테이너와 네트워크만. 볼륨 · dev-* 컨테이너 · 다른 DB 는 건드리지 않는다. seed 는 shop_seed_template · shop_seed_m1 두 DB 를 다시 만든다
-# 환경 변수(기본값): SERVERS(3) 백엔드 대수 · APP_SETTLE_S(20) app 이 건강 UP 뒤 내려간 백엔드를 다시 보기 전에 쉬는 초 · LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
+# 환경 변수(기본값): SERVERS(3) 백엔드 대수 · APP_SETTLE_S(20) app 이 건강 UP 뒤 내려간 백엔드를 다시 보기 전에 쉬는 초 · LAG_WAIT_S(120) 단계 뒤 소비자 랙이 0 이 되기를 기다리는 최대 초 · MAX_VUS(rps 별 아래 표) · RAMP_S(10) · HOLD_S(30) · TINY_HOLD_S(10) tiny 의 유지 초 · TINY_RPS(50) tiny 의 초당 요청 수 · THREAD_DUMP_EVERY_S(0) 스레드 덤프 간격 초, 0 이면 끔 · LEAK_THRESHOLD_MS(2000) leak_digest 가 보고 시각에 더하는 문턱값(compose 의 SPRING_DATASOURCE_HIKARI_LEAK_DETECTION_THRESHOLD 와 같아야 한다)
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$ROOT"
@@ -302,7 +302,7 @@ run_step() { # 이름 · 목표 요청률 · 최대 VU · 단계 폴더 · 출�
 max_vus_for() { case "$1" in 2000) echo 1000 ;; 4000) echo 2000 ;; 6000) echo 3000 ;; *) echo $(( $1 / 2 + 1 )) ;; esac; }
 
 # 시험 실행은 초당 50 요청 10 초(램프 2 초 뒤 유지 10 초) - 도구가 끝까지 도는지만 본다
-cmd_tiny() { RAMP_S=2; HOLD_S="${TINY_HOLD_S:-10}"; local out="${1:?usage: tiny <out-dir>}"; mkdir -p "$out"; run_step tiny 50 "${MAX_VUS:-50}" "$out/tiny" "$out"; }
+cmd_tiny() { RAMP_S=2; HOLD_S="${TINY_HOLD_S:-10}"; local out="${1:?usage: tiny <out-dir>}"; mkdir -p "$out"; run_step tiny "${TINY_RPS:-50}" "${MAX_VUS:-50}" "$out/tiny" "$out"; }
 cmd_step() { local rps="${1:?usage: step <rps> <out-dir>}" out="${2:?usage: step <rps> <out-dir>}"; mkdir -p "$out"; run_step "step $rps" "$rps" "${MAX_VUS:-$(max_vus_for "$rps")}" "$out/step-$rps" "$out"; }
 cmd_collect() { python3 -B "$ROOT/k6/loadtest/collect.py" "${1:?usage: collect <out-dir> <result.json>}" "${2:?usage: collect <out-dir> <result.json>}"; }
 cmd_down() { $DC down --remove-orphans; }
