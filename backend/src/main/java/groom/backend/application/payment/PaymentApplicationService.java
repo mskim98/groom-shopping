@@ -35,7 +35,10 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -82,6 +85,7 @@ public class PaymentApplicationService {
     private final StockLedgerRepository stockLedgerRepository; // 후처리가 원장에 판매가 있는 상품을 가려내는 데 쓴다
     private final FlashStockReservation flashStockReservation; // 플래시 상품 진입 예약 · TX1 원장 기록 · 실패 되돌림
     private final ConfirmCompletionSignal confirmCompletionSignal; // 컨슈머가 커밋 뒤에 세우는 완료 신호 - confirm 이 DB 대신 읽는다
+    private final ConfirmWaiters confirmWaiters; // 이 인스턴스의 confirm 대기자 등록부 - 완료 메시지가 깨운다
     private final ConfirmStageTimers stageTimers; // 확정 구간별 시간(payment.confirm.stage)
     private final CouponIssueService couponIssueService; // 주문의 쿠폰을 승인 트랜잭션 안에서 소모한다
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
@@ -102,7 +106,7 @@ public class PaymentApplicationService {
      * 전체 흐름: [멱등성] paymentKey로 완료된 결제가 있는지 선조회 → 있으면 그대로 반환 (중복 승인 차단) → 플래시 상품 재고 예약 →
      * Toss Payments 승인 API 호출 (Idempotency-Key: paymentKey) → Payment READY 전이와 {@code PaymentApproved} Outbox 행을
      * 한 트랜잭션으로 커밋({@link #recordApprovedInTx}) → 컨슈머가 후처리({@link #applyApprovedEvent})를 끝내길
-     * {@code payment.confirm.poll-interval-ms} 간격으로 확인하며 {@code payment.confirm.wait-timeout-ms} 까지 기다린다.
+     * Pub/Sub 메시지로 깨며(메시지를 놓쳤을 때를 위해 {@code payment.confirm.poll-interval-ms} 간격으로 키를 다시 확인한다) {@code payment.confirm.wait-timeout-ms} 까지 기다린다.
      * 그 안에 DONE 이면 DONE 을, FAILED 면 컨슈머가 기록한 실패를 예외로, 상한을 넘기면 READY 를 돌려준다.
      * <p>
      * 후처리(DONE 전이, Order CONFIRMED, 일반 상품 재고 차감, 티켓 발급)는 이 요청 스레드가 아니라 Kafka 컨슈머가 한다. 후처리가 실패하면
@@ -256,54 +260,77 @@ public class PaymentApplicationService {
         return awaitResult(payment.getId());
     }
 
-    // Outbox 적재 뒤 컨슈머가 끝내길 기다린다. poll-interval 간격으로 Redis 완료 신호만 읽고(DB 연결을 빌리지 않는다),
+    // Outbox 적재 뒤 컨슈머가 끝내길 기다린다. 대기자를 등록한 뒤 Redis 완료 키를 한 번 읽고(등록 전에 끝난 컨슈머를 잡는다, DB 연결을 빌리지 않는다),
+    // 없으면 Pub/Sub 메시지를 poll-interval 까지 기다리고, 메시지 없이 간격이 지나면 키를 다시 읽는다(놓친 메시지를 메운다)
     // 신호가 서거나 대기 상한이 지나면 Payment 를 DB 에서 한 번 읽어 DONE 이면 그 결제를, FAILED 면 컨슈머가 기록한 실패를 예외로,
     // 아직 READY 면 READY 결제를 돌려준다. 답은 항상 그 마지막 DB 읽기가 정한다 - 신호가 유실돼도 늦을 뿐 202 로 틀리게 답하지 않는다
     // Redis 를 읽지 못하면 그 시점부터 기존 방식(매 간격 DB 조회)으로 돌아간다. 각 조회는 트랜잭션 밖(NOT_SUPPORTED)이라 최신 상태를 읽는다
     private Payment awaitResult(UUID paymentId) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(confirmWaitTimeoutMs);
-        boolean signalUsable = true;
-        while (true) {
-            long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-            Long completedAt = null;
-            if (signalUsable) {
-                try {
-                    completedAt = confirmCompletionSignal.completedAt(paymentId);
-                } catch (RuntimeException redisError) {
-                    signalUsable = false;
-                    log.warn("[PAYMENT_CONFIRM_SIGNAL_UNAVAILABLE] Redis 를 읽지 못해 DB 폴링으로 돌아감 - PaymentId: {}, Error: {}",
-                            paymentId, redisError.getMessage());
-                }
-            }
-            if (signalUsable) {
-                if (completedAt != null || remainingMs <= 0) {
-                    if (completedAt != null) {
-                        stageTimers.record(ConfirmStageTimers.COMMIT_TO_CONFIRM_SEEN,
-                                TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - completedAt));
+        CompletableFuture<Long> waiter = confirmWaiters.register(paymentId);
+        try {
+            boolean signalUsable = true;
+            while (true) {
+                long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                Long completedAt = null;
+                if (signalUsable) {
+                    try {
+                        completedAt = confirmCompletionSignal.completedAt(paymentId);
+                    } catch (RuntimeException redisError) {
+                        signalUsable = false;
+                        log.warn("[PAYMENT_CONFIRM_SIGNAL_UNAVAILABLE] Redis 를 읽지 못해 DB 폴링으로 돌아감 - PaymentId: {}, Error: {}",
+                                paymentId, redisError.getMessage());
                     }
-                    return settle(paymentId, completedAt == null);
                 }
-            } else {
+                if (signalUsable) {
+                    if (completedAt != null || remainingMs <= 0) {
+                        if (completedAt != null) {
+                            stageTimers.record(ConfirmStageTimers.COMMIT_TO_CONFIRM_SEEN,
+                                    TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - completedAt));
+                        }
+                        confirmWaiters.count(completedAt != null ? "key" : "timeout");
+                        return settle(paymentId, completedAt == null);
+                    }
+                    try {
+                        Long signaledAt = waiter.get(Math.min(confirmPollIntervalMs, remainingMs), TimeUnit.MILLISECONDS);
+                        stageTimers.record(ConfirmStageTimers.COMMIT_TO_CONFIRM_SEEN,
+                                TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis() - signaledAt));
+                        confirmWaiters.count("pubsub");
+                        return settle(paymentId, false);
+                    } catch (TimeoutException noMessage) {
+                        continue; // 간격이 지났다 - 위로 돌아가 키를 다시 읽는다
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return settle(paymentId, false);
+                    } catch (ExecutionException neverCompletedExceptionally) {
+                        throw new IllegalStateException(neverCompletedExceptionally);
+                    }
+                }
                 Payment current = paymentRepository.findById(paymentId)
                         .orElseThrow(() -> new IllegalArgumentException("결제를 찾을 수 없습니다: " + paymentId));
                 if (current.isAlreadyApproved()) {
+                    confirmWaiters.count("db");
                     return current;
                 }
                 if (current.getStatus() == PaymentStatus.FAILED) {
+                    confirmWaiters.count("db");
                     throw postProcessFailureOf(current);
                 }
                 if (remainingMs <= 0) {
                     log.info("[PAYMENT_CONFIRM_WAIT_TIMEOUT] 대기 상한 초과, READY 로 응답 - PaymentId: {}, WaitMs: {}",
                             paymentId, confirmWaitTimeoutMs);
+                    confirmWaiters.count("db");
                     return current;
                 }
+                try {
+                    Thread.sleep(Math.min(confirmPollIntervalMs, remainingMs));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return settle(paymentId, false);
+                }
             }
-            try {
-                Thread.sleep(Math.min(confirmPollIntervalMs, remainingMs));
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return settle(paymentId, false);
-            }
+        } finally {
+            confirmWaiters.remove(paymentId);
         }
     }
 

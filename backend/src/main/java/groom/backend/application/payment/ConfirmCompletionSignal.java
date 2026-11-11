@@ -17,6 +17,8 @@ import org.springframework.stereotype.Component;
 public class ConfirmCompletionSignal {
 
     private static final String KEY_PREFIX = "payment:confirm:done:";
+    // 완료를 기다리는 인스턴스들에게 알리는 Pub/Sub 채널 - 메시지는 "<결제 id>:<신호 시각 epoch ms>"
+    public static final String CHANNEL = "payment:confirm:done";
 
     private final StringRedisTemplate redis;
 
@@ -37,7 +39,10 @@ public class ConfirmCompletionSignal {
     // Redis 오류는 삼킨다 - 이미 커밋된 승인을 되돌릴 수 없고, 신호가 없어도 confirm 은 대기 끝에 DB 를 읽어 답한다
     public void complete(UUID paymentId) {
         try {
-            redis.opsForValue().set(keyOf(paymentId), String.valueOf(System.currentTimeMillis()), Duration.ofMillis(ttlMs));
+            long now = System.currentTimeMillis();
+            redis.opsForValue().set(keyOf(paymentId), String.valueOf(now), Duration.ofMillis(ttlMs));
+            // 키를 먼저 세운 뒤 알린다 - 메시지를 받은 대기자가 곧바로 키를 읽어도 서 있다. 메시지를 놓친 대기자는 폴링 간격 뒤 키로 깬다
+            redis.convertAndSend(CHANNEL, paymentId + ":" + now);
         } catch (RuntimeException e) {
             log.warn("[CONFIRM_SIGNAL_SET_FAILED] 신호를 세우지 못함, 기다리는 confirm 은 대기 끝에 DB 로 확인 - PaymentId: {}, Error: {}",
                     paymentId, e.getMessage());
