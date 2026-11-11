@@ -34,7 +34,7 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
 
     private static final String MARK_PUBLISHED_SQL = """
             UPDATE payment_outbox SET status = 'PUBLISHED', published_at = :publishedAt, claimed_until = NULL
-            WHERE id = :id AND status = 'PENDING'
+            WHERE id IN (:ids) AND status = 'PENDING'
             """;
 
     private static final String RELEASE_LEASE_SQL = """
@@ -84,10 +84,13 @@ public class PaymentOutboxRepositoryImpl implements PaymentOutboxRepository {
 
     @Override
     @Transactional
-    public void markPublished(UUID id) {
+    public void markPublished(List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
         entityManager.createNativeQuery(MARK_PUBLISHED_SQL)
                 .setParameter("publishedAt", LocalDateTime.now())
-                .setParameter("id", id)
+                .setParameter("ids", ids)
                 .executeUpdate();
     }
 

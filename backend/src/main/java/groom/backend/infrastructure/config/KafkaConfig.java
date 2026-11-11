@@ -267,6 +267,9 @@ public class KafkaConfig {
         configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         configProps.put(ProducerConfig.ACKS_CONFIG, "all");   // 이벤트 유실 방지 위해 all
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
+        // 폴러가 한 회차를 모두 보낸 뒤 확인을 기다리므로 한 결제의 행이 같은 파티션에 동시에 날아간다 - 멱등 전송과 in-flight 5 이하면 재시도가 있어도 보낸 순서가 유지된다
+        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        configProps.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
         return monitoredProducerFactory(configProps);
     }
 

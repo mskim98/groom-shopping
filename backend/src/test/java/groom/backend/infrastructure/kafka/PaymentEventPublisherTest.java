@@ -46,7 +46,7 @@ class PaymentEventPublisherTest {
 
         publisher.publishPending();
 
-        verify(outboxRepository, times(1)).markPublished(outbox.getId());
+        verify(outboxRepository, times(1)).markPublished(List.of(outbox.getId()));
     }
 
     @Test
