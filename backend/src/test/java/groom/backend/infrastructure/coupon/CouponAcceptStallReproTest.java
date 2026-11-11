@@ -31,7 +31,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -39,7 +38,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * r120 쿠폰 접수 정체 재현 (진단용, 평소 실행에서는 건너뛴다)
+ * r120 쿠폰 접수 정체 재현 (진단용, 평소 실행은 요청 50개짜리 점검이다)
  *
  * <p>실행: {@code COUPON_REPRO=1 COUPON_REPRO_OUT=<결과 파일> ./gradlew -p backend cleanTest test --tests '*CouponAcceptStallReproTest'}
  * (Redis 는 SPRING_DATA_REDIS_PORT 가 가리키는 컨테이너, 읽기용 명령은 COUPON_REPRO_CLI 로 바꾼다 - 기본 {@code docker exec r121-t3-redis redis-cli})
@@ -50,13 +49,14 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  */
 @SpringBootTest(properties = {"coupon.issue.stream.block-ms=1000"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@EnabledIfEnvironmentVariable(named = "COUPON_REPRO", matches = "1")
 @DisplayName("쿠폰 접수 정체 재현(진단)")
 class CouponAcceptStallReproTest {
 
     private static final int THREADS = Integer.getInteger("coupon.repro.threads", 64);
-    private static final int RATE = Integer.parseInt(System.getenv().getOrDefault("COUPON_REPRO_RATE", "500"));
-    private static final int SECONDS = Integer.parseInt(System.getenv().getOrDefault("COUPON_REPRO_SECONDS", "6"));
+    // COUPON_REPRO 가 없으면 요청 50개짜리 점검 실행이다(redis-cli 호출 없음) - 있으면 r120 모양(500/s x 6초)
+    private static final boolean REPRO = "1".equals(System.getenv("COUPON_REPRO"));
+    private static final int RATE = Integer.parseInt(System.getenv().getOrDefault("COUPON_REPRO_RATE", REPRO ? "500" : "50"));
+    private static final int SECONDS = Integer.parseInt(System.getenv().getOrDefault("COUPON_REPRO_SECONDS", REPRO ? "6" : "1"));
     private static final String CLI = System.getenv().getOrDefault("COUPON_REPRO_CLI", "docker exec r121-t3-redis redis-cli");
     private static final Path OUT = Path.of(System.getenv().getOrDefault("COUPON_REPRO_OUT", "/dev/stdout"));
 
@@ -181,6 +181,11 @@ class CouponAcceptStallReproTest {
         }
         pool.shutdown();
         assertThat(pool.awaitTermination(120, TimeUnit.SECONDS)).isTrue();
+        // 수량 1000 이 요청 수보다 크면(점검 실행) 전부 접수되어야 한다
+        if (!REPRO) {
+            assertThat(byResult[0].get()).as("접수 성공 수").isEqualTo(requests);
+        }
+        assertThat(errors.get()).as("Redis 예외 수").isZero();
         pollers.shutdown();
         pollers.awaitTermination(40, TimeUnit.SECONDS);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -260,6 +265,9 @@ class CouponAcceptStallReproTest {
     }
 
     private static String cli(String... args) throws Exception {
+        if (!REPRO) {
+            return "";
+        }
         List<String> cmd = new ArrayList<>(Arrays.asList(CLI.split(" ")));
         cmd.addAll(Arrays.asList(args));
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
