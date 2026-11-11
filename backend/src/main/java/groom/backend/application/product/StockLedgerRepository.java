@@ -3,6 +3,7 @@ package groom.backend.application.product;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.product.model.enums.StockMode;
+import groom.backend.infrastructure.cache.StockQuantityInvalidator;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -47,6 +48,8 @@ public class StockLedgerRepository {
     private static final String LOCK_KEY = "hashtextextended(?::text, 0)";
 
     private final JdbcTemplate jdbc;
+    // product.stock · stock_mode 를 바꾸는 문장은 커밋 뒤에 상세 수량 L2 항목을 지운다(native SQL 은 엔티티 리스너를 타지 않는다)
+    private final StockQuantityInvalidator quantityInvalidator;
 
     // 이 중 플래시 세일 상품의 id 만 돌려준다
     public List<UUID> findFlashProductIds(Collection<UUID> productIds) {
@@ -102,16 +105,20 @@ public class StockLedgerRepository {
     // DB 모드의 재고 판정. 영향 행 0 = 재고 부족이거나 모드가 DB 가 아님
     // version 을 올려 상품 엔티티를 들고 있던 수정 저장이 오래된 stock 으로 덮어쓰지 못하게 한다
     public int decreaseInDbModeIfEnough(UUID productId, int quantity) {
-        return jdbc.update("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
+        int updated = jdbc.update("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
                 + " WHERE id = ? AND stock >= ? AND stock_mode = 'DB'", quantity, productId, quantity);
+        evictIf(updated > 0, productId);
+        return updated;
     }
 
     // decreaseInDbModeIfEnough 와 같은 UPDATE 이며 차감 뒤 재고를 같은 문장에서 돌려준다. 빈 값 = 재고 부족이거나 모드가 DB 가 아님
     // 별도 SELECT 로 읽으면 이 문장 뒤에 커밋된 다른 차감까지 섞여 임계값 통과 알림이 어긋난다
     public Optional<Integer> decreaseInDbModeReturningStock(UUID productId, int quantity) {
-        return jdbc.query("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
+        Optional<Integer> stock = jdbc.query("UPDATE product SET stock = stock - ?, " + VERSION_BUMP
                         + " WHERE id = ? AND stock >= ? AND stock_mode = 'DB' RETURNING stock",
                 rs -> rs.next() ? Optional.of(rs.getInt(1)) : Optional.<Integer>empty(), quantity, productId, quantity);
+        evictIf(stock.isPresent(), productId);
+        return stock;
     }
 
     // 같은 (결제, 상품, 종류) 가 이미 있으면 아무것도 쓰지 않고 false 다
@@ -186,7 +193,9 @@ public class StockLedgerRepository {
 
     // delta 는 접어 넣는 부호 있는 합. 음수면 재고가 늘어난다
     public int lowerStock(UUID productId, int delta) {
-        return jdbc.update("UPDATE product SET stock = stock - ?, " + VERSION_BUMP + " WHERE id = ?", delta, productId);
+        int updated = jdbc.update("UPDATE product SET stock = stock - ?, " + VERSION_BUMP + " WHERE id = ?", delta, productId);
+        evictIf(updated > 0, productId);
+        return updated;
     }
 
     public int markApplied(List<Long> ledgerIds) {
@@ -196,10 +205,12 @@ public class StockLedgerRepository {
 
     public void setModeDb(UUID productId) {
         jdbc.update("UPDATE product SET stock_mode = 'DB', stock_mode_changed_at = now(), " + VERSION_BUMP + " WHERE id = ?", productId);
+        quantityInvalidator.evictAfterCommit(productId);
     }
 
     public void setModeRedis(UUID productId) {
         jdbc.update("UPDATE product SET stock_mode = 'REDIS', stock_mode_changed_at = now(), " + VERSION_BUMP + " WHERE id = ?", productId);
+        quantityInvalidator.evictAfterCommit(productId);
     }
 
     // DB 모드로 minDwellMs 이상 머문 플래시 상품
@@ -221,6 +232,12 @@ public class StockLedgerRepository {
                         + "FROM product p WHERE p.flash_sale = true AND p.stock_mode = 'REDIS' AND p.stock IS NOT NULL AND p.id > ? "
                         + "ORDER BY p.id LIMIT ?",
                 (rs, i) -> new ProductRemaining(rs.getObject(1, UUID.class), rs.getInt(2)), lastId, limit);
+    }
+
+    private void evictIf(boolean changed, UUID productId) {
+        if (changed) {
+            quantityInvalidator.evictAfterCommit(productId);
+        }
     }
 
     private static StockMode modeOf(List<String> rows, UUID productId) {
