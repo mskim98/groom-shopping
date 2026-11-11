@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 부하 측정 구동기(백엔드 대수는 환경 변수 SERVERS, 기본 3) - 루트 compose 스택을 프로젝트 이름 r119-measure 로 띄우고 단계별로 재서 수집한다
 # 사용: bash k6/loadtest/run.sh <명령> [인자]
+# SERVERS 의 기본값은 3 이다 - 2대 스택에 거는 모든 명령(app · tiny · step · collect · down · check-env.sh · final-*.sh)은 SERVERS=2 를 붙여야 한다(안 붙이면 check-env 가 없는 세 번째 백엔드를 기다린다)
 #   keys                      secrets/jwt-keys.pem 이 없으면 만든다(저장소 밖 · .gitignore 의 secrets/ 대상)
 #   infra                     db redis kafka wiremock 을 띄우고 준비될 때까지 기다린다
 #   seed                      시드 템플릿이 없을 때만 만들고(SEED_REBUILD_TEMPLATE=1 이면 다시) shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성

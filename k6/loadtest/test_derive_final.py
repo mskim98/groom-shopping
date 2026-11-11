@@ -14,6 +14,16 @@ TOOL = os.path.join(HERE, "derive-final.py")
 FIELDS = {"threads", "leak_detection", "seed_copy", "diag_samplers", "servers"}
 
 
+def jload(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def jdump(obj, path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+
+
 def run(*args):
     r = subprocess.run([sys.executable, "-B", TOOL] + [str(a) for a in args], capture_output=True, text=True, cwd=HERE)
     assert r.returncode == 0, r.stderr[-800:]
@@ -25,7 +35,7 @@ class DeriveFinalTest(unittest.TestCase):
     def setUpClass(cls):
         cls.out = tempfile.mkdtemp()
         run("all", ROOT, cls.out)
-        cls.j = {n: json.load(open(os.path.join(cls.out, n + ".json"))) for n in ("result", "coupon", "pg-cancel", "detail")}
+        cls.j = {n: jload(os.path.join(cls.out, n + ".json")) for n in ("result", "coupon", "pg-cancel", "detail")}
 
     @classmethod
     def tearDownClass(cls):
@@ -53,12 +63,12 @@ class DeriveFinalTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         d = os.path.join(tmp, "pgcancel")
         shutil.copytree(os.path.join(ROOT, "pgcancel", "pgcancel"), d)
-        cond = json.load(open(os.path.join(d, "condition.json")))
+        cond = jload(os.path.join(d, "condition.json"))
         del cond["servers"]
         del cond["seed_copy"]
-        json.dump(cond, open(os.path.join(d, "condition.json"), "w"))
+        jdump(cond, os.path.join(d, "condition.json"))
         run("pgcancel", d, os.path.join(tmp, "o.json"))
-        o = json.load(open(os.path.join(tmp, "o.json")))
+        o = jload(os.path.join(tmp, "o.json"))
         self.assertEqual((o["servers"], o["seed_copy"], o["threads"]), (None, None, "virtual"))
         self.assertEqual(sorted(o["condition_inferred"]), ["seed_copy", "servers"])
 
@@ -98,7 +108,7 @@ class DeriveFinalTest(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         run("detail", os.path.join(ROOT, "detail", "detail"), os.path.join(tmp, "d.json"))
-        d = json.load(open(os.path.join(tmp, "d.json")))
+        d = jload(os.path.join(tmp, "d.json"))
         self.assertEqual((d["db_body_loads"], d["db_body_loads_background_excluded"]), (557, 0))
 
     def test_PG_취소_수치는_원시_파일에서_나온다(self):
@@ -111,7 +121,7 @@ class DeriveFinalTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, again, True)
         run("all", ROOT, again)
         for n in ("result", "coupon", "pg-cancel", "detail"):
-            self.assertEqual(json.load(open(os.path.join(again, n + ".json"))), self.j[n], n)
+            self.assertEqual(jload(os.path.join(again, n + ".json")), self.j[n], n)
 
 
 if __name__ == "__main__":

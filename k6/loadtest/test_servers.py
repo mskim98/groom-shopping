@@ -47,7 +47,8 @@ class ServersTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.log = os.path.join(self.tmp, "docker.log")
-        open(self.log, "w").close()
+        with open(self.log, "w"):
+            pass
         with open(os.path.join(self.tmp, "docker"), "w") as f:
             f.write(FAKE_DOCKER)
         os.chmod(os.path.join(self.tmp, "docker"), 0o755)
@@ -76,7 +77,8 @@ class ServersTest(unittest.TestCase):
     def upstream(self, servers):
         r = sh('. ./env.sh && echo "$NGINX_CONF"', servers)
         self.assertEqual(r.returncode, 0, r.stderr)
-        text = open(r.stdout.strip()).read()
+        with open(r.stdout.strip(), encoding="utf-8") as f:
+            text = f.read()
         block = re.search(r"upstream\s+backend\s*\{(.*?)\}", text, re.S).group(1)
         return re.findall(r"^\s*server\s+(\S+?):8080;", block, re.M)
 
@@ -116,7 +118,8 @@ class ServersTest(unittest.TestCase):
         r = sh('. ./env.sh && stop_backends', 2, self.fake_env, self.tmp)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.calls(), ["stop nginx r119-measure-backend1-1 r119-measure-backend2-1"])
-        open(self.log, "w").close()
+        with open(self.log, "w"):
+            pass
         sh('. ./env.sh && stop_backends', None, self.fake_env, self.tmp)
         self.assertEqual(self.calls(), ["stop nginx r119-measure-backend1-1 r119-measure-backend2-1 r119-measure-backend3-1"])
 
@@ -145,7 +148,8 @@ class ServersTest(unittest.TestCase):
         env = dict(self.fake_env, FAKE_RUNNING=running)
         r = sh('. ./env.sh && write_condition "%s" %s' % (out, " ".join(args)), None, env, self.tmp)
         self.assertEqual(r.returncode, 0, r.stderr)
-        return json.load(open(os.path.join(out, "condition.json")))
+        with open(os.path.join(out, "condition.json"), encoding="utf-8") as f:
+            return json.load(f)
 
     def test_조건_기록의_servers_는_떠_있는_백엔드_컨테이너_수(self):
         names = "nginx db r119-measure-backend1-1 r119-measure-backend2-1"

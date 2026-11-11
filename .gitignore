@@ -54,3 +54,4 @@ k6/
 
 # 3대 백엔드가 같이 쓰는 JWT 키 묶음(docker-compose.yml 주석의 명령으로 만든다) - 개인키가 들어 있다
 secrets/
+__pycache__/
