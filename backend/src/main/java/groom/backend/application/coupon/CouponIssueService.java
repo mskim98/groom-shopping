@@ -33,6 +33,8 @@ import org.springframework.cache.annotation.Caching;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 사용자에게 발급된 쿠폰을 관리하는 서비스 (캐싱 적용 리팩토링)
@@ -242,6 +244,55 @@ public class CouponIssueService {
         couponIssueRepository.save(issue); // @Transactional이므로 사실 save는 필요 없을 수 있음
 
         return true;
+    }
+
+    /**
+     * 결제 승인 트랜잭션에 합류해 주문의 쿠폰을 소모한다. 소모하지 못하면(이미 사용 · 남의 쿠폰 · 만료 · 없는 행) 예외를 던져 승인이 롤백된다
+     */
+    @Transactional
+    public void consumeOnApproval(Long couponIssueId, Long userId) {
+        if (couponIssueRepository.consumeIfUsable(couponIssueId, userId, LocalDateTime.now()) == 0) {
+            throw new BusinessException(ErrorCode.COUPON_NOT_USABLE,
+                    "쿠폰을 소모하지 못했습니다(이미 사용 · 소유자 불일치 · 만료): " + couponIssueId);
+        }
+        // 캐시는 커밋 뒤에 비운다 - 커밋 전에 비우면 그 사이 조회가 옛 행을 다시 캐시에 채우고 롤백되면 캐시가 사용된 쿠폰을 활성으로 말한다
+        evictAfterCommit(couponIssueId, userId);
+    }
+
+    /**
+     * 결제 취소 트랜잭션에 합류해 주문의 쿠폰을 되돌린다. 만료됐거나 사용 상태가 아니면 바꾸지 않고 취소는 그대로 진행한다
+     */
+    @Transactional
+    public void returnOnCancel(Long couponIssueId, Long userId) {
+        if (couponIssueRepository.returnIfUsed(couponIssueId, userId, LocalDateTime.now()) == 0) {
+            log.info("[COUPON_RETURN_SKIPPED] 만료되었거나 사용 상태가 아니라 되돌리지 않음 - couponIssueId: {}", couponIssueId);
+            return;
+        }
+        evictAfterCommit(couponIssueId, userId);
+    }
+
+    private void evictAfterCommit(Long couponIssueId, Long userId) {
+        Runnable evict = () -> {
+            try {
+                couponCacheTemplate.delete(CACHE_PREFIX + couponIssueId);
+                Cache listCache = couponCacheManager.getCache(COUPON_LIST_CACHE_NAME);
+                if (listCache != null) {
+                    listCache.evict(userId);
+                }
+            } catch (Exception e) {
+                log.warn("[COUPON_CACHE_EVICT_FAILED] couponIssueId: {}, Error: {}", couponIssueId, e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evict.run();
+                }
+            });
+        } else {
+            evict.run();
+        }
     }
 
     // --- 쿠폰 검증 헬퍼 메서드 ---
