@@ -52,7 +52,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 승인 흐름: {@link #confirmPayment} 가 (플래시 세일 상품이면 Redis 선점, Redis 가 실패하면 DB 모드 예약) → Toss 승인 → Payment READY +
  * {@code PaymentApproved} Outbox 행 + 플래시 상품의 재고 원장 SALE 행을 한 트랜잭션으로 남기면({@link #recordApprovedInTx}),
  * Outbox 폴러가 payment-events 로 발행하고 PaymentEventConsumer 가 {@link #applyApprovedEvent} 로 후처리(DONE · 주문 확정 · 티켓 발급 ·
- * 플래시가 아닌 상품의 재고 차감 · 주문한 수량의 장바구니 비우기)를 끝낸다. 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다
+ * 플래시가 아닌 상품의 재고 차감)를 끝낸다. 장바구니는 비우지 않는다(클라이언트가 별도 요청으로 뺀다). 플래시 상품의 product.stock 은 후처리가 아니라 원장 적용 배치(StockLedgerApplyJob)가 1초마다 낮춘다
  * {@code confirmPayment} 는 후처리 결과를 대기 상한까지 기다려 DONE 이면 DONE 을, 상한을 넘으면 READY 를 돌려준다.
  */
 // @Slf4j : log 객체 생성.
