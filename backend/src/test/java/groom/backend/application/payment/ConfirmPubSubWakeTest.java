@@ -20,7 +20,6 @@ import groom.backend.interfaces.payment.persistence.SpringDataPaymentRepository;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
@@ -94,7 +93,7 @@ class ConfirmPubSubWakeTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
         // 인스턴스의 구독이 서 있어야 메시지가 닿는다 - 컨텍스트가 막 떴을 때의 구독 지연으로 첫 시험이 메시지를 못 받아 실패하지 않게 한다
-        await().atMost(Duration.ofSeconds(10)).until(() -> subscribers() > 0);
+        awaitSubscription();
     }
 
     @AfterEach
@@ -103,10 +102,18 @@ class ConfirmPubSubWakeTest {
         fixture.cleanup(payment, productId);
     }
 
-    private long subscribers() {
-        List<?> reply = redis.execute((org.springframework.data.redis.core.RedisCallback<List<?>>) connection ->
-                (List<?>) connection.execute("PUBSUB", "NUMSUB".getBytes(), ConfirmCompletionSignal.CHANNEL.getBytes()));
-        return reply == null || reply.size() < 2 ? 0 : ((Number) reply.get(1)).longValue();
+    // 구독이 서서 메시지가 대기자까지 닿는지 시험 메시지로 확인한다 - 닿을 때까지 100ms 마다 다시 낸다
+    private void awaitSubscription() {
+        UUID probe = UUID.randomUUID();
+        CompletableFuture<Long> reached = waiters.register(probe);
+        try {
+            await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(100)).until(() -> {
+                redis.convertAndSend(ConfirmCompletionSignal.CHANNEL, probe + ":" + System.currentTimeMillis());
+                return reached.isDone();
+            });
+        } finally {
+            waiters.remove(probe);
+        }
     }
 
     private double wakes(String source) {
