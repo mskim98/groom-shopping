@@ -1,0 +1,10 @@
+## 2026-11-11T00:00:01Z
+
+GROUP               TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                       HOST            CLIENT-ID
+payment-event-group payment-events  0          10              13              3               consumer-payment-event-group-1-aaaa               /172.30.0.6     consumer-payment-event-group-1
+payment-event-group payment-events  1          20              20              0               consumer-payment-event-group-1-bbbb               /172.30.0.7     consumer-payment-event-group-1
+## 2026-11-11T00:00:06Z
+
+GROUP               TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                       HOST            CLIENT-ID
+payment-event-group payment-events  0          14              15              1               consumer-payment-event-group-1-aaaa               /172.30.0.6     consumer-payment-event-group-1
+payment-event-group payment-events  1          24              31              7               consumer-payment-event-group-1-bbbb               /172.30.0.7     consumer-payment-event-group-1
