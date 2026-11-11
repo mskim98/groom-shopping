@@ -3,6 +3,8 @@ package groom.backend.application.auth.service;
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.entity.User;
+import groom.backend.domain.auth.enums.Grade;
+import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.auth.repository.UserRepository;
 import groom.backend.infrastructure.security.CookieUtil;
 import groom.backend.infrastructure.security.CustomUserDetails;
@@ -52,12 +54,12 @@ public class AuthApplicationService {
             throw new BusinessException(ErrorCode.EMAIL_DUPLICATION);
         }
 
-        // TODO : 개발 편의를 위해 ROLE, GRADE 요청대로 적용 (추후 삭제 예정)
+        // 가입 본문의 role 로 관리자 계정을 만드는 권한 상승을 막으려고 역할과 등급은 서버가 고정한다
         User user = User.create(email,
                                 passwordEncoder.encode(request.getPassword()),
                                 request.getName(),
-                                request.getRole(),
-                                request.getGrade());
+                                Role.ROLE_USER,
+                                Grade.BRONZE);
 
         User saved = userRepo.save(user);
 
@@ -145,7 +147,8 @@ public class AuthApplicationService {
         User user = userRepo.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        user.updateUser(request.getName(), request.getRole(), request.getGrade());
+        // 본인이 보낸 role · grade 로 자기 권한을 올리는 것을 막으려고 이름만 바꾼다
+        user.updateName(request.getName());
 
         User saved = userRepo.save(user);
 

@@ -90,7 +90,7 @@ class PaymentConfirmOutboxTest {
     @Test
     @DisplayName("컨슈머가 멈춘 상태에서 confirm 을 호출하면 대기 상한 뒤 READY 결제를 돌려준다")
     void confirm_컨슈머정지_대기상한뒤_READY_Payment를_돌려준다() {
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
         assertThat(result.getPaymentKeyValue()).isEqualTo(paymentKey);
@@ -100,7 +100,7 @@ class PaymentConfirmOutboxTest {
     @Test
     @DisplayName("컨슈머가 멈춘 상태에서 confirm 후 주문은 PENDING 이고 DB 재고는 호출 전 값이다")
     void confirm_컨슈머정지_주문은_PENDING이고_DB재고는_호출전값이다() {
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(fixture.orderStatusOf(payment.getOrderId())).isEqualTo("PENDING");
         assertThat(fixture.stockOf(productId)).isEqualTo(10);
@@ -109,7 +109,7 @@ class PaymentConfirmOutboxTest {
     @Test
     @DisplayName("컨슈머가 멈춘 상태에서 confirm 하면 PaymentApproved outbox 가 PENDING 으로 1건만 적재된다")
     void confirm_컨슈머정지_PaymentApproved_outbox_PENDING_1건만_적재된다() {
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT event_type, status FROM payment_outbox WHERE aggregate_id = ?", payment.getId());
@@ -120,9 +120,9 @@ class PaymentConfirmOutboxTest {
     @Test
     @DisplayName("이미 READY 인 주문을 다시 확정해도 outbox 는 결제당 1건이고 결제는 READY 그대로다")
     void confirm_READY_주문을_다시_확정해도_outbox는_1건이다() {
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
-        Payment second = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment second = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(second.getStatus()).isEqualTo(PaymentStatus.READY);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payment_outbox WHERE aggregate_id = ?",
@@ -136,7 +136,7 @@ class PaymentConfirmOutboxTest {
         jdbc.update("UPDATE product SET flash_sale = true WHERE id = ?", productId);
         productStockRedisRepository.initStock(productId, 10);
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         String payload = jdbc.queryForObject(
                 "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());

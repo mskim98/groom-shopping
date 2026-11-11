@@ -82,6 +82,7 @@ public class PaymentController {
                 user.getId(), request.getOrderId(), request.getPaymentKey());
 
         Payment payment = paymentApplicationService.confirmPayment(
+                user.getId(),
                 request.getPaymentKey(),
                 request.getOrderId(),
                 request.getAmount()
@@ -163,7 +164,7 @@ public class PaymentController {
         log.info("[API_REQUEST] Get payment - UserId: {}, PaymentId: {}",
                 user.getId(), paymentId);
 
-        Payment payment = paymentApplicationService.getPayment(paymentId);
+        Payment payment = paymentApplicationService.getPayment(user.getId(), paymentId);
         PaymentResponse response = PaymentResponse.from(payment);
 
         return ResponseEntity.ok(response);
@@ -192,7 +193,7 @@ public class PaymentController {
         log.info("[API_REQUEST] Get payment by order - UserId: {}, OrderId: {}",
                 user.getId(), orderId);
 
-        Payment payment = paymentApplicationService.getPaymentByOrderId(orderId);
+        Payment payment = paymentApplicationService.getPaymentByOrderId(user.getId(), orderId);
         PaymentResponse response = PaymentResponse.from(payment);
 
         return ResponseEntity.ok(response);

@@ -110,7 +110,7 @@ class ConfirmStageTimerTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE));
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(result.getStatus()).as("컨슈머 경로로 DONE").isEqualTo(PaymentStatus.DONE);
         // 폴러는 발행을 확인한 뒤에 구간을 기록하는데 컨슈머가 먼저 끝날 수 있다 - 한 번 읽지 않고 기다린다

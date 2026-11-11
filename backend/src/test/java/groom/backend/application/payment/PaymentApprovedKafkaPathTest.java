@@ -84,8 +84,8 @@ class PaymentApprovedKafkaPathTest {
                 .willReturn(PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE * 2));
 
         // 컨슈머를 직접 부르지 않는다 - 확정 호출이 폴러 → payment-events → 결제 전용 리스너 → 컨슈머를 실제로 거쳐 DONE 이 돼야 한다
-        Payment result = paymentApplicationService.confirmPayment(
-                paymentKey, payment.getOrderId(), PaymentFixture.PRICE * 2);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment,
+                paymentKey, PaymentFixture.PRICE * 2);
 
         assertThat(result.getStatus()).as("대기 상한(10초) 안에 후처리가 끝나 DONE 을 돌려받는다").isEqualTo(PaymentStatus.DONE);
         assertThat(fixture.statusOf(payment.getId())).isEqualTo("DONE");

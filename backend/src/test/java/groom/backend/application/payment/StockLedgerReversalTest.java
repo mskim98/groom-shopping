@@ -111,7 +111,7 @@ class StockLedgerReversalTest {
     @DisplayName("REDIS 모드에서 후처리가 실패하면 REVERSAL 이 1번만 쓰이고 Redis 선점이 돌아오며 결제의 원장 합은 0 이다")
     void 후처리실패_REDIS모드_REVERSAL_1행과_Redis복원_원장합_0() throws Exception {
         productStockRedisRepository.initStock(productId, 10);
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         assertThat(redisValue()).isEqualTo("9");
         doThrow(new IllegalStateException("post-process down")).when(stockLedgerRepository).findSaleProductIds(any());
         String payload = jdbc.queryForObject(
@@ -138,7 +138,7 @@ class StockLedgerReversalTest {
         given(tossPaymentClient.confirmPayment(any(), anyString()))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_PG_REJECTED));
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE))
                 .isInstanceOf(BusinessException.class);
         // 실패 경로가 한 번 더 돌아도 REVERSAL 은 하나다
         flashStockReservation.releaseBeforeRecord(payment.getId(),
@@ -158,7 +158,7 @@ class StockLedgerReversalTest {
     @DisplayName("DONE 플래시 결제를 취소하면 REVERSAL 이 1번만 쓰이고 원장 합은 0 이며 Redis 는 수량만큼 한 번만 돌아온다 (Ruling R117-2)")
     void 취소_DONE_플래시결제_REVERSAL_1행_원장합_0_Redis_한번만_복원() throws Exception {
         productStockRedisRepository.initStock(productId, 10);
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         String payload = jdbc.queryForObject(
                 "SELECT payload FROM payment_outbox WHERE aggregate_id = ?", String.class, payment.getId());
         PaymentApprovedEvent event = objectMapper.readValue(payload, PaymentApprovedEvent.class);

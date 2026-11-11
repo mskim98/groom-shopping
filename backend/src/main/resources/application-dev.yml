@@ -355,16 +355,11 @@ management:
   endpoints:
     web:
       exposure:
-        # env 는 측정 스크립트가 "지금 어느 전략으로 떠 있는가"를 확인하는 데 쓴다
-        # 이 확인이 없으면 db-lock 으로 띄워 두고 결과 파일에는 kafka 라고 적는 사고를 막을 수단이 없다
-        include: prometheus,health,info,env
+        # env 는 노출하지 않는다 - 익명 요청이 DB 비밀번호 · JWT 키 같은 환경 값을 읽는 것을 막는다
+        # (이 저장소의 스크립트 중 /actuator/env 를 읽는 것은 없다)
+        include: prometheus,health,info
       base-path: /actuator  # Actuator 기본 경로
   endpoint:
-    env:
-      # 환경변수에서 온 값은 기본적으로 ****** 로 가려진다
-      # 그러면 측정 스크립트가 "지금 어느 전략인가"를 확인할 수 없어 확인 자체가 무의미해진다
-      # dev 프로파일 전용 설정이다
-      show-values: ALWAYS
     health:
       show-details: when-authorized  # 권한이 있을 때만 상세 정보 표시
   metrics:

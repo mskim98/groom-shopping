@@ -111,8 +111,8 @@ class PaymentConcurrencyGuardTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             List<Future<Payment>> results = List.of(
-                    executor.submit(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000)),
-                    executor.submit(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), 1000)));
+                    executor.submit(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000)),
+                    executor.submit(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, 1000)));
             for (Future<Payment> result : results) {
                 assertThat(result.get(30, TimeUnit.SECONDS).getStatus().name())
                         .as("컨슈머가 멈춘 상태라 두 요청 모두 오류가 아니라 READY 결제를 돌려받는다").isEqualTo("READY");

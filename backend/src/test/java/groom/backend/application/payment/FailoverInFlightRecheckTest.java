@@ -124,7 +124,7 @@ class FailoverInFlightRecheckTest {
             return PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE);
         });
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
 

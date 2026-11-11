@@ -89,6 +89,8 @@ class PaymentConfirmExceptionPropagationTest {
     @InjectMocks
     private PaymentApplicationService service;
 
+    private static final Long OWNER_ID = 7L;
+
     private final UUID orderId = UUID.randomUUID();
     private final UUID paymentId = UUID.randomUUID();
 
@@ -97,6 +99,7 @@ class PaymentConfirmExceptionPropagationTest {
         given(payment.isAlreadyApproved()).willReturn(false);
         given(payment.getAmountValue()).willReturn(1000);
         given(payment.getId()).willReturn(paymentId);
+        given(payment.getUserId()).willReturn(OWNER_ID);
         given(paymentRepository.findByPaymentKey("pk-1")).willReturn(Optional.empty());
         given(paymentRepository.findByOrderId(orderId)).willReturn(Optional.of(payment));
 
@@ -119,7 +122,7 @@ class PaymentConfirmExceptionPropagationTest {
         given(proxy.recordApprovedInTx(eq(paymentId), eq(response), any()))
                 .willThrow(new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT));
 
-        assertThatThrownBy(() -> service.confirmPayment("pk-1", orderId, 1000))
+        assertThatThrownBy(() -> service.confirmPayment(OWNER_ID, "pk-1", orderId, 1000))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT);
@@ -132,7 +135,7 @@ class PaymentConfirmExceptionPropagationTest {
         given(tossPaymentClient.confirmPayment(any(), eq("pk-1")))
                 .willThrow(new BusinessException(ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE));
 
-        assertThatThrownBy(() -> service.confirmPayment("pk-1", orderId, 1000))
+        assertThatThrownBy(() -> service.confirmPayment(OWNER_ID, "pk-1", orderId, 1000))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.PAYMENT_TEMPORARILY_UNAVAILABLE);
@@ -148,7 +151,7 @@ class PaymentConfirmExceptionPropagationTest {
         given(proxy.recordApprovedInTx(eq(paymentId), eq(response), any()))
                 .willThrow(new IllegalStateException("티켓 발급 실패"));
 
-        assertThatThrownBy(() -> service.confirmPayment("pk-1", orderId, 1000))
+        assertThatThrownBy(() -> service.confirmPayment(OWNER_ID, "pk-1", orderId, 1000))
                 .isInstanceOf(RuntimeException.class)
                 .isNotInstanceOf(BusinessException.class)
                 .hasMessageContaining("결제 승인 후 처리 중 실패했습니다");

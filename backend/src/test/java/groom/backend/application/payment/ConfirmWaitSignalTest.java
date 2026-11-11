@@ -159,7 +159,7 @@ class ConfirmWaitSignalTest {
         countFindByIdCalledBy(Thread.currentThread());
         CompletableFuture<Long> readyAt = consumerAfter(CONSUMER_HOLD_MS);
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         long returnedAt = System.nanoTime();
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.DONE);
@@ -175,7 +175,7 @@ class ConfirmWaitSignalTest {
         countFindByIdCalledBy(Thread.currentThread());
         CompletableFuture<Long> readyAt = consumerAfter(500);
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.DONE);
         assertThat((System.nanoTime() - readyAt.get(5, TimeUnit.SECONDS)) / 1_000_000)
@@ -188,7 +188,7 @@ class ConfirmWaitSignalTest {
     void 신호_컨슈머가_끝내지_않으면_상한뒤_READY() {
         long start = System.nanoTime();
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
         assertThat((System.nanoTime() - start) / 1_000_000).as("대기 상한만큼 기다린 뒤 돌아온다").isGreaterThanOrEqualTo(WAIT_TIMEOUT_MS - 50);
@@ -201,7 +201,7 @@ class ConfirmWaitSignalTest {
         CompletableFuture<Long> readyAt = consumerAfter(300);
 
         long start = System.nanoTime();
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         readyAt.get(5, TimeUnit.SECONDS);
 
@@ -246,7 +246,7 @@ class ConfirmWaitSignalTest {
         });
 
         long start = System.nanoTime();
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
         assertThat(rolledBack.get(5, TimeUnit.SECONDS)).as("승인 트랜잭션이 재고 차감 실패로 롤백됐다")
@@ -263,7 +263,7 @@ class ConfirmWaitSignalTest {
         CompletableFuture<Long> readyAt = consumerAfter(300);
 
         long start = System.nanoTime();
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode()).isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;

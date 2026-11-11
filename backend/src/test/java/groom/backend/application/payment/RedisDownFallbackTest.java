@@ -111,7 +111,7 @@ class RedisDownFallbackTest {
         payment = fixture.payment(productId, 1);
         redisThrows();
 
-        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        Payment result = ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.READY);
         assertThat(fixture.stockModeOf(productId)).isEqualTo("DB");
@@ -129,7 +129,7 @@ class RedisDownFallbackTest {
                 UUID.randomUUID(), productId);
         redisThrows();
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         // 7 에서 이번 주문 1개를 DB 모드 진입으로 낮춘 값이다
         assertThat(fixture.stockOf(productId)).isEqualTo(6);
@@ -144,9 +144,9 @@ class RedisDownFallbackTest {
         secondPayment = fixture.payment(productId, 1);
         redisThrows();
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(
-                "pk-second-" + UUID.randomUUID(), secondPayment.getOrderId(), PaymentFixture.PRICE))
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, secondPayment,
+                "pk-second-" + UUID.randomUUID(), PaymentFixture.PRICE))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
 
@@ -161,7 +161,7 @@ class RedisDownFallbackTest {
         payment = fixture.payment(productId, 1);
         circuitBreakerRegistry.circuitBreaker("redis-stock").transitionToOpenState();
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         verify(productStockRedisRepository, never()).preReserve(any(), anyInt());
         assertThat(fixture.stockModeOf(productId)).isEqualTo("DB");
@@ -175,7 +175,7 @@ class RedisDownFallbackTest {
         payment = fixture.payment(productId, 1);
         redisTemplate.delete(ProductStockRedisRepository.STOCK_KEY_PREFIX + productId);
 
-        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+        assertThatThrownBy(() -> ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INSUFFICIENT_STOCK));
 
@@ -191,7 +191,7 @@ class RedisDownFallbackTest {
         jdbc.update("UPDATE product SET stock_mode = 'DB', stock_mode_changed_at = now() WHERE id = ?", productId);
         productStockRedisRepository.initStock(productId, 99);
 
-        paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        ConfirmAsOwner.confirm(paymentApplicationService, payment, paymentKey, PaymentFixture.PRICE);
 
         assertThat(redisTemplate.opsForValue().get(ProductStockRedisRepository.STOCK_KEY_PREFIX + productId))
                 .isEqualTo("99");

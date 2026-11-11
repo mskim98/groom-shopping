@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 전역 예외 처리 클래스.
@@ -44,6 +45,16 @@ public class GlobalExceptionHandler {
     log.warn("[ValidationException] {}", detail);
     return ResponseEntity.badRequest()
             .body(ErrorResponse.of(HttpStatus.BAD_REQUEST.value(), "INVALID_PARAMETER", detail));
+  }
+
+  /**
+   * 없는 경로 요청 - 클라이언트 오류가 500 으로 집계되어 5xx 경보를 울리지 않도록 404 로 답한다
+   * (노출하지 않은 /actuator/env 도 여기서 404 가 된다)
+   */
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ErrorResponse> handleNoResource(NoResourceFoundException e) {
+    log.warn("[NoResourceFound] {}", e.getResourcePath());
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse.from(ErrorCode.NOT_FOUND));
   }
 
   /**

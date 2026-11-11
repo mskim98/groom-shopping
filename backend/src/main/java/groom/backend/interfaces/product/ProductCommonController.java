@@ -1,5 +1,6 @@
 package groom.backend.interfaces.product;
 
+import groom.backend.common.annotation.CheckPermission;
 import groom.backend.domain.product.model.Product;
 import groom.backend.domain.product.service.ProductCommonService;
 import groom.backend.interfaces.product.dto.request.CreateProductRequest;
@@ -26,6 +27,8 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 @Tag(name = "Product Management", description = "제품 관리 API (생성, 수정, 삭제, 재고 관리)")
 @SecurityRequirement(name = "JWT")
+// 일반 사용자가 상품 · 재고를 바꾸거나 지우는 것을 막으려고 변경 API 전체를 관리자 전용으로 둔다
+@CheckPermission(roles = {"ADMIN"}, mode = CheckPermission.Mode.ANY, page = CheckPermission.Page.FO)
 public class ProductCommonController {
 
     private final ProductCommonService productService;
