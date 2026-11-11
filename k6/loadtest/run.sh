@@ -284,5 +284,5 @@ cmd_down() { $DC down --remove-orphans; }
 sub="${1:-}"; shift || true
 case "$sub" in
   keys|infra|seed|app|tiny|step|collect|down) "cmd_$sub" "$@" ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac
