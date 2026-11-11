@@ -58,36 +58,40 @@ class PaymentEventPublisherMarkFailureTest {
     }
 
     @Test
-    @DisplayName("발행은 성공했는데 PUBLISHED 표시가 던지면 그 행의 임대는 풀지 않고 못 보낸 행만 풀며 임대가 남은 행은 다음 회차에 집히지 않아 다시 보내지 않는다")
+    @DisplayName("확인된 행의 PUBLISHED 표시가 던지면 그 행들의 임대는 풀지 않고 확인되지 않은 행만 풀며 임대가 남은 행은 다음 회차에 집히지 않아 다시 보내지 않는다")
     @SuppressWarnings("unchecked")
-    void publishPending_표시가_실패하면_그_행의_임대는_유지하고_뒤의_행만_풀고_다음_회차에_다시_보내지_않는다() {
+    void publishPending_표시가_실패하면_확인된_행의_임대는_유지하고_확인되지_않은_행만_풀고_다음_회차에_다시_보내지_않는다() {
         PaymentOutbox marked = row();
-        PaymentOutbox second = row();
-        PaymentOutbox third = row();
-        // 두 번째 회차에는 임대가 남은 첫 행이 빠진 나머지만 집힌다 (집기 SQL 이 임대 중인 행을 건너뛴다)
+        PaymentOutbox alsoMarked = row();
+        PaymentOutbox unacknowledged = row();
+        // 두 번째 회차에는 임대가 남은 확인된 행이 빠진 나머지만 집힌다 (집기 SQL 이 임대 중인 행을 건너뛴다)
         given(outboxRepository.claimPendingBatch(100, 60000L))
-                .willReturn(List.of(marked, second, third))
-                .willReturn(List.of(second, third));
-        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository).markPublished(marked.getId());
+                .willReturn(List.of(marked, alsoMarked, unacknowledged))
+                .willReturn(List.of(unacknowledged));
+        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository)
+                .markPublished(List.of(marked.getId(), alsoMarked.getId()));
         List<String> sentKeys = Collections.synchronizedList(new ArrayList<>());
         doAnswer(invocation -> {
             ProducerRecord<String, String> record = invocation.getArgument(0);
             sentKeys.add(record.key());
+            if (record.key().equals(unacknowledged.getAggregateId().toString())) {
+                return CompletableFuture.failedFuture(new IllegalStateException("record too large"));
+            }
             return CompletableFuture.completedFuture(null);
         }).when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 
         publisher.publishPending();
 
-        assertThat(sentKeys).as("첫 행만 보내고 표시 실패에서 회차를 끝낸다").containsExactly(marked.getAggregateId().toString());
-        // 표시에 실패한 행은 임대를 남기고 보내지 못한 둘째 · 셋째 행만 푼다
-        verify(outboxRepository, times(1)).releaseLease(List.of(second.getId(), third.getId()));
+        // 확인된 두 행은 임대를 남기고 확인되지 않은 행만 푼다
+        verify(outboxRepository, times(1)).releaseLease(List.of(unacknowledged.getId()));
 
         publisher.publishPending();
 
         assertThat(sentKeys.stream().filter(marked.getAggregateId().toString()::equals))
                 .as("임대 안에 같은 행을 다시 보낸 횟수").hasSize(1);
-        assertThat(sentKeys).contains(second.getAggregateId().toString(), third.getAggregateId().toString());
-        verify(outboxRepository, never()).releaseLease(List.of(marked.getId(), second.getId(), third.getId()));
+        assertThat(sentKeys.stream().filter(unacknowledged.getAggregateId().toString()::equals))
+                .as("임대를 푼 행은 다음 회차에 다시 보낸다").hasSize(2);
+        verify(outboxRepository, never()).releaseLease(List.of(marked.getId(), alsoMarked.getId(), unacknowledged.getId()));
     }
 
     @Test
@@ -96,7 +100,7 @@ class PaymentEventPublisherMarkFailureTest {
     void publishPending_마지막_행의_표시가_실패하면_임대_해제를_요청하지_않는다() {
         PaymentOutbox only = row();
         given(outboxRepository.claimPendingBatch(100, 60000L)).willReturn(List.of(only));
-        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository).markPublished(only.getId());
+        doThrow(new DataAccessResourceFailureException("db down")).when(outboxRepository).markPublished(List.of(only.getId()));
         doAnswer(invocation -> CompletableFuture.completedFuture(null))
                 .when(paymentEventKafkaTemplate).send(any(ProducerRecord.class));
 

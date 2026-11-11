@@ -18,8 +18,8 @@ public interface PaymentOutboxRepository {
     // 발행하지 못한 행의 임대를 풀어 다음 회차가 바로 집게 한다. 한 문장이고 이미 PUBLISHED 가 된 행은 건드리지 않는다
     void releaseLease(List<UUID> ids);
 
-    // 발행에 성공한 행을 PUBLISHED 로 표시하고 임대를 비운다. 이미 PUBLISHED 인 행은 건드리지 않는다
-    void markPublished(UUID id);
+    // 발행 확인이 온 행들을 한 문장으로 PUBLISHED 로 표시하고 임대를 비운다. 이미 PUBLISHED 인 행은 건드리지 않고 빈 목록은 아무 일도 하지 않는다
+    void markPublished(List<UUID> ids);
 
     // 발행 시각이 cutoff 보다 오래된 PUBLISHED 행을 최대 limit 건 지운다(다른 트랜잭션이 잠근 행은 건너뛴다). 지운 건수를 돌려준다
     int deletePublishedBefore(LocalDateTime cutoff, int limit);
