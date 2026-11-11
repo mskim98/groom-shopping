@@ -1,7 +1,9 @@
 package groom.backend.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doAnswer;
@@ -9,6 +11,9 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 
 import groom.backend.application.payment.event.PaymentApprovedEvent;
+import groom.backend.application.product.ConditionalUpdateStockDecrementer;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.order.repository.OrderRepository;
 import groom.backend.domain.payment.model.Payment;
 import groom.backend.domain.payment.model.enums.PaymentStatus;
@@ -61,6 +66,8 @@ class ConfirmWaitSignalTest {
     private ConfirmCompletionSignal signal; // Redis 장애 · 신호 유실을 만들려고 가로챈다
     @SpyBean
     private PaymentRepository paymentRepositorySpy; // 확정을 부른 스레드가 결제를 몇 번 읽는지 센다
+    @SpyBean
+    private ConditionalUpdateStockDecrementer stockDecrementer; // 승인 트랜잭션이 상태를 바꾼 뒤 재고 차감에서 실패하게 만든다
 
     @Autowired
     private PaymentApplicationService paymentApplicationService;
@@ -125,6 +132,16 @@ class ConfirmWaitSignalTest {
             paymentApplicationService.applyApprovedEvent(event);
             return readyAt;
         });
+    }
+
+    private void awaitReady() {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        while (!"READY".equals(fixture.statusOf(payment.getId()))) {
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("READY 가 5초 안에 보이지 않았다");
+            }
+            sleep(10);
+        }
     }
 
     private static void sleep(long ms) {
@@ -202,5 +219,59 @@ class ConfirmWaitSignalTest {
 
         assertThat(ttlMs).as("남은 수명(ms)").isGreaterThan(WAIT_TIMEOUT_MS);
         assertThat(signal.completedAt(payment.getId())).as("기록한 신호는 읽힌다").isNotNull();
+    }
+
+    // 상태 UPDATE 뒤의 재고 차감이 실패하도록 해 승인 트랜잭션을 롤백시킨다(PaymentPostProcessRollbackTest 와 같은 방법)
+    private void failStockDecrementWith(RuntimeException error) {
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw error;
+        }).when(stockDecrementer).decrease(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("승인 트랜잭션이 상태 UPDATE 뒤 롤백되면 신호 키가 남지 않고, 기다리던 확정은 상한까지 기다려 DB 대로 READY 를 반환한다")
+    void 신호_승인롤백_신호키가_없고_확정은_상한까지_기다려_DB대로_READY() throws Exception {
+        failStockDecrementWith(new IllegalStateException("post-process down"));
+        CompletableFuture<Throwable> rolledBack = CompletableFuture.supplyAsync(() -> {
+            awaitReady();
+            sleep(300);
+            try {
+                paymentApplicationService.applyApprovedPaymentInTx(payment.getOrderId(),
+                        PaymentFixture.tossResponse(paymentKey, PaymentFixture.PRICE), java.util.List.of());
+                return null;
+            } catch (Throwable e) {
+                return e;
+            }
+        });
+
+        long start = System.nanoTime();
+        Payment result = paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(rolledBack.get(5, TimeUnit.SECONDS)).as("승인 트랜잭션이 재고 차감 실패로 롤백됐다")
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("post-process down");
+        assertThat(redis.hasKey(ConfirmCompletionSignal.keyOf(payment.getId()))).as("롤백된 승인은 신호를 남기지 않는다").isFalse();
+        assertThat(result.getStatus()).as("DB 에서는 결제가 READY 그대로다").isEqualTo(PaymentStatus.READY);
+        assertThat(elapsedMs).as("떠도는 신호가 없으니 상한까지 기다린다 - 롤백 직후 서둘러 답하지 않는다").isGreaterThanOrEqualTo(WAIT_TIMEOUT_MS - 50);
+    }
+
+    @Test
+    @DisplayName("컨슈머 실패(markPaymentFailed)는 커밋 뒤 신호를 세워 확정이 대기 상한보다 훨씬 먼저 실패 코드를 응답한다")
+    void 신호_컨슈머실패_markPaymentFailed가_신호를_세워_상한전에_실패코드_응답() throws Exception {
+        failStockDecrementWith(new BusinessException(ErrorCode.PRODUCT_STOCK_CONFLICT));
+        CompletableFuture<Long> readyAt = consumerAfter(300);
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(paymentKey, payment.getOrderId(), PaymentFixture.PRICE))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode()).isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        readyAt.get(5, TimeUnit.SECONDS);
+
+        assertThat(fixture.statusOf(payment.getId())).isEqualTo("FAILED");
+        assertThat(fixture.failureCodeOf(payment.getId())).isEqualTo(ErrorCode.PRODUCT_STOCK_CONFLICT.name());
+        assertThat(redis.hasKey(ConfirmCompletionSignal.keyOf(payment.getId()))).as("FAILED 커밋 뒤 신호가 서 있다").isTrue();
+        assertThat(elapsedMs).as("대기 상한(3000ms)이 아니라 컨슈머 실패 직후 응답한다").isLessThan(WAIT_TIMEOUT_MS - 1000);
     }
 }
