@@ -1,6 +1,7 @@
 package groom.backend.interfaces.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -13,6 +14,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.payment.PaymentApplicationService;
+import groom.backend.common.exception.BusinessException;
+import groom.backend.common.exception.ErrorCode;
 import groom.backend.domain.auth.enums.Grade;
 import groom.backend.domain.auth.enums.Role;
 import groom.backend.domain.order.model.Order;
@@ -72,6 +76,8 @@ class PaymentOwnershipTest {
 
     @Autowired
     private MockMvc mockMvc;
+    @Autowired
+    private PaymentApplicationService paymentApplicationService;
     @Autowired
     private SpringDataUserRepository userRepository;
     @Autowired
@@ -240,5 +246,16 @@ class PaymentOwnershipTest {
                         .header("Authorization", ownerToken)
                         .content("{\"paymentId\":\"" + payment.getId() + "\",\"cancelReason\":\"x\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("호출자 사용자 id 가 null 이면 검사를 건너뛰지 않고 Toss 호출 전에 ACCESS_DENIED 로 거절한다")
+    void confirm_호출자_id가_null이면_Toss호출없이_거절한다() {
+        assertThatThrownBy(() -> paymentApplicationService.confirmPayment(null, paymentKey, payment.getOrderId(), PRICE))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.ACCESS_DENIED));
+
+        verify(tossPaymentClient, never()).confirmPayment(any(), anyString());
+        assertThat(statusOfPayment()).isEqualTo("PENDING");
     }
 }
