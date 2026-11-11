@@ -55,6 +55,8 @@ cmd_infra() {
   echo "infra up"
 }
 
+payment_events_gone() { ! kafka_cli kafka-topics --list | grep -qx payment-events; }
+
 cmd_seed() {
   # 템플릿은 한 번 만들고 복제한다 - 이미 템플릿 표시가 된 DB 가 있으면 다시 만들지 않는다(새 Flyway 마이그레이션이 생겼을 때만 SEED_REBUILD_TEMPLATE=1)
   if [ "${SEED_REBUILD_TEMPLATE:-0}" = 1 ] || [ "$(psql_db postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = 'shop_seed_template' AND datistemplate")" != 1 ]; then
@@ -70,6 +72,10 @@ cmd_seed() {
   docker exec redis redis-cli FLUSHALL > /dev/null
   bash db/seed/load-redis.sh "$SEED_DB"
   bash db/seed/recreate-topics.sh
+  # recreate-topics.sh 는 payment-events 를 12 파티션으로 만든다 - 파티션 수는 KafkaConfig 의 NewTopic 빈(2)이 정해야 하고 Kafka 는 파티션을 줄이지 못하므로,
+  # 이 토픽만(측정 Kafka 컨테이너 안에서) 지워 백엔드가 뜰 때 KafkaAdmin 이 빈의 파티션 수로 만들게 한다
+  kafka_cli kafka-topics --delete --topic payment-events > /dev/null
+  wait_for "payment-events deleted" 60 payment_events_gone
   # 백엔드가 뜨기 전의 검사 - 기동 뒤에는 시드의 PENDING 행이 처리돼 이 검사가 통과하지 못한다(R119-7)
   local code=0 out
   out="$(bash db/seed/verify.sh "$SEED_DB" 1)" || code=$?
@@ -96,7 +102,7 @@ cmd_app() {
   echo "app up"
 }
 
-# payment-events 의 파티션별 끝 오프셋 "partition offset" 12 줄
+# payment-events 의 파티션별 끝 오프셋 "partition offset" - 파티션 수만큼의 줄(collect.py 가 읽은 줄의 파티션 수대로 읽는다)
 end_offsets() {
   kafka_cli kafka-get-offsets --topic payment-events --time -1 2> /dev/null | awk -F: '{print $2, $3}' | sort -n
 }

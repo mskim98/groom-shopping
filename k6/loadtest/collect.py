@@ -12,7 +12,6 @@ import subprocess
 import sys
 
 ENDPOINT_URIS = {"/api/v1/cart/add": "cart_add", "/api/v1/order": "order", "/api/v1/payment/confirm": "confirm"}
-PARTITIONS = 12
 # 단계 조건(run.sh 의 write_condition 이 쓴다) - 폴더의 condition.json 에 없는 값은 추측하지 않고 null 로 쓰고 필드 이름을 condition_inferred 에 적는다
 STEP_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "hold_s", "ramp_s", "seed_copy", "servers")
 
@@ -40,22 +39,23 @@ def percentile(sorted_vals, p):
 
 
 def offsets(path):
-    out = [0] * PARTITIONS
+    # 파티션 수는 읽은 줄의 가장 큰 파티션 번호 + 1 이다(payment-events 의 파티션 수가 12 에서 2 로 줄어도 그대로 읽는다) - 줄이 없으면 빈 목록
+    found = {}
     for line in read(path).splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) < PARTITIONS:
-            out[int(parts[0])] = int(parts[1])
-    return out
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            found[int(parts[0])] = int(parts[1])
+    return [found.get(p, 0) for p in range(max(found) + 1)] if found else []
 
 
 def lag_max(path):
     # lag.log 는 `## <시각>` 로 시작하는 kafka-consumer-groups --describe 출력 묶음의 이어붙임이다
-    mx = [0] * PARTITIONS
+    found = {}
     for line in read(path).splitlines():
         f = line.split()
-        if len(f) >= 6 and f[1] == "payment-events" and f[2].isdigit() and f[5].isdigit() and int(f[2]) < PARTITIONS:
-            mx[int(f[2])] = max(mx[int(f[2])], int(f[5]))
-    return mx
+        if len(f) >= 6 and f[1] == "payment-events" and f[2].isdigit() and f[5].isdigit():
+            found[int(f[2])] = max(found.get(int(f[2]), 0), int(f[5]))
+    return [found.get(p, 0) for p in range(max(found) + 1)] if found else []
 
 
 def ledger(folder):
@@ -306,7 +306,8 @@ def sampler_gaps(folder):
 def collect_step(folder, target):
     k6 = json.loads(read(os.path.join(folder, "k6-summary.json"), "{}") or "{}")
     before, after = offsets(os.path.join(folder, "offsets_before.txt")), offsets(os.path.join(folder, "offsets_after.txt"))
-    msgs = [a - b for a, b in zip(after, before)]
+    width = max(len(before), len(after))
+    msgs = [(after[i] if i < len(after) else 0) - (before[i] if i < len(before) else 0) for i in range(width)]
     be, nginx_status, unknown, by_path = backend_requests(folder)
     m = re.search(r"setup: logins=(\d+) carts_cleared=(\d+) extra_requests=(\d+)", read(os.path.join(folder, "k6.log")))
     # 포화로 한 요청도 끝내지 못한 엔드포인트는 결과다 - 건수 0 · p95 · p99 는 값 없음(null)으로 쓴다(R119-11)
@@ -334,7 +335,7 @@ def collect_step(folder, target):
         "nginx_unmatched_upstream": unknown,
         "confirm_by_backend": confirm_by_backend(folder),
         "confirm_stages": stage_delta(os.path.join(folder, "confirm-stages-start.tsv"), os.path.join(folder, "confirm-stages-end.tsv"), "payment_confirm_stage_seconds"),
-        "partitions": {"messages": msgs, "max_min_ratio": (max(msgs) / min(msgs)) if min(msgs) > 0 else None},
+        "partitions": {"messages": msgs, "max_min_ratio": (max(msgs) / min(msgs)) if msgs and min(msgs) > 0 else None},
         "lag": {"max_per_partition": lag_max(os.path.join(folder, "lag.log"))},
         "ledger_apply_ms": ledger(folder),
         "pgss_top": pgss(os.path.join(folder, "pgss.tsv")),
