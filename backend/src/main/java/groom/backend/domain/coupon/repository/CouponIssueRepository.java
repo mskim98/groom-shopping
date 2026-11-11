@@ -2,6 +2,7 @@ package groom.backend.domain.coupon.repository;
 
 import groom.backend.domain.coupon.model.entity.CouponIssue;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -43,4 +44,11 @@ public interface CouponIssueRepository extends JpaRepository<CouponIssue, Long> 
 
   // 테스트 정리용. 자기가 만든 쿠폰의 발급 이력만 지우려는 것이다
   List<CouponIssue> findByCoupon_Id(Long couponId);
+
+  // 결제 승인이 쿠폰을 한 문장으로 소모한다 - 읽고 쓰면 동시 승인 둘이 함께 "활성"을 보고 둘 다 통과한다
+  // 만료 전이어야 하고(deletedAt 은 활성일 때 만료일), 성공하면 deletedAt 은 사용 시각이 된다. 0 이면 소모하지 못한 것이다
+  @Modifying(flushAutomatically = true)
+  @Query("UPDATE CouponIssue ci SET ci.isActive = false, ci.deletedAt = :now "
+      + "WHERE ci.id = :id AND ci.userId = :userId AND ci.isActive = true AND ci.deletedAt > :now")
+  int consumeIfUsable(@Param("id") Long id, @Param("userId") Long userId, @Param("now") LocalDateTime now);
 }

@@ -3,6 +3,7 @@ package groom.backend.application.payment;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import groom.backend.application.cart.CartApplicationService;
+import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.payment.event.PaymentApprovedEvent;
 import groom.backend.application.product.ConditionalUpdateStockDecrementer;
 import groom.backend.application.product.ProductStockService;
@@ -84,6 +85,7 @@ public class PaymentApplicationService {
     private final FlashStockReservation flashStockReservation; // 플래시 상품 진입 예약 · TX1 원장 기록 · 실패 되돌림
     private final ConfirmCompletionSignal confirmCompletionSignal; // 컨슈머가 커밋 뒤에 세우는 완료 신호 - confirm 이 DB 대신 읽는다
     private final ConfirmStageTimers stageTimers; // 확정 구간별 시간(payment.confirm.stage)
+    private final CouponIssueService couponIssueService; // 주문의 쿠폰을 승인 트랜잭션 안에서 소모한다
     private final ObjectMapper objectMapper; // 객체 ↔ JSON 변환
     // 자기호출(self-invocation) 시 Spring AOP 프록시를 우회해 @Transactional 이 무효화되는 문제를
     // 막기 위해, 자기 자신을 ObjectProvider 로 주입받아 프록시를 거쳐 호출한다(생성자 순환 의존 회피).
@@ -523,6 +525,11 @@ public class PaymentApplicationService {
         Order order = payment.getOrder();
         order.changeStatus(OrderStatus.CONFIRMED);
         orderRepository.save(order);
+
+        // 쿠폰을 소모하지 못하면 예외로 이 트랜잭션 전체가 롤백된다 - 한 쿠폰이 두 주문의 할인으로 남지 않게 승인 시점에 한 번만 쓴다
+        if (order.getCouponId() != null) {
+            couponIssueService.consumeOnApproval(order.getCouponId(), order.getUserId());
+        }
 
         List<PaymentNotificationService.StockReductionResult> stockReductions = reduceProductStock(order, payment.getId());
         processTicketProducts(order);

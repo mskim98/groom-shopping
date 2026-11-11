@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groom.backend.application.coupon.CouponIssueService;
 import groom.backend.application.product.ProductStockRedisRepository;
 import groom.backend.application.product.ProductStockService;
 import groom.backend.application.product.StockLedgerRepository;
@@ -82,6 +83,9 @@ class PaymentConfirmExceptionPropagationTest {
     private ConfirmCompletionSignal confirmCompletionSignal;
     @Mock
     private ConfirmStageTimers stageTimers;
+    // 생성자 인자로 추가된 쿠폰 소모. 빠뜨리면 Mockito 가 null 을 넣어 쿠폰 있는 주문의 승인이 NPE 로 터진다
+    @Mock
+    private CouponIssueService couponIssueService;
     @Mock
     private ObjectMapper objectMapper;
     @Mock
