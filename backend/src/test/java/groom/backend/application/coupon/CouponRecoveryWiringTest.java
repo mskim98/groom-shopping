@@ -149,7 +149,7 @@ class CouponRecoveryWiringTest {
                 couponRepository, mock(RedisTemplate.class), stockRepository, recoveryService,
                 mock(DbLockIssueStrategy.class),
                 new CouponRedisCircuit(CircuitBreakerRegistry.ofDefaults(), 50f, 10, 20, 5000L),
-                mock(MyCouponCacheEvictor.class));
+                mock(MyCouponCacheEvictor.class), new CouponRedisLatency(new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 200L));
 
         assertThat(service.enqueue(1L, 100L).status()).isEqualTo(CouponIssueResult.Status.UNAVAILABLE);
         verify(stockRepository, never()).enqueue(anyLong(), anyLong(), anyString());

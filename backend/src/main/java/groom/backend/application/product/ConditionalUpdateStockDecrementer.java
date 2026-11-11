@@ -2,6 +2,7 @@ package groom.backend.application.product;
 
 import groom.backend.common.exception.BusinessException;
 import groom.backend.common.exception.ErrorCode;
+import groom.backend.infrastructure.cache.StockQuantityInvalidator;
 import groom.backend.interfaces.product.persistence.SpringDataProductRepository;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConditionalUpdateStockDecrementer {
 
     private final SpringDataProductRepository springDataProductRepository;
+    // 벌크 UPDATE 는 엔티티 리스너를 타지 않으므로 직접 부른다
+    private final StockQuantityInvalidator quantityInvalidator;
 
     // REQUIRED : 결제 후처리 트랜잭션에 합류해 후처리 실패 시 차감도 함께 롤백된다
     /** 재고를 차감하고 차감 후 재고량을 반환한다. 부족하면 INSUFFICIENT_STOCK */
@@ -27,6 +30,7 @@ public class ConditionalUpdateStockDecrementer {
         if (affected == 0) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK);
         }
+        quantityInvalidator.evictAfterCommit(productId);
         return springDataProductRepository.findById(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND))
                 .getStock();

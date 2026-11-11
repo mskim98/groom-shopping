@@ -41,6 +41,8 @@ public class CouponAsyncIssueService {
     private final CouponRedisCircuit redisCircuit;
     // DB 경로로 발급한 사용자의 목록 캐시를 비운다 - 스트림 경로는 컨슈머가 확정 뒤에 비운다
     private final MyCouponCacheEvictor myCouponCacheEvictor;
+    // 접수 · 상태 조회의 Redis 호출 시간 단계 타이머와 느린 호출 WARN
+    private final CouponRedisLatency latency;
 
     /**
      * 접수 - 판정하고 스트림에 싣는다. 여기서 기다리는 일이 없어야 한다
@@ -59,7 +61,8 @@ public class CouponAsyncIssueService {
         String requestId = UUID.randomUUID().toString();
         CouponStockRedisRepository.IssueResult gate;
         try {
-            gate = redisCircuit.call(() -> couponStockRedisRepository.enqueue(couponId, userId, requestId));
+            gate = redisCircuit.call(() -> latency.timed("accept_lua", "EVALSHA coupon-enqueue", 0L,
+                    () -> couponStockRedisRepository.enqueue(couponId, userId, requestId)));
         } catch (DataAccessException | CallNotPermittedException e) {
             // Redis 한 곳에서 판정하므로 끊기면 접수로 통과시킬 수 없다. DB 경로가 같은 쿠폰 행 잠금으로 대신 판정한다
             // 스크립트가 던진 경우 접수 상태는 알 수 없다(Lua 는 원자적이라 일부만 쓰이지 않는다 - 응답만 유실됐을 수 있다)
@@ -105,7 +108,8 @@ public class CouponAsyncIssueService {
      * requestId 의 현재 처리 상태를 조회한다 (클라이언트 폴링)
      */
     public String getStatus(String requestId) {
-        String status = redisTemplate.opsForValue().get(CouponStockRedisRepository.statusKey(requestId));
+        String status = latency.timed("status_redis_read", "GET coupon-status", 0L,
+                () -> redisTemplate.opsForValue().get(CouponStockRedisRepository.statusKey(requestId)));
         return status != null ? status : CouponIssueStatus.UNKNOWN;
     }
 }

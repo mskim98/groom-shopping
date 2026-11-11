@@ -1,5 +1,6 @@
 package groom.backend.interfaces.product.persistence;
 
+import groom.backend.infrastructure.cache.StockQuantityInvalidator;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -10,6 +11,8 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
+// 저장으로 stock · stock_mode 가 바뀌면 커밋 뒤에 상세 수량 L2 항목을 지운다
+@EntityListeners(StockQuantityInvalidator.class)
 @Table(name = "product")
 @Getter
 @Setter

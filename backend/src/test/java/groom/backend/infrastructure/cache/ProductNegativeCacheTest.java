@@ -70,6 +70,8 @@ class ProductNegativeCacheTest extends ProductCacheTestBase {
         jdbc.update("DELETE FROM product WHERE id = ?", id);
         // 본문 L1 은 남기고 수량 L1 만 비운다(운영에서는 두 항목의 쓰기 시각이 달라 만료 시점이 어긋날 수 있다)
         cache.invalidateQuantity(id);
+        // 수량 L2 항목도 없는 상태다 - 남아 있으면 L2 만료(기본 10초)까지 지워진 행의 수량이 보인다. 앱의 삭제 경로(deleteProduct)는 이 항목도 지운다
+        redis.delete(ProductDetailCache.quantityKey(id));
 
         mockMvc.perform(get("/v1/product/{id}", id)).andExpect(status().isNotFound());
     }
