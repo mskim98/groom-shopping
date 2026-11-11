@@ -312,7 +312,8 @@ public class KafkaConfig {
         return monitoredConsumerFactory(configProps);
     }
 
-    // concurrency 6 : 인스턴스당 컨슈머 스레드 수. payment-events 파티션 12개를 인스턴스 2대 x 6 = 스레드 12개가 하나씩 맡는다(3대면 스레드 6개가 놀고, 4 였을 때는 2대에서 스레드 4개가 파티션 2개씩 받았다). 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
+    // concurrency 1 : 인스턴스당 컨슈머 스레드 수. 목표 초당 25건에 레코드 하나가 컨슈머에서 5~6ms 라 스레드 하나(약 117건/초)면 된다.
+    // payment-events 파티션 2개를 인스턴스 2대 x 1 = 스레드 2개가 하나씩 맡고, 한 대가 멈추면 남은 스레드가 파티션 둘을 받는다. 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
     // 비즈니스 실패는 서비스가 처리하고 정상 반환하므로 여기 오류 처리기는 DB 장애·파싱 실패만 본다:
     // 1s · 2s · 4s · 8s · 16s 로 5회 재시도한 뒤 payment-events-dlq 로 보낸다
     @Bean
@@ -320,7 +321,7 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(paymentApprovedConsumerFactory());
-        factory.setConcurrency(6);
+        factory.setConcurrency(1);
         factory.setAutoStartup(paymentConsumerAutoStartup);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
 
@@ -339,11 +340,11 @@ public class KafkaConfig {
         return factory;
     }
 
-    // 파티션 12개 : 인스턴스 2대 x 컨슈머 concurrency 6 이 각자 한 파티션을 맡는다
-    // 파티션은 줄일 수 없다(줄이려면 토픽 삭제) - 인스턴스가 늘면 12 를 넘겨 다시 정해야 한다
+    // 파티션 2개 : 인스턴스 2대 x 컨슈머 concurrency 1 이 각자 한 파티션을 맡는다. 인스턴스 2대까지만 일을 나눠 받고 3대째는 놀므로 대수를 늘리면 파티션도 그만큼 늘려 다시 정해야 한다
+    // 초당 25건 목표에 맞춰 12개에서 2개로 줄였다. 파티션은 줄일 수 없어서(Kafka 는 줄이기를 거절한다) 이미 있는 토픽은 삭제 뒤 다시 만들기 전까지 옛 파티션 수를 그대로 가진다
     @Bean
     public NewTopic paymentEventsTopic() {
-        return TopicBuilder.name("payment-events").partitions(12).replicas(1).build();
+        return TopicBuilder.name("payment-events").partitions(2).replicas(1).build();
     }
 
     // 후처리 컨슈머가 재시도 끝에 포기한 레코드의 보관 토픽. 소비자는 두지 않는다(수동 조회용)
