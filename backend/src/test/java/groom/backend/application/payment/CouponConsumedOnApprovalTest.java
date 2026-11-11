@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -86,12 +87,16 @@ class CouponConsumedOnApprovalTest {
     void setUp() {
         fixture = new PaymentFixture(productRepository, orderRepository, paymentRepository, jdbc);
         product = fixture.product(10);
+        clearBuyerCart();
+        jdbc.update("INSERT INTO cart_item (cart_id, product_id, quantity) SELECT id, ?, 1 FROM cart WHERE user_id = ?",
+                product, BUYER);
         coupon = couponRepository.save(Coupon.builder().name("approval-" + UUID.randomUUID()).quantity(10L)
                 .amount(300).type(CouponType.DISCOUNT).expireDate(LocalDate.now().plusDays(30)).build());
     }
 
     @AfterEach
     void tearDown() {
+        clearBuyerCart();
         payments.forEach(fixture::cleanupPaymentOnly);
         redis.delete(cacheKeys);
         // 쿠폰 발급 행은 쿠폰 삭제의 CASCADE 로 함께 지워진다
@@ -103,7 +108,8 @@ class CouponConsumedOnApprovalTest {
     @DisplayName("쿠폰을 쓴 주문을 컨슈머 경로로 승인하면 결제 DONE · 주문 CONFIRMED 와 같은 커밋에서 쿠폰 발급 행이 사용 처리되고 쿠폰 캐시가 비워진다")
     void 쿠폰_주문_승인_쿠폰이_사용_처리된다() throws Exception {
         CouponIssue issue = issue(BUYER, true, LocalDateTime.now().plusDays(1));
-        String itemKey = seedCache(issue);
+        String itemKey = seedCache("coupon-item-cache::" + issue.getId());
+        String listKey = seedCache("user-coupons-list-cache::" + BUYER);
         Payment payment = paymentWithCoupon(issue);
 
         LocalDateTime before = LocalDateTime.now().minusSeconds(1);
@@ -114,6 +120,7 @@ class CouponConsumedOnApprovalTest {
         assertThat(isActive(issue)).as("승인 뒤 쿠폰 발급 행 활성").isFalse();
         assertThat(usedAt(issue)).as("승인 뒤 쿠폰 사용 시각").isAfter(before).isBeforeOrEqualTo(LocalDateTime.now());
         assertThat(redis.hasKey(itemKey)).as("커밋 뒤 쿠폰 단건 캐시").isFalse();
+        assertThat(redis.hasKey(listKey)).as("커밋 뒤 사용자 쿠폰 목록 캐시").isFalse();
     }
 
     @Test
@@ -144,7 +151,7 @@ class CouponConsumedOnApprovalTest {
     void 남의_쿠폰_승인_롤백되고_쿠폰은_그대로다() throws Exception {
         long otherUser = jdbc.queryForObject("SELECT min(id) FROM users WHERE id <> ?", Long.class, BUYER);
         CouponIssue issue = issue(otherUser, true, LocalDateTime.now().plusDays(1));
-        String itemKey = seedCache(issue);
+        String itemKey = seedCache("coupon-item-cache::" + issue.getId());
         Payment payment = paymentWithCoupon(issue);
 
         approve(payment);
@@ -208,6 +215,7 @@ class CouponConsumedOnApprovalTest {
         assertThat(fixture.failureCodeOf(payment.getId())).isEqualTo("COUPON_NOT_USABLE");
         assertThat(fixture.orderStatusOf(payment.getOrderId())).as("롤백 뒤 주문 상태").isEqualTo("PENDING");
         assertThat(fixture.stockOf(product)).as("롤백 뒤 재고").isEqualTo(10);
+        assertThat(buyerCartRows()).as("롤백 뒤 cart_item").isEqualTo(Map.of(product, 1));
         assertThat(fixture.compensationCountOf(payment.getId())).as("Toss 취소 보상 기록").isEqualTo(1);
     }
 
@@ -235,9 +243,8 @@ class CouponConsumedOnApprovalTest {
                 .createdAt(LocalDateTime.now().minusDays(1)).deletedAt(deletedAt).build());
     }
 
-    // 쿠폰 단건 캐시 키(coupon-item-cache::<발급 id>)에 값을 심어 커밋 뒤 제거를 본다
-    private String seedCache(CouponIssue issue) {
-        String key = "coupon-item-cache::" + issue.getId();
+    // 캐시 키에 값을 심어 커밋 뒤 제거(또는 롤백 뒤 유지)를 본다
+    private String seedCache(String key) {
         redis.opsForValue().set(key, "seed");
         cacheKeys.add(key);
         return key;
@@ -250,5 +257,18 @@ class CouponConsumedOnApprovalTest {
     private LocalDateTime usedAt(CouponIssue issue) {
         return jdbc.queryForObject("SELECT deleted_at FROM coupon_issue WHERE id = ?", LocalDateTime.class,
                 issue.getId());
+    }
+
+    private void clearBuyerCart() {
+        jdbc.update("DELETE FROM cart_item WHERE cart_id IN (SELECT id FROM cart WHERE user_id = ?)", BUYER);
+    }
+
+    private Map<UUID, Integer> buyerCartRows() {
+        Map<UUID, Integer> rows = new java.util.HashMap<>();
+        jdbc.query("SELECT ci.product_id, ci.quantity FROM cart_item ci JOIN cart c ON c.id = ci.cart_id WHERE c.user_id = ?",
+                rs -> {
+                    rows.put(rs.getObject("product_id", UUID.class), rs.getInt("quantity"));
+                }, BUYER);
+        return rows;
     }
 }
