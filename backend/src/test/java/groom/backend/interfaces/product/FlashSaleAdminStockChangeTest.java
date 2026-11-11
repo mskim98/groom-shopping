@@ -20,6 +20,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -54,6 +57,9 @@ class FlashSaleAdminStockChangeTest {
 
     @BeforeEach
     void setUp() {
+        // 상품 변경 API 가 관리자 전용이라 컨트롤러를 직접 부르는 이 시험은 관리자 인증을 심어 둔다
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                "admin", null, java.util.List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
         flashId = save(10, true);
@@ -63,6 +69,7 @@ class FlashSaleAdminStockChangeTest {
 
     @AfterEach
     void tearDown() {
+        SecurityContextHolder.clearContext();
         redisTemplate.delete(ProductStockRedisRepository.STOCK_KEY_PREFIX + flashId);
         productRepository.deleteById(flashId);
         productRepository.deleteById(plainId);

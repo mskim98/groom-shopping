@@ -35,6 +35,11 @@ class PaymentConfirmResponseCodeTest {
     private final User user = mock(User.class);
 
     @BeforeEach
+    void stubUserId() {
+        given(user.getId()).willReturn(7L);
+    }
+
+    @BeforeEach
     void setUp() {
         controller = new PaymentController(paymentApplicationService);
     }
@@ -50,7 +55,7 @@ class PaymentConfirmResponseCodeTest {
     @DisplayName("서비스가 DONE을 돌려주면 200이다")
     void confirm_서비스가_DONE을_돌려주면_200이다() {
         Payment payment = paymentWith(PaymentStatus.DONE);
-        given(paymentApplicationService.confirmPayment(eq("pk-1"), eq(orderId), any())).willReturn(payment);
+        given(paymentApplicationService.confirmPayment(eq(7L), eq("pk-1"), eq(orderId), any())).willReturn(payment);
 
         ResponseEntity<PaymentResponse> response =
                 controller.confirmPayment(user, new ConfirmPaymentRequest("pk-1", orderId, 1000));
@@ -63,7 +68,7 @@ class PaymentConfirmResponseCodeTest {
     @DisplayName("서비스가 READY를 돌려주면 202에 같은 본문이다")
     void confirm_서비스가_READY를_돌려주면_202에_같은_본문이다() {
         Payment payment = paymentWith(PaymentStatus.READY);
-        given(paymentApplicationService.confirmPayment(eq("pk-1"), eq(orderId), any())).willReturn(payment);
+        given(paymentApplicationService.confirmPayment(eq(7L), eq("pk-1"), eq(orderId), any())).willReturn(payment);
 
         ResponseEntity<PaymentResponse> response =
                 controller.confirmPayment(user, new ConfirmPaymentRequest("pk-1", orderId, 1000));
