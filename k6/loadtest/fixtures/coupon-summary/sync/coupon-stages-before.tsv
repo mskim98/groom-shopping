@@ -1,0 +1,2 @@
+2026-11-16T00:10:00Z	backend1	coupon_stage_seconds_count{application="shopping",stage="consumer_ack",} 0.0
+2026-11-16T00:10:00Z	backend1	coupon_stage_seconds_sum{application="shopping",stage="consumer_ack",} 0.0

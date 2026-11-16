@@ -170,12 +170,17 @@ class DeriveFinalTest(unittest.TestCase):
 
 
 SUMMARY_KEYS = ["code", "sync_200", "accepted_202", "sold_out_409", "duplicate", "unavailable_503", "success", "failed", "timeout",
-                "time_to_success_ms", "issued_rows", "quantity", "duplicate_rows", "db_connections_peak", "wake", "fallback", "redis_commands"]
+                "time_to_success_ms", "issued_rows", "quantity", "duplicate_rows", "db_connections_peak", "wake", "fallback", "redis_commands",
+                "no_token", "db_lock_waits_peak", "coupon_stages"]
 SUMMARY_FIXTURES = os.path.join(HERE, "fixtures", "coupon-summary")
 
 
 def coupon_summary(name, code="base", mutate=None):
-    """fixtures/coupon-summary/<name> 를 복사해 mutate(폴더) 를 적용한 뒤 coupon 하위 명령을 CODE 환경 변수와 함께 돌려 summary.json 을 읽는다"""
+    return coupon_outputs(name, code, mutate)[0]
+
+
+def coupon_outputs(name, code="base", mutate=None):
+    """fixtures/coupon-summary/<name> 를 복사해 mutate(폴더) 를 적용한 뒤 coupon 하위 명령을 CODE 환경 변수와 함께 돌려 (summary.json, coupon.json) 을 읽는다"""
     tmp = tempfile.mkdtemp()
     d = os.path.join(tmp, "coupon")
     shutil.copytree(os.path.join(SUMMARY_FIXTURES, name), d)
@@ -184,9 +189,9 @@ def coupon_summary(name, code="base", mutate=None):
     env = dict(os.environ, CODE=code)
     r = subprocess.run([sys.executable, "-B", TOOL, "coupon", d, os.path.join(tmp, "coupon.json")], capture_output=True, text=True, cwd=HERE, env=env)
     assert r.returncode == 0, r.stderr[-800:]
-    s = jload(os.path.join(tmp, "summary.json"))
+    out = (jload(os.path.join(tmp, "summary.json")), jload(os.path.join(tmp, "coupon.json")))
     shutil.rmtree(tmp, True)
-    return s
+    return out
 
 
 def write(d, name, text):
@@ -214,7 +219,30 @@ class CouponSummaryTest(unittest.TestCase):
 
     def test_DB_연결_최대는_표본_파일의_최댓값이다(self):
         self.assertEqual(coupon_summary("sync")["db_connections_peak"], 47)
-        self.assertEqual(coupon_summary("sync", mutate=lambda d: write(d, "db-connections.txt", "5\n9\n"))["db_connections_peak"], 9)
+        s = coupon_summary("sync", mutate=lambda d: write(d, "db-connections.txt", "5|0\n9|3\n"))
+        self.assertEqual((s["db_connections_peak"], s["db_lock_waits_peak"]), (9, 3))
+
+    def test_잠금_대기_최대는_표본_파일_두_번째_열의_최댓값이다(self):
+        self.assertEqual(coupon_summary("sync")["db_lock_waits_peak"], 5)
+
+    def test_잠금_대기_열이_없는_옛_표본_파일은_null_이다(self):
+        s = coupon_summary("sync", mutate=lambda d: write(d, "db-connections.txt", "5\n9\n"))
+        self.assertEqual((s["db_connections_peak"], s["db_lock_waits_peak"]), (9, None))
+
+    def test_토큰이_없어_건너뛴_반복은_no_token_으로_요약에_실린다(self):
+        self.assertEqual(coupon_summary("sync")["no_token"], 37)
+        self.assertEqual(coupon_summary("async")["no_token"], 0)
+
+    def test_coupon_json_의_path_는_실행의_발급_경로를_따른다(self):
+        sync_path = coupon_outputs("sync")[1]["path"]
+        self.assertIn("POST /coupon/issue/{id}", sync_path)
+        self.assertNotIn("issue-async/{id}", sync_path.split("status")[0])
+
+    def test_단계_타이머_차이를_백엔드_단계별로_싣는다(self):
+        c = coupon_summary("sync")["coupon_stages"]
+        self.assertEqual(c["backend1"]["consumer_ack"], {"count": 40, "sum_s": 2.0, "mean_ms": 50.0})
+        self.assertEqual(c["backend1"]["consumer_status_write"]["count"], 40)
+        self.assertEqual(coupon_summary("async")["coupon_stages"], {})
 
     def test_깨우기_출처별_수와_대체_경로_수를_센다(self):
         s = coupon_summary("sync")

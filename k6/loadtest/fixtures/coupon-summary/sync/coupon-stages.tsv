@@ -1,0 +1,4 @@
+2026-11-16T00:10:09Z	backend1	coupon_stage_seconds_count{application="shopping",stage="consumer_ack",} 40.0
+2026-11-16T00:10:09Z	backend1	coupon_stage_seconds_sum{application="shopping",stage="consumer_ack",} 2.0
+2026-11-16T00:10:09Z	backend1	coupon_stage_seconds_count{application="shopping",stage="consumer_status_write",} 40.0
+2026-11-16T00:10:09Z	backend1	coupon_stage_seconds_sum{application="shopping",stage="consumer_status_write",} 4.0
