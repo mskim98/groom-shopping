@@ -6,7 +6,8 @@ import {sleep} from 'k6';
 /**
  * 쿠폰 발급 최종 측정 - 수량보다 많은 요청을 일정한 도착률로 보내고, 발급 요청 접수부터 상태 조회가 SUCCESS 를 돌려줄 때까지의 시간을 잰다
  * 반복 하나 = 사용자 하나의 발급 요청 1건(쿠폰당 사용자당 1장 제한이라 사용자는 반복마다 다르다) → 202 면 상태가 SUCCESS · FAILED 가 될 때까지 POLL_MS 간격으로 조회
- * 환경 변수: COUPON_ID(필수) · RATE(500, 초당 요청) · DURATION_S(6) · MAX_VUS(3000) · POLL_MS(100) · POLL_MAX_S(30) · BASE_URL · SUMMARY_FILE · LT_PASSWORD
+ * ISSUE_PATH=issue 면 POST /coupon/issue/{id}(200 이면 그 응답 시간이 최종 응답까지의 시간, 202 면 위와 같이 조회), 기본 issue-async 는 POST /coupon/issue-async/{id}
+ * 환경 변수: COUPON_ID(필수) · ISSUE_PATH(issue-async) · RATE(500, 초당 요청) · DURATION_S(6) · MAX_VUS(3000) · POLL_MS(100) · POLL_MAX_S(30) · BASE_URL · SUMMARY_FILE · LT_PASSWORD
  * 사용자 수 = RATE × DURATION_S (seed_1 … seed_N@test.com 로그인)
  */
 const BASE_URL = __ENV.BASE_URL || 'http://localhost/api/v1';
@@ -16,6 +17,7 @@ const DURATION_S = parseInt(__ENV.DURATION_S || '6', 10);
 const MAX_VUS = parseInt(__ENV.MAX_VUS || '3000', 10);
 const POLL_MS = parseInt(__ENV.POLL_MS || '100', 10);
 const POLL_MAX_S = parseInt(__ENV.POLL_MAX_S || '30', 10);
+const ISSUE_PATH = __ENV.ISSUE_PATH || 'issue-async';
 const PASSWORD = __ENV.LT_PASSWORD || 'loadtest123!';
 const SUMMARY_FILE = __ENV.SUMMARY_FILE || 'coupon-summary.json';
 const REQUESTS = RATE * DURATION_S;
@@ -29,7 +31,7 @@ for (const k of ['accepted_202', 'sync_200', 'sold_out_409', 'duplicate', 'unava
 
 export const options = {
     setupTimeout: '600s',
-    summaryTrendStats: ['avg', 'p(95)', 'p(99)', 'max', 'count'],
+    summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max', 'count'],
     scenarios: {
         issue: {executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION_S + 's', preAllocatedVUs: MAX_VUS, maxVUs: MAX_VUS},
     },
@@ -61,7 +63,7 @@ export default function (data) {
     const token = data.tokens[exec.scenario.iterationInTest];
     if (!token) return;
     const t0 = Date.now();
-    const res = http.post(BASE_URL + '/coupon/issue-async/' + COUPON_ID, null, {headers: headers(token), tags: {name: 'coupon_issue'}});
+    const res = http.post(BASE_URL + '/coupon/' + ISSUE_PATH + '/' + COUPON_ID, null, {headers: headers(token), tags: {name: 'coupon_issue'}});
     accept.add(res.timings.duration);
     if (res.status === 202) {
         result.accepted_202.add(1);
@@ -84,6 +86,7 @@ export default function (data) {
         result.timeout.add(1);
     } else if (res.status === 200) {
         result.sync_200.add(1);
+        completion.add(res.timings.duration);
     } else if (res.status === 409) {
         // 품절과 중복은 응답 본문의 코드로 가른다
         const code = String(res.body).indexOf('ALREADY_ISSUED') >= 0 ? 'duplicate' : 'sold_out_409';
@@ -103,6 +106,7 @@ export function handleSummary(data) {
         rate: RATE,
         duration_s: DURATION_S,
         accept_p95_ms: m['coupon_accept_ms'].values['p(95)'],
+        completion_p50_ms: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values['p(50)'] : null,
         completion_p95_ms: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values['p(95)'] : null,
         completion_p99_ms: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values['p(99)'] : null,
         completion_count: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values.count : 0,

@@ -7,7 +7,7 @@ usage:
                                                                      detail/detail · pgcancel/pgcancel → <out dir>/{result,coupon,pg-cancel,detail}.json
                                                                      상세의 배경 상품 select 는 주 쿠폰 실행의 pgss.tsv(상품 조회 요청이 없는 실행)에서 센 횟수를 본문 적재 수에서 뺀다
   derive-final.py flash  <flash-dir> <out result.json>             tiny 와 단계 폴더(<flash-dir>/tiny/tiny · <flash-dir>/<라벨>/step-<rps>)를 collect.py 로 모아 result.json 한 개로 합친다
-  derive-final.py coupon <coupon-dir> <out coupon.json> [--other 라벨=<coupon-dir> ...]   <coupon-dir> = final-rest.sh coupon 의 <out>/coupon 폴더
+  derive-final.py coupon <coupon-dir> <out coupon.json> [--other 라벨=<coupon-dir> ...]   <coupon-dir> = final-rest.sh coupon 의 <out>/coupon 폴더. 같은 폴더에 summary.json 도 쓴다(환경 변수 CODE = base · new)
   derive-final.py detail <detail-dir> <out detail.json> [--background-pgss <pgss.tsv>]
   derive-final.py pgcancel <pgcancel-dir> <out pg-cancel.json>
 조건 필드(threads · leak_detection · diag_samplers · seed_copy · servers)는 폴더의 condition.json(env.sh 의 write_condition 이 실행 때 쓴다)에서 읽는다.
@@ -64,14 +64,14 @@ def coupon_one(d):
     k = json.load(open(os.path.join(d, "k6-summary.json")))
     s = json.load(open(os.path.join(d, "split.json")))
     # 쿠폰 번호는 nginx 로그의 발급 요청 주소에서, 수량은 시작 때의 Redis 재고 키 값(= 쿠폰 수량)에서 읽는다
-    m = re.search(r"/coupon/issue-async/(\d+) ", rd(d, "nginx.log"))
+    m = re.search(r"/coupon/issue(?:-async)?/(\d+) ", rd(d, "nginx.log"))
     out = {"coupon_id": int(m.group(1)) if m else None, "quantity": int(rd(d, "stock-before.txt")), "requests": k["requests"], "rate": k["rate"], "duration_s": k["duration_s"],
            "issued": int(rd(d, "issued-db.txt")), "completion_p95_ms": k["completion_p95_ms"], "completion_p99_ms": k["completion_p99_ms"],
            "completion_count": k["completion_count"], "accept_p95_ms": k["accept_p95_ms"], "results": k["results"],
            "dropped_iterations": k["dropped_iterations"], "max_vus": k["max_vus"], "backend_requests": s["backend_requests"], "nginx_status": s["nginx_status"],
            "redis_stock_before": rd(d, "stock-before.txt"), "redis_stock_after": rd(d, "stock-after.txt"), "redis_issued_users": rd(d, "issued-users-redis.txt"),
            "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
-           "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms)", "start": rd(d, "start.txt") or None}
+           "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms); a 200 answer counts its own response time", "start": rd(d, "start.txt") or None}
     out["coupon_stages"] = stage_delta(os.path.join(d, "coupon-stages-before.tsv"), os.path.join(d, "coupon-stages.tsv"), "coupon_stage_seconds")
     slow, suppressed = {}, {}
     for p in sorted(glob.glob(os.path.join(d, "redis-slow-*.log"))):
@@ -81,6 +81,37 @@ def coupon_one(d):
         suppressed[name] = sum(int(x) for x in re.findall(r"\[COUPON_REDIS_SLOW\].*suppressed=(\d+)", text))
     out["redis_slow_lines"], out["redis_slow_suppressed"] = slow, suppressed
     out.update(condition(d))
+    return out
+
+
+def num(d, name):
+    v = rd(d, name)
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
+def coupon_summary(d, code):
+    """r127 쿠폰 측정 요약 - k6 결과 개수 · 최종 응답까지의 시간 · PostgreSQL 에서 센 발급 · 중복 행 · 연결 최대 · 깨우기 출처 · Redis 명령 수"""
+    k = json.load(open(os.path.join(d, "k6-summary.json")))
+    res = k["results"]
+    # 깨우기 줄은 "<시각>\t<백엔드>\t<이름>{...source=\"x\",...} <값>" - 출처별로 백엔드를 합친다(기본 코드는 줄이 없다)
+    wake = {}
+    for line in rd(d, "coupon-wake.tsv").splitlines():
+        m = re.search(r'source="(\w+)".*\s([\d.]+)$', line)
+        if m:
+            wake[m.group(1)] = wake.get(m.group(1), 0) + int(float(m.group(2)))
+    samples = [int(x) for x in rd(d, "db-connections.txt").split() if x.isdigit()]
+    out = {"code": code, "servers": condition(d)["servers"], "rate": k["rate"], "duration_s": k["duration_s"], "requests": k["requests"]}
+    for key in ("sync_200", "accepted_202", "sold_out_409", "duplicate", "unavailable_503", "other", "success", "failed", "timeout"):
+        out[key] = res.get(key, 0)
+    out.update({
+        "time_to_success_ms": {"p50": k.get("completion_p50_ms"), "p95": k["completion_p95_ms"], "p99": k["completion_p99_ms"]},
+        "time_to_success_definition": "request start to the final answer: the 200 response time for a synchronous answer, the first status poll that returns SUCCESS for a 202",
+        "completion_count": k["completion_count"], "issued_rows": num(d, "issued-db.txt"), "quantity": num(d, "stock-before.txt"), "duplicate_rows": num(d, "duplicate-rows.txt"),
+        "db_connections_peak": max(samples) if samples else None, "db_connections_samples": len(samples),
+        "wake": wake, "fallback": wake.get("fallback", 0),
+        "redis_commands": {n: int(c) for n, c in re.findall(r"cmdstat_(\w+):calls=(\d+)", rd(d, "redis-commandstats.txt"))},
+    })
+    out["redis_commands_total"] = sum(out["redis_commands"].values())
     return out
 
 
@@ -213,6 +244,8 @@ def main(argv):
         flash(src, out)
     elif sub == "coupon":
         coupon(src, out, [tuple(x.split("=", 1)) for x in rest if x != "--other" and "=" in x])
+        # CODE 환경 변수(base · new)는 요약에 적는 실행의 코드 이름이다 - 없으면 null 로 두어 잘못 채우지 않는다
+        json.dump(coupon_summary(src, os.environ.get("CODE")), open(os.path.join(os.path.dirname(os.path.abspath(out)), "summary.json"), "w"), indent=2)
     elif sub == "detail":
         bg = rest[rest.index("--background-pgss") + 1] if "--background-pgss" in rest else None
         detail(src, out, bg)
