@@ -143,8 +143,9 @@ stock:
     # 그래서 DB 모드 전환 트랜잭션이 한 번에 접어 넣을 행이 약 300 이하로 묶이고, 인기 상품 행은 결제마다가 아니라 주기마다 한 번만 쓰인다
     apply-interval-ms: 1000
   mode:
-    # DB 모드로 이만큼 머문 뒤에야 REDIS 모드로 복귀한다. Toss 응답 한도(http.client.toss.response-timeout 60초)보다 길어야 옛 Redis 에서 선점한 결제가 모두 TX1 에 닿았거나 실패한 뒤다
-    min-db-dwell-ms: 70000
+    # DB 모드로 이만큼 머문 뒤에야 REDIS 모드로 복귀한다. 선점에서 TX1 까지의 최장 시간 = bulkhead toss 자리 대기(10초) + Toss 응답 한도(http.client.toss.response-timeout 60초)라
+    # 그 합(70초)보다 길어야 옛 Redis 에서 선점한 결제가 모두 TX1 에 닿았거나 실패한 뒤다. 80초 = 합 70초 + 여유 10초
+    min-db-dwell-ms: 80000
     # 전환 · 복귀가 배타 advisory 잠금을 기다리는 상한. 너무 작으면 TX1 이 조금만 길어도 전환이 실패하고(사용자는 재시도), 너무 크면 열린 TX1 하나가 전환 · 복귀 스레드를 그만큼 붙잡는다
     lock-timeout-ms: 3000
     # 복귀 배치가 대기 시간이 지난 DB 모드 상품이 있는지 보는 주기(Redis PING 은 후보가 있을 때만 보낸다)
@@ -229,7 +230,12 @@ circuit:
 
 # Resilience4j - 외부 PG(Toss) 호출 서킷브레이커·재시도 (인스턴스명 toss)
 resilience4j:
+  # 적용 순서(작을수록 바깥): retry(2147483642) < bulkhead(2147483646, 라이브러리 고정 - 설정 키가 없다) < circuitbreaker(2147483647)
+  # 기본은 retry < circuitbreaker(2147483643) < bulkhead 라 자리 대기 시간이 회로의 호출 시간에 들어가 slow-call-duration-threshold 를 넘기고 느린 호출로 센다
+  # bulkhead 를 회로 바깥 · 재시도 안쪽에 두면 회로는 Toss 호출만 재고, 자리 대기 초과(BulkheadFullException)는 회로에 닿지 않으며 재시도는 그 변환 결과(TossBulkheadFullException)를 건너뛴다
+  # toss-cancel 회로는 재시도 안쪽 그대로다(취소에는 bulkhead 가 없다)
   circuitbreaker:
+    circuit-breaker-aspect-order: 2147483647
     instances:
       toss:
         sliding-window-type: COUNT_BASED          # 최근 N건 기준으로 실패율 집계
@@ -241,10 +247,10 @@ resilience4j:
         wait-duration-in-open-state: 30s           # OPEN 유지 시간 (이후 HALF_OPEN)
         permitted-number-of-calls-in-half-open-state: 5   # HALF_OPEN 에서 탐색 허용 호출 수
         automatic-transition-from-open-to-half-open-enabled: true
-        # 다른 인스턴스가 연 회로(공유 키)로 막힌 호출과 bulkhead 한도 초과는 이 회로의 성공도 실패도 아니다 - 세면 HALF_OPEN 탐색이 헛되이 닫히거나 몰린 요청만으로 회로가 열린다
+        # 다른 인스턴스가 연 회로(공유 키)로 막힌 호출은 이 회로의 성공도 실패도 아니다 - 세면 HALF_OPEN 탐색이 헛되이 닫힌다
+        # bulkhead 한도 초과는 bulkhead 가 회로 바깥이라 이 회로에 닿지 않는다(circuit-breaker-aspect-order)
         ignore-exceptions:
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
-          - io.github.resilience4j.bulkhead.BulkheadFullException
       # 취소 전용 회로. 승인(toss)과 분리한다 -
       # 같은 회로면 취소 실패가 승인을 막고, 승인 장애가 보상 취소를 fast-fail 시켜 채무가 쌓인다
       toss-cancel:
@@ -305,6 +311,7 @@ resilience4j:
           - groom.backend.common.exception.BusinessException
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
   retry:
+    retry-aspect-order: 2147483642
     instances:
       toss:
         max-attempts: 2                            # 최초 1회 + 같은 멱등키 재전송 1회 - 3회면 기다리는 사용자에게 60초가 또 붙는다
@@ -317,17 +324,19 @@ resilience4j:
           # CallNotPermittedException 만 적으면 이 목록은 한 번도 일치하지 않는다(2026-11 R115 로 확인)
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
           - groom.backend.infrastructure.payment.TossCircuitOpenException
-          # bulkhead 한도가 찬 상태에서 재시도하면 같은 호출을 다시 밀어 넣을 뿐이다(fallback 이 바꾼 뒤의 타입)
+          # 자리 대기(10초)를 넘긴 호출을 재시도하면 같은 호출이 자리를 10초 더 기다린다(bulkhead fallback 이 바꾼 뒤의 타입)
           - groom.backend.infrastructure.payment.TossBulkheadFullException
-  # Toss 승인 동시 호출 상한 - 넘은 호출은 기다리지 않고 PAYMENT_PG_BUSY(503) 로 거절한다
+  # Toss 승인 동시 호출 상한 - 넘은 호출은 자리가 나길 max-wait-duration 까지 기다리고, 그래도 없으면 PAYMENT_PG_BUSY(503) 로 거절한다
   # 60: 서버 1대 목표 승인 초당 100건 × Toss 승인 응답 p95 0.5초 × 여유 1.2. 초당 처리량 = 동시 호출 수 ÷ 응답 시간이라 50 이면 응답 0.5초에서 여유 없이 초당 100건이다
   #     HTTP 풀(max-per-route 60)과 같은 값. 크면 Toss 지연 때 요청 스레드가 60초씩 쌓이고, 작으면 정상 부하에서도 거절이 나온다
   bulkhead:
     instances:
       toss:
         max-concurrent-calls: 60
-        # 0: 자리가 없으면 기다리지 않고 바로 거절한다. 양수로 두면 Toss 가 느릴 때 그 시간만큼 요청 스레드가 묶여 승인 응답 한도(60초) 안에 거절을 못 돌려준다
-        max-wait-duration: 0
+        # 10초: 선점에 이긴 1,000건이 초당 약 120건씩 빠지면 마지막 건이 8.3초에 자리를 얻는다(서버 1대 · 승인 초당 2,000건 도착 예상). 0 이면 60건 넘는 모두가 즉시 503 이고 재고 선점만 돌려준다
+        #     payment.confirm.wait-timeout-ms(10초)와 같은 값 - 요청 스레드가 자리에 10초 + Toss 에 최대 60초 + 후처리에 10초를 쓴다(nginx /payment/confirm 80초)
+        #     자리를 기다린 시간은 회로의 Toss 호출 시간에 들지 않는다 - 아래 circuit-breaker-aspect-order 로 bulkhead 를 회로 바깥에 둔 덕이다
+        max-wait-duration: 10s
       # 장바구니 · 주문 요청이 DB 트랜잭션을 열기 전에 잡는 허용(인스턴스당) - 넘으면 대기 상한 뒤 TRANSACTION_BULKHEAD_FULL(503) 로 거절한다
       # 40: 풀 50 에서 REQUIRES_NEW(READY + outbox · 승인 후처리) · 컨슈머 · 폴러가 쓸 10 을 남긴 값. 크면 그 연결이 풀 대기에 밀려 승인 후처리가 늦고, 작으면 정상 부하에서도 503 이 나온다
       transaction:

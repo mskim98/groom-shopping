@@ -2,6 +2,7 @@ package groom.backend.infrastructure.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.resilience4j.spring6.bulkhead.configure.BulkheadConfigurationProperties;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Map;
@@ -32,10 +33,27 @@ class PaymentTimeoutPolicyTest {
     }
 
     @Test
-    @DisplayName("Toss 승인 동시 호출 한도는 60이고 자리가 없으면 기다리지 않는다")
-    void Toss_승인_동시_호출_한도는_60이고_대기는_0이다() {
+    @DisplayName("Toss 승인 동시 호출 한도는 60이고 자리를 기다리는 상한은 10초다")
+    void Toss_승인_동시_호출_한도는_60이고_대기는_10초다() {
         assertThat(number("resilience4j", "bulkhead", "instances", "toss", "max-concurrent-calls")).isEqualTo(60L);
-        assertThat(String.valueOf(value("resilience4j", "bulkhead", "instances", "toss", "max-wait-duration"))).isEqualTo("0");
+        assertThat(duration("resilience4j", "bulkhead", "instances", "toss", "max-wait-duration")).isEqualTo(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("bulkhead 자리 대기 상한은 결제 확정 대기 상한과 같다")
+    void bulkhead_자리_대기_상한은_결제_확정_대기_상한과_같다() {
+        assertThat(duration("resilience4j", "bulkhead", "instances", "toss", "max-wait-duration").toMillis())
+                .isEqualTo(number("payment", "confirm", "wait-timeout-ms"));
+    }
+
+    @Test
+    @DisplayName("적용 순서는 retry < bulkhead < circuitbreaker 라 bulkhead 가 회로 바깥 · 재시도 안쪽이다")
+    void 적용_순서는_retry_bulkhead_circuitbreaker_다() {
+        // bulkhead 순서는 설정 키가 없다(setter 부재) - 라이브러리 고정값을 읽어 회로 · 재시도 값과 견준다
+        long bulkhead = new BulkheadConfigurationProperties().getBulkheadAspectOrder();
+
+        assertThat(number("resilience4j", "retry", "retry-aspect-order")).isLessThan(bulkhead);
+        assertThat(bulkhead).isLessThan(number("resilience4j", "circuitbreaker", "circuit-breaker-aspect-order"));
     }
 
     @Test

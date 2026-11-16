@@ -152,7 +152,7 @@ public enum ErrorCode {
     /** PG(Toss) 가 4xx 로 승인을 거절 (카드 거절·잔액 부족 등) - 재시도해도 같은 결과 */
     PAYMENT_PG_REJECTED(HttpStatus.UNPROCESSABLE_ENTITY, "결제가 거절되었습니다. 결제 수단을 확인해주세요."),
 
-    /** Toss 승인 동시 호출 한도(bulkhead toss)를 넘어 호출하지 않았다 - 승인된 적 없는 확정이라 보상 대상이 아니다 */
+    /** Toss 승인 동시 호출 한도(bulkhead toss)가 찬 채로 자리 대기 상한(10초)을 넘겨 호출하지 않았다 - 승인된 적 없는 확정이라 보상 대상이 아니다 */
     PAYMENT_PG_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "결제 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해주세요."),
     /** 플래시 세일 진입 속도 제한(rate limiter flash-entry)을 넘었다 - Redis 를 부르지 않고 거절한다 */
     FLASH_ENTRY_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "구매 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해주세요."),

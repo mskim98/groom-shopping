@@ -58,9 +58,10 @@ public class TossPaymentClientImpl implements TossPaymentClient {
     //   이후 호출은 실제 API 로 가지 않고 fallbackMethod 로 즉시 빠진다(fast-fail) → Cascading Failure 방지.
     // @Retry : 일시적 실패(timeout·5xx 등)는 짧게 재시도. 회로 OPEN(CallNotPermittedException)은 재시도 제외(yml).
     // 두 어노테이션은 Spring AOP 프록시 기반이라 다른 빈(PaymentApplicationService)에서 호출돼야 적용된다.
-    // @Bulkhead : 동시 호출을 세마포어로 제한한다(max-wait 0 - 기다리지 않고 거절). Resilience4j 적용 순서는 Retry > CircuitBreaker > Bulkhead 라
-    //   한도 초과(BulkheadFullException)는 회로 안에서 무시 예외로 빠지고(회로 실패로 세지 않음) fallback 이 TossBulkheadFullException 으로 바꿔 던져 재시도도 건너뛴다
-    @Bulkhead(name = "toss")
+    // @Bulkhead : 동시 호출을 세마포어로 제한한다(자리가 나길 max-wait-duration 10초까지 기다리고, 넘으면 거절). 적용 순서는 yml 의 aspect-order 로 Retry > Bulkhead > CircuitBreaker 다 -
+    //   자리 대기 시간이 회로의 Toss 호출 시간(느린 호출 기준)에 들지 않고, 대기 초과(BulkheadFullException)는 회로에 닿지 않는다
+    //   bulkheadFullFallback 이 그것을 TossBulkheadFullException 으로 바꿔 던져 재시도도 건너뛴다
+    @Bulkhead(name = "toss", fallbackMethod = "bulkheadFullFallback")
     @CircuitBreaker(name = "toss", fallbackMethod = "confirmPaymentFallback")
     @Retry(name = "toss")
     @Override
@@ -93,15 +94,18 @@ public class TossPaymentClientImpl implements TossPaymentClient {
         }
     }
 
+    // bulkhead 의 fallback - BulkheadFullException 만 받는다(다른 예외는 메서드가 맞지 않아 그대로 올라간다). 시험이 직접 호출하도록 package-private
+    TossPaymentResponse bulkheadFullFallback(
+            TossPaymentConfirmRequest request, String idempotencyKey, BulkheadFullException e) {
+        log.warn("[BULKHEAD_FULL] Toss 동시 호출 자리 대기 초과, 호출하지 않음 - PaymentKey: {}", request.getPaymentKey());
+        throw new TossBulkheadFullException();
+    }
+
     // Resilience4j fallback : 회로가 OPEN 이거나 재시도까지 실패하면 이 메서드가 대신 호출된다.
     // 규칙 - 원본 메서드와 동일한 파라미터 + 마지막에 Throwable 을 받는다.
     // 시험이 직접 호출하도록 package-private 으로 둔다(리플렉션 탐색은 가시성과 무관하다)
     TossPaymentResponse confirmPaymentFallback(
             TossPaymentConfirmRequest request, String idempotencyKey, Throwable t) {
-        if (t instanceof BulkheadFullException) {
-            log.warn("[BULKHEAD_FULL] Toss 동시 호출 한도 초과, 호출하지 않음 - PaymentKey: {}", request.getPaymentKey());
-            throw new TossBulkheadFullException();
-        }
         if (t instanceof CallNotPermittedException) {
             // 회로 OPEN - 외부 API 를 아예 호출하지 않고 사용자에게 빠른 실패 안내
             log.warn("[CB_FALLBACK_OPEN] Circuit OPEN, fast-fail - PaymentKey: {}", request.getPaymentKey());
