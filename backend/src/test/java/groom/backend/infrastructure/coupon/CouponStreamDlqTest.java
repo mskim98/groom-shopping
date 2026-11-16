@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import groom.backend.application.coupon.CouponIssueBatchWriter;
+import groom.backend.application.coupon.CouponIssueWaiters;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.application.coupon.CouponStreamFixture;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
@@ -12,6 +13,8 @@ import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -42,6 +45,8 @@ class CouponStreamDlqTest {
     private CouponStockRedisRepository stockRepository;
     @Autowired
     private StringRedisTemplate redis;
+    @Autowired
+    private CouponIssueWaiters waiters;
     @Autowired
     private CouponRepository couponRepository;
     @Autowired
@@ -133,5 +138,22 @@ class CouponStreamDlqTest {
         // 되돌리면 DB 에는 행이 있는데 재고만 늘어난다
         assertThat(stockRepository.getStock(couponId)).isEqualTo(9L);
         assertThat(stockRepository.getIssuedUsers(couponId)).contains(String.valueOf(userId));
+    }
+
+    @Test
+    @DisplayName("DLQ 로 보낸 요청은 FAILED 로 남기고 FAILED 신호를 낸다")
+    void pollCoupon_dlq로_보내면_FAILED_신호를_낸다() throws Exception {
+        CouponStreamFixture.awaitSubscription(redis, waiters);
+        CompletableFuture<String> waiter = waiters.register(requestId);
+        try {
+            deliverUntil(3);
+
+            pollAfterIdle();
+
+            assertThat(waiter.get(3, TimeUnit.SECONDS)).isEqualTo("FAILED");
+            assertThat(fixture.status(requestId)).startsWith("FAILED:");
+        } finally {
+            waiters.remove(requestId, waiter);
+        }
     }
 }

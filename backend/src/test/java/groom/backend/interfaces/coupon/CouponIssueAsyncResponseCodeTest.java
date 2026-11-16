@@ -1,6 +1,7 @@
 package groom.backend.interfaces.coupon;
 
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -9,8 +10,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import groom.backend.application.coupon.CouponAsyncIssueService;
 import groom.backend.application.coupon.CouponIssueService;
+import groom.backend.application.coupon.CouponIssueWaitService;
 import groom.backend.application.coupon.strategy.CouponIssueResult;
 import groom.backend.application.coupon.strategy.CouponIssueStrategySelector;
+import groom.backend.application.coupon.strategy.StreamIssueStrategy;
 import groom.backend.common.exception.GlobalExceptionHandler;
 import groom.backend.domain.auth.entity.User;
 import groom.backend.domain.auth.enums.Grade;
@@ -39,12 +42,15 @@ import org.springframework.web.method.support.ModelAndViewContainer;
 class CouponIssueAsyncResponseCodeTest {
 
     private final CouponAsyncIssueService asyncService = mock(CouponAsyncIssueService.class);
+    private final CouponIssueWaitService waitService = mock(CouponIssueWaitService.class);
+    private final CouponIssueStrategySelector selector = mock(CouponIssueStrategySelector.class);
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         CouponController controller = new CouponController(mock(CouponCommonService.class),
-                mock(CouponIssueService.class), asyncService, mock(CouponIssueStrategySelector.class));
+                mock(CouponIssueService.class), asyncService, selector);
+        given(selector.current()).willReturn(new StreamIssueStrategy(asyncService, waitService));
         User user = new User(100L, "u@test.com", "pw", "테스터", Role.ROLE_USER, Grade.BRONZE,
                 LocalDateTime.now(), LocalDateTime.now());
         // @AuthenticationPrincipal 은 보안 필터가 채운다. 컨트롤러만 시험하므로 같은 자리를 고정된 사용자로 채운다
@@ -94,5 +100,28 @@ class CouponIssueAsyncResponseCodeTest {
         given(asyncService.enqueue(anyLong(), anyLong())).willReturn(CouponIssueResult.soldOut());
 
         mockMvc.perform(post("/v1/coupon/issue-async/1")).andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("동기 발급(stream)은 확정을 기다려 200 과 발급 번호와 SUCCESS 를 돌려주고 202 가 아니다")
+    void issueCoupon_stream전략은_확정을_기다려_200이다() throws Exception {
+        given(asyncService.enqueue(anyLong(), anyLong())).willReturn(CouponIssueResult.accepted("req-1"));
+        given(waitService.awaitFinal(eq(1L), eq(100L), eq("req-1"))).willReturn(CouponIssueResult.success(77L));
+
+        mockMvc.perform(post("/v1/coupon/issue/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.couponIssueId").value("77"))
+                .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    @Test
+    @DisplayName("동기 발급의 대기 결과가 FAILED 의 품절이면 409, fallback 의 DB 실패(UNAVAILABLE)면 503 이다")
+    void issueCoupon_stream전략의_실패는_409와_503이다() throws Exception {
+        given(asyncService.enqueue(anyLong(), anyLong())).willReturn(CouponIssueResult.accepted("req-1"));
+        given(waitService.awaitFinal(eq(1L), eq(100L), eq("req-1"))).willReturn(CouponIssueResult.soldOut());
+        given(waitService.awaitFinal(eq(2L), eq(100L), eq("req-1"))).willReturn(CouponIssueResult.unavailable());
+
+        mockMvc.perform(post("/v1/coupon/issue/1")).andExpect(status().isConflict());
+        mockMvc.perform(post("/v1/coupon/issue/2")).andExpect(status().isServiceUnavailable());
     }
 }

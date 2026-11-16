@@ -14,7 +14,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.IntStream;
+import static org.awaitility.Awaitility.await;
+
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessagesSummary;
@@ -119,6 +122,21 @@ public class CouponStreamFixture {
         String id = UUID.randomUUID().toString();
         requestIds.add(id);
         return id;
+    }
+
+
+    /** 인스턴스의 Pub/Sub 구독이 서서 메시지가 대기자까지 닿는지 시험 메시지로 확인한다 - 닿을 때까지 100ms 마다 다시 낸다 */
+    public static void awaitSubscription(StringRedisTemplate redis, CouponIssueWaiters waiters) {
+        String probe = UUID.randomUUID().toString();
+        CompletableFuture<String> reached = waiters.register(probe);
+        try {
+            await().atMost(Duration.ofSeconds(10)).pollInterval(Duration.ofMillis(100)).until(() -> {
+                redis.convertAndSend(CouponIssueSignal.CHANNEL, probe + ":SUCCESS");
+                return reached.isDone();
+            });
+        } finally {
+            waiters.remove(probe, reached);
+        }
     }
 
     /** 이 픽스처가 만든 행과 키만 지운다. 발급 행이 사용자를 참조하므로 쿠폰 · 사용자 순서다 */

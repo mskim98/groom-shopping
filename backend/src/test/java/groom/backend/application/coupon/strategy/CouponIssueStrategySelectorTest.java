@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import groom.backend.application.coupon.CouponAsyncIssueService;
+import groom.backend.application.coupon.CouponIssueWaitService;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
 import groom.backend.domain.coupon.repository.CouponRepository;
 import java.util.List;
@@ -22,7 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 class CouponIssueStrategySelectorTest {
 
     private final List<CouponIssueStrategy> registered = List.of(
-            new StreamIssueStrategy(mock(CouponAsyncIssueService.class)),
+            new StreamIssueStrategy(mock(CouponAsyncIssueService.class), mock(CouponIssueWaitService.class)),
             new DbLockIssueStrategy(mock(CouponRepository.class), mock(CouponIssueRepository.class)));
 
     @Test
