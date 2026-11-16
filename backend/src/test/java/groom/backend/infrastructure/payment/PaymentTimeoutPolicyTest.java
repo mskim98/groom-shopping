@@ -25,9 +25,24 @@ class PaymentTimeoutPolicyTest {
     }
 
     @Test
-    @DisplayName("Toss 경로당 최대 커넥션은 50이다")
-    void Toss_경로당_최대_커넥션은_50이다() {
-        assertThat(number("http", "client", "toss", "max-per-route")).isEqualTo(50L);
+    @DisplayName("Toss 커넥션 풀은 전체 · 경로당 60이다")
+    void Toss_커넥션_풀은_60이다() {
+        assertThat(number("http", "client", "toss", "max-total")).isEqualTo(60L);
+        assertThat(number("http", "client", "toss", "max-per-route")).isEqualTo(60L);
+    }
+
+    @Test
+    @DisplayName("Toss 승인 동시 호출 한도는 60이고 자리가 없으면 기다리지 않는다")
+    void Toss_승인_동시_호출_한도는_60이고_대기는_0이다() {
+        assertThat(number("resilience4j", "bulkhead", "instances", "toss", "max-concurrent-calls")).isEqualTo(60L);
+        assertThat(String.valueOf(value("resilience4j", "bulkhead", "instances", "toss", "max-wait-duration"))).isEqualTo("0");
+    }
+
+    @Test
+    @DisplayName("경로당 커넥션은 승인 동시 호출 한도보다 작지 않다")
+    void 경로당_커넥션은_승인_동시_호출_한도_이상이다() {
+        assertThat(number("http", "client", "toss", "max-per-route"))
+                .isGreaterThanOrEqualTo(number("resilience4j", "bulkhead", "instances", "toss", "max-concurrent-calls"));
     }
 
     @Test

@@ -55,11 +55,11 @@ class PaymentKafkaConfigTest {
     }
 
     @Test
-    @DisplayName("결제 리스너 팩토리의 concurrency 는 1 이고 payment.consumer.auto-startup=false 가 반영된다")
-    void 결제리스너팩토리_concurrency는_1이다() {
+    @DisplayName("결제 리스너 팩토리의 concurrency 는 2(서버 1대가 payment-events 파티션 2개를 모두 받음)이고 payment.consumer.auto-startup=false 가 반영된다")
+    void 결제리스너팩토리_concurrency는_2이다() {
         ConcurrentMessageListenerContainer<String, String> container = container(PAYMENT_FACTORY);
 
-        assertThat(container.getConcurrency()).isEqualTo(1);
+        assertThat(container.getConcurrency()).isEqualTo(2);
         assertThat(container.isAutoStartup()).as("시험 속성 payment.consumer.auto-startup=false").isFalse();
         assertThat(container.getContainerProperties().getAckMode()).isEqualTo(ContainerProperties.AckMode.RECORD);
     }
