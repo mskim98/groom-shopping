@@ -37,11 +37,11 @@ public class RestTemplateConfig {
     private Duration connectionRequestTimeout;
 
     // 풀 전체 최대 커넥션 수
-    @Value("${http.client.toss.max-total:50}")
+    @Value("${http.client.toss.max-total:60}")
     private int maxTotal;
 
-    // 같은 목적지(route)당 최대 커넥션 수 (PG 호출이 한곳으로 몰리므로 per-route 가 중요)
-    @Value("${http.client.toss.max-per-route:20}")
+    // 같은 목적지(route)당 최대 커넥션 수 (PG 호출이 한곳으로 몰리므로 per-route 가 중요) - 기본값도 승인 동시 호출 한도(bulkhead toss 60)보다 작지 않게 둔다
+    @Value("${http.client.toss.max-per-route:60}")
     private int maxPerRoute;
 
     // @Bean : 풀링 + 타임아웃이 적용된 RestTemplate 을 빈으로 등록한다.
