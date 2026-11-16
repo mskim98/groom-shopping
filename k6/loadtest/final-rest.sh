@@ -55,14 +55,15 @@ coupon() {
   docker exec redis redis-cli SLOWLOG RESET > /dev/null
   local t0; t0="$(date -u +%FT%TZ)"
   scrape_metric '^coupon_stage_seconds_(count|sum)[{]' "$d/coupon-stages-before.tsv"
-  # PostgreSQL 연결 수 표본 - k6 가 도는 동안 약 200 ms 마다 시드 DB 의 연결 행 수를 한 줄씩 쓴다(표본 연결 자신이 1 개 들어 있다)
+  # PostgreSQL 연결 수 표본 - k6 가 도는 동안 200 ms 쉬고 시드 DB 의 연결 행 수와 잠금 대기 세션 수를 "<연결>|<잠금 대기>" 한 줄씩 쓴다(표본 연결 자신이 1 개 들어 있고, 한 표본이 약 100 ms 걸려 간격은 약 300 ms)
   : > "$d/db-connections.txt"
-  ( while :; do psql_seed -Atc "SELECT count(*) FROM pg_stat_activity WHERE datname = '$SEED_DB'" >> "$d/db-connections.txt" 2> /dev/null; sleep 0.2; done ) &
-  local sampler=$!
+  ( while :; do psql_seed -Atc "SELECT count(*), count(*) FILTER (WHERE wait_event_type = 'Lock') FROM pg_stat_activity WHERE datname = '$SEED_DB'" >> "$d/db-connections.txt" 2> /dev/null; sleep 0.2; done ) &
+  local sampler=$! k6_t0; k6_t0="$(date +%s)"
   # ISSUE_PATH = issue-async(기본, 202 + 상태 조회) | issue(동기 응답 경로)
   k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="${ISSUE_PATH:-issue-async}" -e RATE="$rate" -e DURATION_S="$dur" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$d/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$d/k6.log" 2>&1 || echo "k6 exit $?" >> "$d/k6.log"
   kill "$sampler" 2> /dev/null; wait "$sampler" 2> /dev/null
+  echo "$(( $(date +%s) - k6_t0 ))" > "$d/k6-wall-s.txt"  # k6 시작(로그인 setup 포함)부터 끝까지의 초 - 표본 수로 실제 표본 간격을 구한다
   sleep 5
   scrape_metric '^coupon_issue_wake_total[{]' "$d/coupon-wake.tsv"
   scrape_metric '^coupon_stage_seconds_(count|sum)[{]' "$d/coupon-stages.tsv"

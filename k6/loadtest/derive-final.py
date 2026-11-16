@@ -21,6 +21,11 @@ import sys
 
 from collect import collect_step, normalize_condition, read, stage_delta
 
+# 실행이 부른 발급 경로(nginx 로그의 요청 주소에서 읽는다)별 설명 - 동기 경로도 202 를 돌려주면(기본 코드) 같은 상태 조회로 끝을 본다
+ISSUE_PATH_TEXT = {
+    "issue-async": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
+    "issue": "POST /coupon/issue/{id} (200 = final answer; a 202 is followed by GET /coupon/issue-async/{requestId}/status until SUCCESS)",
+}
 REST_CONDITION_FIELDS = ("threads", "leak_detection", "diag_samplers", "seed_copy", "servers")
 FLASH_ORDER = ("virtual-2000", "platform-2000", "virtual-300", "virtual-600", "virtual-1000", "virtual-1500")
 
@@ -64,13 +69,14 @@ def coupon_one(d):
     k = json.load(open(os.path.join(d, "k6-summary.json")))
     s = json.load(open(os.path.join(d, "split.json")))
     # 쿠폰 번호는 nginx 로그의 발급 요청 주소에서, 수량은 시작 때의 Redis 재고 키 값(= 쿠폰 수량)에서 읽는다
-    m = re.search(r"/coupon/issue(?:-async)?/(\d+) ", rd(d, "nginx.log"))
-    out = {"coupon_id": int(m.group(1)) if m else None, "quantity": int(rd(d, "stock-before.txt")), "requests": k["requests"], "rate": k["rate"], "duration_s": k["duration_s"],
+    m = re.search(r"/coupon/(issue(?:-async)?)/(\d+) ", rd(d, "nginx.log"))
+    route = m.group(1) if m else "issue-async"
+    out = {"coupon_id": int(m.group(2)) if m else None, "quantity": int(rd(d, "stock-before.txt")), "requests": k["requests"], "rate": k["rate"], "duration_s": k["duration_s"],
            "issued": int(rd(d, "issued-db.txt")), "completion_p95_ms": k["completion_p95_ms"], "completion_p99_ms": k["completion_p99_ms"],
            "completion_count": k["completion_count"], "accept_p95_ms": k["accept_p95_ms"], "results": k["results"],
            "dropped_iterations": k["dropped_iterations"], "max_vus": k["max_vus"], "backend_requests": s["backend_requests"], "nginx_status": s["nginx_status"],
            "redis_stock_before": rd(d, "stock-before.txt"), "redis_stock_after": rd(d, "stock-after.txt"), "redis_issued_users": rd(d, "issued-users-redis.txt"),
-           "path": "POST /coupon/issue-async/{id} (Redis Lua + Stream consumer) then GET /coupon/issue-async/{requestId}/status until SUCCESS",
+           "path": ISSUE_PATH_TEXT[route],
            "completion_definition": "request start to the first status poll that returns SUCCESS (polled every 100 ms); a 200 answer counts its own response time", "start": rd(d, "start.txt") or None}
     out["coupon_stages"] = stage_delta(os.path.join(d, "coupon-stages-before.tsv"), os.path.join(d, "coupon-stages.tsv"), "coupon_stage_seconds")
     slow, suppressed = {}, {}
@@ -99,7 +105,10 @@ def coupon_summary(d, code):
         m = re.search(r'source="(\w+)".*\s([\d.]+)$', line)
         if m:
             wake[m.group(1)] = wake.get(m.group(1), 0) + int(float(m.group(2)))
-    samples = [int(x) for x in rd(d, "db-connections.txt").split() if x.isdigit()]
+    # 표본 한 줄 = "<연결 수>|<잠금 대기 세션 수>" (잠금 열이 없는 옛 표본 파일은 잠금 대기를 null 로 둔다)
+    rows = [x.split("|") for x in rd(d, "db-connections.txt").split()]
+    samples = [int(r[0]) for r in rows if r[0].isdigit()]
+    locks = [int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()]
     out = {"code": code, "servers": condition(d)["servers"], "rate": k["rate"], "duration_s": k["duration_s"], "requests": k["requests"]}
     for key in ("sync_200", "accepted_202", "sold_out_409", "duplicate", "unavailable_503", "other", "success", "failed", "timeout"):
         out[key] = res.get(key, 0)
@@ -108,6 +117,9 @@ def coupon_summary(d, code):
         "time_to_success_definition": "request start to the final answer: the 200 response time for a synchronous answer, the first status poll that returns SUCCESS for a 202",
         "completion_count": k["completion_count"], "issued_rows": num(d, "issued-db.txt"), "quantity": num(d, "stock-before.txt"), "duplicate_rows": num(d, "duplicate-rows.txt"),
         "db_connections_peak": max(samples) if samples else None, "db_connections_samples": len(samples),
+        "db_lock_waits_peak": max(locks) if locks else None,
+        "no_token": res.get("no_token", 0),
+        "coupon_stages": stage_delta(os.path.join(d, "coupon-stages-before.tsv"), os.path.join(d, "coupon-stages.tsv"), "coupon_stage_seconds"),
         "wake": wake, "fallback": wake.get("fallback", 0),
         "redis_commands": {n: int(c) for n, c in re.findall(r"cmdstat_(\w+):calls=(\d+)", rd(d, "redis-commandstats.txt"))},
     })

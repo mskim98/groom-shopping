@@ -25,7 +25,7 @@ const REQUESTS = RATE * DURATION_S;
 const accept = new Trend('coupon_accept_ms', true);
 const completion = new Trend('coupon_completion_ms', true);
 const result = {};
-for (const k of ['accepted_202', 'sync_200', 'sold_out_409', 'duplicate', 'unavailable_503', 'other', 'success', 'failed', 'timeout']) {
+for (const k of ['accepted_202', 'sync_200', 'sold_out_409', 'duplicate', 'unavailable_503', 'other', 'success', 'failed', 'timeout', 'no_token']) {
     result[k] = new Counter('r_' + k);
 }
 
@@ -61,7 +61,11 @@ export function setup() {
 
 export default function (data) {
     const token = data.tokens[exec.scenario.iterationInTest];
-    if (!token) return;
+    // 토큰이 없는 반복은 요청을 보내지 못한다 - 조용히 버리지 않고 센다
+    if (!token) {
+        result.no_token.add(1);
+        return;
+    }
     const t0 = Date.now();
     const res = http.post(BASE_URL + '/coupon/' + ISSUE_PATH + '/' + COUPON_ID, null, {headers: headers(token), tags: {name: 'coupon_issue'}});
     accept.add(res.timings.duration);
