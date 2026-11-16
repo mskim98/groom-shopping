@@ -1,0 +1,13 @@
+{
+ "requests": 3000,
+ "rate": 500,
+ "duration_s": 6,
+ "accept_p95_ms": 25,
+ "completion_p50_ms": 150,
+ "completion_p95_ms": 244,
+ "completion_p99_ms": 380,
+ "completion_count": 1000,
+ "results": {"accepted_202": 1000, "sync_200": 0, "sold_out_409": 1500, "duplicate": 500, "unavailable_503": 0, "other": 0, "success": 1000, "failed": 0, "timeout": 0},
+ "dropped_iterations": 0,
+ "max_vus": 600
+}

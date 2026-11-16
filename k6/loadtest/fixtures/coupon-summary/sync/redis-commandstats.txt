@@ -1,0 +1,4 @@
+# Commandstats
+cmdstat_evalsha:calls=3000,usec=1200,usec_per_call=0.40,rejected_calls=0,failed_calls=0
+cmdstat_xadd:calls=1000,usec=500,usec_per_call=0.50,rejected_calls=0,failed_calls=0
+cmdstat_get:calls=20,usec=900,usec_per_call=0.10,rejected_calls=0,failed_calls=0

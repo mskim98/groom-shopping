@@ -1,0 +1,4 @@
+{
+ "backend_requests": {"backend1": 3000},
+ "nginx_status": {"202": 1000, "409": 2000}
+}

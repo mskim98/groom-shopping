@@ -1,0 +1,7 @@
+{
+ "threads": "virtual",
+ "leak_detection": false,
+ "diag_samplers": false,
+ "seed_copy": "2026-11-16T00:00:00Z",
+ "servers": 1
+}

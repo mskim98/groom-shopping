@@ -169,5 +169,64 @@ class DeriveFinalTest(unittest.TestCase):
             self.assertEqual(jload(os.path.join(again, n + ".json")), self.j[n], n)
 
 
+SUMMARY_KEYS = ["code", "sync_200", "accepted_202", "sold_out_409", "duplicate", "unavailable_503", "success", "failed", "timeout",
+                "time_to_success_ms", "issued_rows", "quantity", "duplicate_rows", "db_connections_peak", "wake", "fallback", "redis_commands"]
+SUMMARY_FIXTURES = os.path.join(HERE, "fixtures", "coupon-summary")
+
+
+def coupon_summary(name, code="base", mutate=None):
+    """fixtures/coupon-summary/<name> 를 복사해 mutate(폴더) 를 적용한 뒤 coupon 하위 명령을 CODE 환경 변수와 함께 돌려 summary.json 을 읽는다"""
+    tmp = tempfile.mkdtemp()
+    d = os.path.join(tmp, "coupon")
+    shutil.copytree(os.path.join(SUMMARY_FIXTURES, name), d)
+    if mutate:
+        mutate(d)
+    env = dict(os.environ, CODE=code)
+    r = subprocess.run([sys.executable, "-B", TOOL, "coupon", d, os.path.join(tmp, "coupon.json")], capture_output=True, text=True, cwd=HERE, env=env)
+    assert r.returncode == 0, r.stderr[-800:]
+    s = jload(os.path.join(tmp, "summary.json"))
+    shutil.rmtree(tmp, True)
+    return s
+
+
+def write(d, name, text):
+    with open(os.path.join(d, name), "w") as f:
+        f.write(text)
+
+
+class CouponSummaryTest(unittest.TestCase):
+    def test_동기_실행의_요약은_MB_1_키를_전부_싣는다(self):
+        s = coupon_summary("sync", code="new")
+        self.assertEqual([k for k in SUMMARY_KEYS if k not in s], [])
+        self.assertEqual((s["code"], s["sync_200"], s["accepted_202"], s["success"], s["quantity"], s["issued_rows"]), ("new", 1000, 0, 0, 1000, 1000))
+
+    def test_비동기_실행의_요약은_202_와_SUCCESS_수를_센다(self):
+        s = coupon_summary("async")
+        self.assertEqual((s["code"], s["accepted_202"], s["success"], s["sync_200"], s["sold_out_409"], s["duplicate"]), ("base", 1000, 1000, 0, 1500, 500))
+
+    def test_최종_응답까지의_시간은_p50_p95_p99_이다(self):
+        self.assertEqual(coupon_summary("sync")["time_to_success_ms"], {"p50": 18, "p95": 61, "p99": 90})
+        self.assertEqual(coupon_summary("async")["time_to_success_ms"], {"p50": 150, "p95": 244, "p99": 380})
+
+    def test_발급_행과_중복_행은_파일에서_읽는다(self):
+        s = coupon_summary("sync", mutate=lambda d: (write(d, "issued-db.txt", "998\n"), write(d, "duplicate-rows.txt", "3\n")))
+        self.assertEqual((s["issued_rows"], s["duplicate_rows"]), (998, 3))
+
+    def test_DB_연결_최대는_표본_파일의_최댓값이다(self):
+        self.assertEqual(coupon_summary("sync")["db_connections_peak"], 47)
+        self.assertEqual(coupon_summary("sync", mutate=lambda d: write(d, "db-connections.txt", "5\n9\n"))["db_connections_peak"], 9)
+
+    def test_깨우기_출처별_수와_대체_경로_수를_센다(self):
+        s = coupon_summary("sync")
+        self.assertEqual((s["wake"], s["fallback"]), ({"pubsub": 990, "key": 8, "fallback": 2}, 2))
+
+    def test_깨우기_줄이_없는_실행은_wake_가_빈_dict_이고_fallback_은_0(self):
+        s = coupon_summary("async")
+        self.assertEqual((s["wake"], s["fallback"]), ({}, 0))
+
+    def test_Redis_명령_수를_명령별로_싣는다(self):
+        self.assertEqual(coupon_summary("async")["redis_commands"], {"evalsha": 3000, "xadd": 1000, "get": 9000})
+
+
 if __name__ == "__main__":
     unittest.main()

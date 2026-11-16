@@ -1,0 +1,3 @@
+2026-11-16T00:10:09Z	backend1	coupon_issue_wake_total{application="shopping",source="pubsub",} 990.0
+2026-11-16T00:10:09Z	backend1	coupon_issue_wake_total{application="shopping",source="key",} 8.0
+2026-11-16T00:10:09Z	backend1	coupon_issue_wake_total{application="shopping",source="fallback",} 2.0
