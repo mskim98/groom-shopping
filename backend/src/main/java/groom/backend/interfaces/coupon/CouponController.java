@@ -104,14 +104,16 @@ public class CouponController {
           summary = "쿠폰 발급",
           description = """
           설정된 발급 전략으로 처리합니다.
-          동기 전략은 확정까지 끝내고 200 을, 비동기 전략은 접수만 하고 202 + requestId 를 반환합니다.
-          202 를 받은 요청은 상태 조회 API 로 확정 결과를 확인합니다.
+          stream 전략은 Redis 선점 뒤 확정 신호를 기다려 200 을 반환합니다. 기다림이 실패하면 요청 스레드가 직접 발급하고,
+          그 DB 저장까지 실패하면 503 입니다. 요청 스레드가 중단돼 확정을 못 기다린 경우만 202 + requestId 이고,
+          그때는 상태 조회 API 로 확정 결과를 확인합니다.
           """
   )
   @ApiResponses({
           @ApiResponse(responseCode = "200", description = "발급 확정"),
-          @ApiResponse(responseCode = "202", description = "요청 접수(확정 대기)"),
+          @ApiResponse(responseCode = "202", description = "요청 접수(확정 대기 중 요청 스레드가 중단된 경우)"),
           @ApiResponse(responseCode = "409", description = "품절(COUPON_OUT_OF_STOCK) · 중복(COUPON_ALREADY_ISSUED) · 경합(COUPON_ISSUE_CONTENTION)"),
+          @ApiResponse(responseCode = "503", description = "판정 불가 또는 대기 실패 뒤 DB 저장 실패(COUPON_ISSUE_UNAVAILABLE)"),
           @ApiResponse(responseCode = "404", description = "존재하지 않는 쿠폰")
   })
   @PostMapping("/issue/{coupon_id}")

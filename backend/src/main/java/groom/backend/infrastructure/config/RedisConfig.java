@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import groom.backend.application.coupon.CouponIssueSignal;
+import groom.backend.application.coupon.CouponIssueWaiters;
 import groom.backend.application.payment.ConfirmCompletionSignal;
 import groom.backend.application.payment.ConfirmWaiters;
 import groom.backend.domain.auth.entity.RefreshToken;
@@ -78,16 +80,19 @@ public class RedisConfig {
         return new LettuceConnectionFactory(new RedisStandaloneConfiguration(host, port), clientConfig);
     }
 
-    // 결제 완료 신호 채널을 인스턴스당 구독 하나로 듣는다 - 깨울 대기자를 찾는 일만 하고 DB 는 건드리지 않는다
-    // 구독이 끊기면 컨테이너가 재연결한다. 그동안 놓친 메시지는 대기자의 폴링 간격 뒤 키 읽기가 메운다
+    // 결제 완료 신호 · 쿠폰 발급 완료 신호 채널을 인스턴스당 구독 하나(한 컨테이너 · 한 연결)로 듣는다 - 깨울 대기자를 찾는 일만 하고 DB 는 건드리지 않는다
+    // 구독이 끊기면 컨테이너가 재연결한다. 그동안 놓친 메시지는 대기자의 폴링 · 재확인 간격 뒤 키 읽기가 메운다
     @Bean
     public RedisMessageListenerContainer confirmCompletionListenerContainer(
-            RedisConnectionFactory factory, ConfirmWaiters waiters) {
+            RedisConnectionFactory factory, ConfirmWaiters waiters, CouponIssueWaiters couponWaiters) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(factory);
         container.addMessageListener(
                 (message, pattern) -> waiters.onMessage(new String(message.getBody(), StandardCharsets.UTF_8)),
                 new ChannelTopic(ConfirmCompletionSignal.CHANNEL));
+        container.addMessageListener(
+                (message, pattern) -> couponWaiters.onMessage(new String(message.getBody(), StandardCharsets.UTF_8)),
+                new ChannelTopic(CouponIssueSignal.CHANNEL));
         return container;
     }
 
