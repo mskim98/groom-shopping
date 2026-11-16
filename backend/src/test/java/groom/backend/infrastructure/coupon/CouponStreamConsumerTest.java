@@ -5,10 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 
 import groom.backend.application.coupon.CouponIssueBatchWriter;
+import groom.backend.application.coupon.CouponIssueSignal;
+import groom.backend.application.coupon.CouponIssueWaiters;
 import groom.backend.application.coupon.CouponStockRedisRepository;
 import groom.backend.application.coupon.CouponStreamFixture;
 import groom.backend.domain.coupon.repository.CouponIssueRepository;
@@ -16,7 +19,13 @@ import groom.backend.domain.coupon.repository.CouponRepository;
 import groom.backend.interfaces.auth.persistence.SpringDataUserRepository;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +36,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -58,6 +68,10 @@ class CouponStreamConsumerTest {
     private CacheManager cacheManager;
     @MockitoSpyBean
     private CouponIssueBatchWriter writer;
+    @MockitoSpyBean
+    private CouponIssueSignal signal;
+    @Autowired
+    private CouponIssueWaiters waiters;
 
     private CouponStreamFixture fixture;
     private Long couponId;
@@ -72,7 +86,7 @@ class CouponStreamConsumerTest {
     @AfterEach
     void tearDown() {
         consumer.stop();
-        reset(writer);
+        reset(writer, signal);
         fixture.cleanup();
     }
 
@@ -169,5 +183,68 @@ class CouponStreamConsumerTest {
         assertThat(couponIssueRepository.countByCoupon_Id(couponId)).isEqualTo(2L);
         consumer.stop();
         assertThat(consumer.isRunning()).isFalse();
+    }
+
+    @Test
+    @DisplayName("커밋이 끝난 뒤 ack 보다 먼저 요청마다 SUCCESS 신호를 낸다")
+    void pollCoupon_커밋_뒤_ack_전에_요청마다_SUCCESS_신호를_낸다() throws Exception {
+        CouponStreamFixture.awaitSubscription(redis, waiters);
+        List<String> requestIds = enqueue(fixture.users(3));
+        Map<String, CompletableFuture<String>> waiting = new HashMap<>();
+        requestIds.forEach(id -> waiting.put(id, waiters.register(id)));
+        long[] rowsAtSignal = {-1};
+        long[] pendingAtSignal = {-1};
+        doAnswer(invocation -> {
+            rowsAtSignal[0] = couponIssueRepository.countByCoupon_Id(couponId);
+            pendingAtSignal[0] = fixture.pendingCount(couponId);
+            return invocation.callRealMethod();
+        }).when(signal).publish(anyMap());
+        try {
+            consumer.pollCoupon(couponId);
+
+            for (CompletableFuture<String> waiter : waiting.values()) {
+                assertThat(waiter.get(3, TimeUnit.SECONDS)).isEqualTo("SUCCESS");
+            }
+            assertThat(rowsAtSignal[0]).as("신호를 낸 시점의 커밋된 행 수").isEqualTo(3L);
+            assertThat(pendingAtSignal[0]).as("신호를 낸 시점의 미확인 항목 수(ack 전)").isEqualTo(3L);
+        } finally {
+            waiting.forEach(waiters::remove);
+        }
+    }
+
+    @Test
+    @DisplayName("컨슈머 4개가 서로 다른 이름으로 떠서 2000건을 한 번씩만 넣고 모두 ack 하며 stop 이 4개를 모두 멈춘다")
+    void start_컨슈머_4개가_2000건을_한번씩_넣고_stop이_모두_멈춘다() {
+        Long big = fixture.coupon(2000);
+        stockRepository.initStock(big, 2000L);
+        for (Long userId : fixture.users(2000)) {
+            stockRepository.enqueue(big, userId, fixture.requestId());
+        }
+
+        consumer.start();
+
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(couponIssueRepository.countByCoupon_Id(big)).isEqualTo(2000L);
+            assertThat(fixture.pendingCount(big)).isZero();
+            assertThat(stockRepository.streamLength(big)).isZero();
+            assertThat(consumerNames(big)).hasSize(4);
+            assertThat(loopThreads()).hasSize(4);
+        });
+        assertThat(consumerNames(big)).allSatisfy(name -> assertThat(name).startsWith(consumer.consumerName() + "-"));
+
+        consumer.stop();
+
+        assertThat(loopThreads()).isEmpty();
+        assertThat(consumer.isRunning()).isFalse();
+    }
+
+    private Set<String> consumerNames(Long coupon) {
+        return redis.opsForStream().consumers(CouponStockRedisRepository.streamKey(coupon), CouponStreamConsumer.GROUP)
+                .stream().map(XInfoConsumer::consumerName).collect(Collectors.toSet());
+    }
+
+    private List<Thread> loopThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(t -> t.isAlive() && t.getName().startsWith("coupon-stream-consumer")).toList();
     }
 }

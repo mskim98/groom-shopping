@@ -2,6 +2,7 @@ package groom.backend.infrastructure.coupon;
 
 import groom.backend.application.coupon.CouponIssueBatchWriter;
 import groom.backend.application.coupon.CouponIssueBatchWriter.InsertOutcome;
+import groom.backend.application.coupon.CouponIssueSignal;
 import groom.backend.application.coupon.CouponIssueStatus;
 import groom.backend.application.coupon.CouponRedisLatency;
 import groom.backend.application.coupon.CouponStockRedisRepository;
@@ -50,7 +51,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 쿠폰 요청 스트림 컨슈머 - 인스턴스마다 전용 스레드 하나가 도는 루프
+ * 쿠폰 요청 스트림 컨슈머 - 인스턴스마다 전용 플랫폼 스레드 {@code coupon.issue.stream.consumers} 개(기본 4)가 같은 루프를 돈다
  *
  * <p>흐름
  * <ol>
@@ -58,7 +59,7 @@ import org.springframework.stereotype.Component;
  *       ({@code XREADGROUP COUNT batch-size BLOCK block-ms}). 그룹이 없으면 {@code XGROUP CREATE … MKSTREAM} 으로 만든다</li>
  *   <li>쿠폰마다 한 트랜잭션: 쿠폰 행 잠금 → 남은 자리({@code quantity − 발급 수}) → 그 수만큼 배치 INSERT → 커밋
  *       ({@link CouponIssueBatchWriter})</li>
- *   <li><b>커밋 뒤에</b> 상태(SUCCESS · 자리 없음 FAILED) · 내 쿠폰 캐시 비움 · {@code XACK}(+ 스트림 항목 삭제).
+ *   <li><b>커밋 뒤에</b> 상태(SUCCESS · 자리 없음 FAILED) · 완료 신호 · 내 쿠폰 캐시 비움 · {@code XACK}(+ 스트림 항목 삭제).
  *       커밋과 ack 사이에 죽으면 항목이 재전달되고 {@code ON CONFLICT} 와 request_id 비교가 흡수한다</li>
  *   <li>다른 컨슈머가 {@code claim-min-idle-ms} 이상 쥔 항목은 가져와(XAUTOCLAIM) 같은 방식으로 처리한다</li>
  *   <li>배달 횟수가 {@code max-deliveries} 를 넘은 항목은 {@code coupon:{id}:dlq} 로 옮기고 ack 하며
@@ -112,7 +113,12 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private final CouponIssueBatchWriter batchWriter;
     private final MyCouponCacheEvictor myCouponCacheEvictor;
     private final CouponRedisLatency latency;
+    private final CouponIssueSignal signal;
 
+    // 인스턴스가 띄우는 컨슈머 스레드 수. 스레드마다 그룹 안에서 다른 이름으로 읽는다
+    // 블로킹 읽기(XREADGROUP BLOCK)는 Lettuce 가 접수 Lua 의 공유 연결과 다른 전용 연결로 보낸다 - 읽는 동안 접수 명령이 기다리지 않는다
+    @Value("${coupon.issue.stream.consumers:4}")
+    private int consumers = 4;
     // 한 번에 읽어 한 트랜잭션으로 넣는 건수의 상한
     @Value("${coupon.issue.batch-size:500}")
     private int batchSize = 500;
@@ -140,7 +146,9 @@ public class CouponStreamConsumer implements SmartLifecycle {
     @Value("${coupon.issue.stream.enabled:true}")
     private boolean enabled = true;
 
+    // 호스트-pid. 컨슈머 스레드는 여기에 -번호를 붙인 이름으로 읽고, 스레드 밖(시험의 pollCoupon 호출)은 이 이름이다
     private final String consumerName = resolveConsumerName();
+    private final ThreadLocal<String> workerName = ThreadLocal.withInitial(() -> consumerName);
     // 그룹을 이미 만든 쿠폰. NOGROUP 이 나오면 비우고 다시 만든다(Redis 가 비워진 경우)
     private final Set<Long> groupReady = ConcurrentHashMap.newKeySet();
     // 루프가 읽는 쿠폰. 비활성이 됐어도 스트림에 항목이 남아 있으면 비울 때까지 둔다
@@ -150,12 +158,13 @@ public class CouponStreamConsumer implements SmartLifecycle {
     private volatile long lastRefreshAt = 0L;
 
     private volatile boolean running = false;
-    private Thread loopThread;
+    private final List<Thread> loopThreads = new ArrayList<>();
 
     public CouponStreamConsumer(StringRedisTemplate redis, CouponRepository couponRepository,
                                 CouponIssueRepository couponIssueRepository,
                                 CouponStockRedisRepository stockRepository, CouponIssueBatchWriter batchWriter,
-                                MyCouponCacheEvictor myCouponCacheEvictor, CouponRedisLatency latency) {
+                                MyCouponCacheEvictor myCouponCacheEvictor, CouponRedisLatency latency,
+                                CouponIssueSignal signal) {
         this.redis = redis;
         this.couponRepository = couponRepository;
         this.couponIssueRepository = couponIssueRepository;
@@ -163,6 +172,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
         this.batchWriter = batchWriter;
         this.myCouponCacheEvictor = myCouponCacheEvictor;
         this.latency = latency;
+        this.signal = signal;
     }
 
     // 호스트 이름과 프로세스 번호. 같은 호스트에서 재기동하면 이름이 바뀌어 옛 이름의 항목은 유휴 인수로 넘어온다
@@ -193,8 +203,12 @@ public class CouponStreamConsumer implements SmartLifecycle {
             return;
         }
         running = true;
-        loopThread = Thread.ofPlatform().name("coupon-stream-consumer").daemon(true).start(this::runLoop);
-        log.info("[COUPON_STREAM_CONSUMER_STARTED] consumer={}", consumerName);
+        for (int index = 1; index <= consumers; index++) {
+            String name = consumerName + "-" + index;
+            loopThreads.add(Thread.ofPlatform().name("coupon-stream-consumer-" + index).daemon(true)
+                    .start(() -> runLoop(name)));
+        }
+        log.info("[COUPON_STREAM_CONSUMER_STARTED] consumer={}, threads={}", consumerName, consumers);
     }
 
     @Override
@@ -203,12 +217,15 @@ public class CouponStreamConsumer implements SmartLifecycle {
             return;
         }
         running = false;
-        loopThread.interrupt();
+        loopThreads.forEach(Thread::interrupt);
         try {
-            loopThread.join(5_000L);
+            for (Thread thread : loopThreads) {
+                thread.join(5_000L);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        loopThreads.clear();
         log.info("[COUPON_STREAM_CONSUMER_STOPPED] consumer={}", consumerName);
     }
 
@@ -217,7 +234,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
         return running;
     }
 
-    private void runLoop() {
+    private void runLoop(String name) {
+        workerName.set(name);
         while (running) {
             try {
                 pollOnce();
@@ -415,7 +433,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
     }
 
     private Consumer consumer() {
-        return Consumer.from(GROUP, consumerName);
+        return Consumer.from(GROUP, workerName.get());
     }
 
     // ---- 유휴 항목 인수 · 독 항목 ----
@@ -475,7 +493,9 @@ public class CouponStreamConsumer implements SmartLifecycle {
         try {
             String streamKey = CouponStockRedisRepository.streamKey(couponId);
             for (XInfoConsumer info : withGroup(couponId, () -> redis.opsForStream().consumers(streamKey, GROUP))) {
-                if (info.consumerName().equals(consumerName) || info.pendingCount() > 0 || info.idleTimeMs() < consumerRetireIdleMs) {
+                // 같은 프로세스의 다른 스레드 이름(호스트-pid-번호)도 건드리지 않는다
+                if (info.consumerName().equals(workerName.get()) || info.consumerName().startsWith(consumerName + "-")
+                        || info.pendingCount() > 0 || info.idleTimeMs() < consumerRetireIdleMs) {
                     continue;
                 }
                 // shortcut: XINFO 와 DELCONSUMER 사이에 그 이름이 새로 읽으면 그 항목의 대기 기록이 지워진다, 한 시간 넘게 쉰 이름이 그 사이에 돌아올 확률이라 받아들이며 이름이 재사용되는 구성이 생기면 Lua 로 묶는다
@@ -523,7 +543,7 @@ public class CouponStreamConsumer implements SmartLifecycle {
                                                        long count) {
         RedisAsyncCommands<byte[], byte[]> commands = (RedisAsyncCommands<byte[], byte[]>) connection.getNativeConnection();
         XAutoClaimArgs<byte[]> args = XAutoClaimArgs.Builder
-                .xautoclaim(io.lettuce.core.Consumer.from(bytes(GROUP), bytes(consumerName)),
+                .xautoclaim(io.lettuce.core.Consumer.from(bytes(GROUP), bytes(workerName.get())),
                         Duration.ofMillis(claimMinIdleMs), start)
                 .count(count);
         try {
@@ -602,6 +622,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
                     couponId, stream.id(), entry.getValue(), stream.fields());
         }
         latency.timed("consumer_status_write", "PIPELINE SET coupon-status", 0L, () -> stockRepository.setStatuses(statuses));
+        // 상태 키를 쓴 뒤 ack 전에 알린다 - 기다리는 요청이 신호를 받고 곧바로 키를 읽어도 서 있다
+        signal.publish(statuses);
         committedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, poison.keySet().stream().map(StreamEntry::id).toList());
     }
@@ -669,6 +691,8 @@ public class CouponStreamConsumer implements SmartLifecycle {
             }
         }
         latency.timed("consumer_status_write", "PIPELINE SET coupon-status", 0L, () -> stockRepository.setStatuses(statuses));
+        // 커밋과 상태 키 기록이 끝난 뒤 ack 전에 알린다. 신호를 못 내도 기다리는 요청은 재확인 때 상태 키로 깬다
+        signal.publish(statuses);
         insertedUsers.forEach(myCouponCacheEvictor::evict);
         ack(couponId, entries.stream().map(StreamEntry::id).toList());
     }
