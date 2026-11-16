@@ -49,13 +49,14 @@ class StockLedgerPolicyTest {
     }
 
     @Test
-    @DisplayName("stock.mode.min-db-dwell-ms 는 70000 이고 Toss 응답 한도(http.client.toss.response-timeout)보다 크다")
-    void DB모드_최소대기는_70000ms이고_Toss_응답한도보다_크다() {
+    @DisplayName("stock.mode.min-db-dwell-ms 는 80000 이고 Toss 응답 한도 + bulkhead 자리 대기 상한 이상이다")
+    void DB모드_최소대기는_80000ms이고_응답한도와_자리대기_합_이상이다() {
         Object dwell = at("stock.mode.min-db-dwell-ms");
-        Duration tossTimeout = Duration.parse("PT" + String.valueOf(at("http.client.toss.response-timeout")).toUpperCase());
+        long tossTimeout = Duration.parse("PT" + String.valueOf(at("http.client.toss.response-timeout")).toUpperCase()).toMillis();
+        long slotWait = Duration.parse("PT" + String.valueOf(at("resilience4j.bulkhead.instances.toss.max-wait-duration")).toUpperCase()).toMillis();
 
-        assertThat(dwell).isEqualTo(70000);
-        assertThat(((Number) dwell).longValue()).isGreaterThan(tossTimeout.toMillis());
+        assertThat(dwell).isEqualTo(80000);
+        assertThat(((Number) dwell).longValue()).isGreaterThanOrEqualTo(tossTimeout + slotWait);
     }
 
     @Test
