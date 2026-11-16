@@ -43,6 +43,7 @@ function headers(token) {
 
 export function setup() {
     const tokens = [];
+    let missing = 0;
     const batch = 50;
     for (let from = 1; from <= REQUESTS; from += batch) {
         const reqs = [];
@@ -52,10 +53,12 @@ export function setup() {
         }
         for (const r of http.batch(reqs)) {
             if (r.status !== 200) throw new Error('로그인 실패 status=' + r.status + ' body=' + r.body);
-            tokens.push(r.json('accessToken'));
+            const t = r.json('accessToken');
+            if (!t) missing++;
+            tokens.push(t);
         }
     }
-    console.log('setup: logins=' + tokens.length);
+    console.log('setup: logins=' + tokens.length + ' missing_token=' + missing);
     return {tokens};
 }
 
@@ -107,6 +110,7 @@ export function handleSummary(data) {
     const cnt = (n) => (m['r_' + n] ? m['r_' + n].values.count : 0);
     const out = {
         requests: m['coupon_accept_ms'].values.count,
+        iterations: m.iterations ? m.iterations.values.count : 0,
         rate: RATE,
         duration_s: DURATION_S,
         accept_p95_ms: m['coupon_accept_ms'].values['p(95)'],
