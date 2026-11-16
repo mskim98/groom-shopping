@@ -14,7 +14,7 @@ public class ConfirmStageTimers {
 
     public static final String NAME = "payment.confirm.stage";
 
-    /** Toss 승인 API 호출(요청 → 응답) */
+    /** Toss 승인 API 호출(요청 → 응답). 재는 곳이 bulkhead 프록시 바깥이라 자리 대기(최대 10초)도 들어간다 */
     public static final String TOSS_CALL = "toss_call";
     /** READY 전이 + outbox 적재 트랜잭션(REQUIRES_NEW)의 시작부터 커밋 끝까지 */
     public static final String READY_OUTBOX_COMMIT = "ready_outbox_commit";

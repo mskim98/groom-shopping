@@ -12,7 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 // 장애로 DB 모드가 된 플래시 상품을 Redis 모드로 되돌리는 배치. 대기 시간(min-db-dwell-ms)이 지나고 Redis PING 이 응답할 때만 움직인다
-// 대기 시간이 Toss 응답 한도(60초)보다 길어야 옛 Redis 에서 선점한 모든 결제가 TX1 에 닿았거나 실패한 뒤에 복귀한다
+// 대기 시간이 bulkhead 자리 대기(10초) + Toss 응답 한도(60초)보다 길어야 옛 Redis 에서 선점한 모든 결제가 TX1 에 닿았거나 실패한 뒤에 복귀한다
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -22,7 +22,7 @@ public class StockModeRecoveryJob {
     private final StockLedgerService service;
     private final ProductStockRedisRepository redis;
 
-    @Value("${stock.mode.min-db-dwell-ms:70000}")
+    @Value("${stock.mode.min-db-dwell-ms:80000}")
     private long minDbDwellMs = 70000;
 
     @Scheduled(fixedDelayString = "${stock.mode.recovery-interval-ms:10000}", initialDelayString = "${stock.mode.recovery-interval-ms:10000}")
