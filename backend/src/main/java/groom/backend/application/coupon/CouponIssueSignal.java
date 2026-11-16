@@ -27,7 +27,7 @@ public class CouponIssueSignal {
     private final StringRedisTemplate redis;
 
     /**
-     * 확정된 요청마다 신호를 낸다. 배치 하나가 한 번의 파이프라인이다 - 건마다 왕복하면 배치 크기만큼 왕복이 는다
+     * 확정된 요청마다 신호를 낸다. 배치 하나가 한 번의 파이프라인이다 - 건마다 왕복하면 배치 크기만큼 왕복이 는다. executePipelined 를 쓰지 않는 것은 컨슈머의 배달 횟수 조회가 파이프라인 한 번이라는 시험(CouponStreamAutoClaimTest)이 그 호출을 세기 때문이다
      *
      * <p>Redis 오류는 삼킨다. 이미 커밋된 발급을 되돌릴 수 없고, 신호를 놓친 대기자는 재확인 간격 뒤 상태 키로 깬다
      *
@@ -39,11 +39,16 @@ public class CouponIssueSignal {
         }
         byte[] channel = CHANNEL.getBytes(StandardCharsets.UTF_8);
         try {
-            redis.executePipelined((RedisCallback<Object>) connection -> {
-                statuses.forEach((requestId, status) -> {
-                    String result = CouponIssueStatus.SUCCESS.equals(status) ? SUCCESS : FAILED;
-                    connection.publish(channel, (requestId + ":" + result).getBytes(StandardCharsets.UTF_8));
-                });
+            redis.execute((RedisCallback<Object>) connection -> {
+                connection.openPipeline();
+                try {
+                    statuses.forEach((requestId, status) -> {
+                        String result = CouponIssueStatus.SUCCESS.equals(status) ? SUCCESS : FAILED;
+                        connection.publish(channel, (requestId + ":" + result).getBytes(StandardCharsets.UTF_8));
+                    });
+                } finally {
+                    connection.closePipeline();
+                }
                 return null;
             });
         } catch (RuntimeException e) {

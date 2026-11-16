@@ -19,7 +19,7 @@ class CouponIssueSignalTest {
     @DisplayName("Redis 발행이 실패해도 예외를 던지지 않는다 - 이미 커밋된 발급을 되돌릴 수 없고 대기자는 키를 다시 읽는다")
     void publish_Redis_오류는_삼킨다() {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        given(redis.executePipelined(any(RedisCallback.class))).willThrow(new QueryTimeoutException("시험용 Redis 장애"));
+        given(redis.execute(any(RedisCallback.class))).willThrow(new QueryTimeoutException("시험용 Redis 장애"));
 
         assertThatCode(() -> new CouponIssueSignal(redis).publish(Map.of("req-1", "SUCCESS", "req-2", "FAILED:COUPON_OUT_OF_STOCK")))
                 .doesNotThrowAnyException();
