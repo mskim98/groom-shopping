@@ -45,6 +45,17 @@ start_samplers() { # 폴더 - 호스트 top(5 초) · Hikari 지표(2 초) · DB
 stop_samplers() { kill $SAMPLER_PIDS 2> /dev/null; wait $SAMPLER_PIDS 2> /dev/null; SAMPLER_PIDS=""; pkill -f "top -l 100000" 2> /dev/null; return 0; }
 trap 'stop_samplers' EXIT
 
+# 진단 표본(DIAG=1) - 1 초마다 백엔드의 GC 정지 · CPU · 스레드 · 힙 지표와 k6 · Docker VM 프로세스의 CPU 를 덧붙인다. 표본 자체가 CPU 를 조금 쓰므로 진단 실행에만 켠다
+start_diag() { # 폴더
+  : > "$1/diag-prom.tsv"; : > "$1/diag-cpu.tsv"
+  ( while :; do
+      local e; e="$(epoch)"
+      docker exec nginx curl -fsS "http://backend1:8080/api/actuator/prometheus" 2> /dev/null \
+        | grep -E '^(jvm_gc_pause_seconds_(count|sum|max)|process_cpu_usage|system_cpu_usage|jvm_threads_(live|peak)_threads|jvm_memory_used_bytes[{]area="heap"|hikaricp_connections_(active|pending)[{])' | sed "s/^/$e\t/" >> "$1/diag-prom.tsv"
+      printf '%s\t%s\t%s\n' "$e" "$(ps -A -o %cpu=,comm= | awk '/\/k6$/ {s += $1} END {print s + 0}')" "$(ps -A -o %cpu=,comm= | awk '/com.docker.backend|com.docker.virtualization/ {s += $1} END {print s + 0}')" >> "$1/diag-cpu.tsv"
+      sleep 1
+    done ) & SAMPLER_PIDS="$SAMPLER_PIDS $!"
+}
 write_meta() { # 키=값(JSON 값) 쌍들
   python3 - "$D/meta.json" "$RUNNAME" "$@" <<'PY'
 import json, subprocess, sys
@@ -96,6 +107,7 @@ coupon_run() {
   local t0; t0="$(date -u +%FT%TZ)"; echo "$t0" > "$D/start.txt"
   : > "$D/k6.log"
   start_samplers "$D"
+  [ "$diag" = 1 ] && start_diag "$D"
   after_setup "$D" "$D/k6.log" & local pa=$!
   k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$D/k6.log" 2>&1 & local kpid=$!

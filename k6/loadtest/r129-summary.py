@@ -63,6 +63,28 @@ def status_span(nginx, status, p_end, u_start):
             "last_s_after_unpause": round(max(ts) - u_start, 1)}
 
 
+def diag(raw):
+    """진단 표본(diag-prom.tsv · diag-cpu.tsv)에서 GC 정지 합 · 최대 정지 · CPU 최댓값 · 힙 최댓값 · 표본 간격이 2 초를 넘은 구간(앱이 응답하지 못한 흔적)"""
+    gc_sum, gc_cnt, gc_max, proc, sysc, heap, thr = [], [], [], [], [], [], []
+    stamps = []
+    for line in rd(raw, "diag-prom.tsv").splitlines():
+        f = line.split("\t", 1)
+        m = re.match(r"(\w+)(\{[^}]*\})?\s+([-\d.eE+]+)$", f[1]) if len(f) == 2 else None
+        if not m:
+            continue
+        v = float(m.group(3))
+        {"jvm_gc_pause_seconds_sum": gc_sum, "jvm_gc_pause_seconds_count": gc_cnt, "jvm_gc_pause_seconds_max": gc_max, "process_cpu_usage": proc,
+         "system_cpu_usage": sysc, "jvm_memory_used_bytes": heap, "jvm_threads_live_threads": thr}.get(m.group(1), []).append(v)
+        if m.group(1) == "process_cpu_usage":
+            stamps.append(float(f[0]))
+    gaps = [(round(a, 2), round(b - a, 2)) for a, b in zip(stamps, stamps[1:]) if b - a > 2.0]
+    cpu = [l.split("\t") for l in rd(raw, "diag-cpu.tsv").splitlines() if l.count("\t") == 2]
+    return {"samples": len(stamps), "gc_pause_total_s": round(max(gc_sum) - min(gc_sum), 3) if gc_sum else None, "gc_pauses": int(max(gc_cnt) - min(gc_cnt)) if gc_cnt else None,
+            "gc_pause_max_s": max(gc_max) if gc_max else None, "process_cpu_peak": max(proc) if proc else None, "system_cpu_peak": max(sysc) if sysc else None,
+            "heap_used_peak_mb": round(max(heap) / 1048576) if heap else None, "threads_live_peak": int(max(thr)) if thr else None,
+            "sample_gaps_over_2s": gaps, "k6_cpu_pct_peak": max(float(c[1]) for c in cpu) if cpu else None, "docker_vm_cpu_pct_peak": max(float(c[2]) for c in cpu) if cpu else None}
+
+
 def coupon(raw, meta):
     k6 = jrd(raw, "k6-summary.json")
     cond = final.condition(raw)
@@ -80,6 +102,8 @@ def coupon(raw, meta):
     for name in ("redis-latency-latest.txt", "redis-latency-history.txt", "redis-info-stats.txt"):
         if rd(raw, name):
             s.setdefault("diag_files", {})[name] = rd(raw, name).strip()[:2000]
+    if meta.get("diag"):
+        s["diag"] = diag(raw)
     f = jrd(raw, "fault.json")
     if f:
         p_end, u_start = f["pause_cmd_end"], f["unpause_cmd_start"]
