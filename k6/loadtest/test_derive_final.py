@@ -376,3 +376,53 @@ class DeriveR129Test(unittest.TestCase):
     def test_r129_answers_in_window_counts_statuses_of_the_path_inside_the_window(self):
         a = self.d.answers_in_window(r129_text("nginx-fault.log"), "/coupon/issue/", "2026-11-18T05:00:05Z", "2026-11-18T05:00:15Z")
         self.assertEqual(a, {"200": 1, "409": 1, "503": 1})
+
+
+class SummaryRequiredFilesR129Test(unittest.TestCase):
+    """r129-summary.py 는 필수 원시 파일이 없으면 오류로 끝나고, 선택 파일(재고 UPDATE 문장 읽기 등)은 없어도 된다"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("r129_summary", os.path.join(HERE, "r129-summary.py"))
+        cls.m = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, HERE)
+        spec.loader.exec_module(cls.m)
+
+    def raw_with_all_required(self, kind="hotrow"):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        os.makedirs(os.path.join(raw, "step-25"))
+        for p in self.m.required_files(kind, raw):
+            open(p, "w").close()
+        return raw
+
+    def run_main(self, kind, raw):
+        return subprocess.run([sys.executable, "-B", os.path.join(HERE, "r129-summary.py"), kind, raw, os.path.join(raw, "out.json")],
+                              capture_output=True, text=True)
+
+    def test_r129_summary_required_files_include_pg_activity_but_not_the_optional_stock_update_read(self):
+        raw = self.raw_with_all_required()
+        names = [os.path.relpath(p, raw) for p in self.m.required_files("hotrow", raw)]
+        self.assertIn("pg-activity.tsv", names)
+        self.assertIn(os.path.join("step-25", "host-top.txt"), names)
+        self.assertNotIn("pgss-stock-update.tsv", names)
+
+    def test_r129_summary_all_required_present_and_optional_absent_reports_nothing_missing(self):
+        raw = self.raw_with_all_required()
+        self.assertEqual(self.m.required_missing("hotrow", raw), [])
+
+    def test_r129_summary_missing_required_raw_file_exits_non_zero_and_names_the_file(self):
+        raw = self.raw_with_all_required()
+        os.remove(os.path.join(raw, "step-25", "host-top.txt"))
+        r = self.run_main("hotrow", raw)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("host-top.txt", r.stderr)
+
+    def test_r129_summary_empty_raw_dir_names_meta_json_instead_of_failing_with_a_traceback(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        r = self.run_main("bulkhead", raw)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("meta.json", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
