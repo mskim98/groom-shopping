@@ -71,7 +71,9 @@ summarize() { python3 -B "$ROOT/k6/loadtest/r129-summary.py" "$1" "$D" "$OUT/sum
 
 # 부하 시작(k6 준비 단계 끝) 직후의 한 번 - pg_stat_statements 표본 · Redis 통계 초기화 · 쿠폰 단계 타이머 기준선
 after_setup() { # 폴더 · k6 로그
-  until grep -q 'setup:' "$2" 2> /dev/null; do sleep 0.3; done
+  # k6 준비 단계(로그인)가 120 초 안에 끝나지 않으면 실패로 끝낸다 - 상한이 없으면 k6 가 죽은 실행이 영원히 기다린다(R129-13-6)
+  local w=0
+  until grep -q 'setup:' "$2" 2> /dev/null; do sleep 0.3; w=$((w + 1)); [ "$w" -lt 400 ] || { echo "k6 setup line not seen within 120 s ($2)" >&2; return 1; }; done
   epoch > "$1/load-start.epoch"
   pgss_snapshot "$1/pgss-setup.tsv"
   docker exec redis redis-cli CONFIG RESETSTAT > /dev/null; docker exec redis redis-cli SLOWLOG RESET > /dev/null
@@ -112,7 +114,8 @@ coupon_run() {
   k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$D/k6.log" 2>&1 & local kpid=$!
   if [ "$fault" = 1 ]; then
-    until grep -q 'setup:' "$D/k6.log" 2> /dev/null; do sleep 0.3; done
+    local fw=0
+    until grep -q 'setup:' "$D/k6.log" 2> /dev/null; do sleep 0.3; fw=$((fw + 1)); [ "$fw" -lt 400 ] || { kill "$kpid" "$pa" 2> /dev/null; die "k6 setup line not seen within 120 s (fault branch, $D/k6.log)"; }; done
     sleep 5
     local p0 p1 u0 u1
     p0="$(epoch)"; docker pause redis > /dev/null; p1="$(epoch)"
@@ -121,7 +124,7 @@ coupon_run() {
     printf '{"kind":"redis-pause","pause_cmd_start":%s,"pause_cmd_end":%s,"unpause_cmd_start":%s,"unpause_cmd_end":%s}\n' "$p0" "$p1" "$u0" "$u1" > "$D/fault.json"
   fi
   wait "$kpid" || echo "k6 exit $?" >> "$D/k6.log"
-  wait "$pa" 2> /dev/null
+  wait "$pa" || { kill "$kpid" 2> /dev/null; die "k6 setup line not seen within 120 s ($D/k6.log)"; }
   sleep 5
   stop_samplers
   pgss_snapshot "$D/pgss-end.tsv"
