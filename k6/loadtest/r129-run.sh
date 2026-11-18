@@ -86,8 +86,8 @@ coupon_run() {
   local cid; cid="$(cat "$D/coupon-id.txt")"
   write_condition "$D"
   if [ "$auth" = bypass ]; then
-    # 헤더의 사용자 id = 반복 번호 + 1 이 seed_<n>@test.com 의 id 와 같은지 확인한다(어긋나면 사용자 수가 달라진다)
-    psql_seed -At -F $'\t' -c "SELECT count(*), count(*) FILTER (WHERE id = substring(email from 'seed_([0-9]+)@')::bigint) FROM users WHERE email ~ '^seed_[0-9]+@test.com$' AND substring(email from 'seed_([0-9]+)@')::bigint <= $((rate * dur))" > "$D/bypass-user-id-check.tsv"
+    # 헤더의 사용자 id 1..N 이 모두 users 에 있는지 확인한다(없으면 발급 행의 외래 키가 깨진다). seed_<n> 계정의 id 와는 다르지만 발급 경로가 보는 것은 서로 다른 사용자 N 명이다
+    psql_seed -At -F $'\t' -c "SELECT count(*), min(id), max(id) FROM users WHERE id BETWEEN 1 AND $((rate * dur))" > "$D/bypass-user-id-check.tsv"
   fi
   if [ "$diag" = 1 ]; then docker exec redis redis-cli CONFIG SET latency-monitor-threshold 1 > /dev/null; docker exec redis redis-cli LATENCY RESET > /dev/null; fi
   psql_seed -c "SELECT pg_stat_statements_reset()" > /dev/null
