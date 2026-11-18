@@ -52,7 +52,7 @@ start_diag() { # 폴더
       local e; e="$(epoch)"
       docker exec nginx curl -fsS "http://backend1:8080/api/actuator/prometheus" 2> /dev/null \
         | grep -E '^(jvm_gc_pause_seconds_(count|sum|max)|process_cpu_usage|system_cpu_usage|jvm_threads_(live|peak)_threads|jvm_memory_used_bytes[{]area="heap"|hikaricp_connections_(active|pending)[{])' | sed "s/^/$e\t/" >> "$1/diag-prom.tsv"
-      printf '%s\t%s\t%s\n' "$e" "$(ps -A -o %cpu=,comm= | awk '/\/k6$/ {s += $1} END {print s + 0}')" "$(ps -A -o %cpu=,comm= | awk '/com.docker.backend|com.docker.virtualization/ {s += $1} END {print s + 0}')" >> "$1/diag-cpu.tsv"
+      printf '%s\t%s\t%s\n' "$e" "$(ps -A -o %cpu=,comm= | awk '/(^| |\/)k6$/ {s += $1} END {print s + 0}')" "$(ps -A -o %cpu=,comm= | awk '/com.docker.backend|com.docker.virtualization/ {s += $1} END {print s + 0}')" >> "$1/diag-cpu.tsv"
       sleep 1
     done ) & SAMPLER_PIDS="$SAMPLER_PIDS $!"
 }
@@ -131,7 +131,8 @@ coupon_run() {
   docker exec redis redis-cli SLOWLOG GET 20 > "$D/redis-slowlog.txt"
   if [ "$diag" = 1 ]; then docker exec redis redis-cli LATENCY LATEST > "$D/redis-latency-latest.txt"; docker exec redis redis-cli LATENCY HISTORY command > "$D/redis-latency-history.txt" 2>&1; docker exec redis redis-cli INFO stats > "$D/redis-info-stats.txt"; fi
   docker exec nginx tail -n +"$((before + 1))" "$NGINX_LOG" > "$D/nginx.log"
-  docker logs --timestamps --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep -E 'CB_STATE_CHANGE|COUPON_REDIS_UNAVAILABLE_DB_FALLBACK' | head -400 > "$D/backend-cb.log"
+  docker logs --timestamps --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep 'CB_STATE_CHANGE' > "$D/backend-cb.log"
+  docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep -c 'COUPON_REDIS_UNAVAILABLE_DB_FALLBACK' > "$D/fallback-count.txt"
   docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep 'COUPON_REDIS_SLOW' > "$D/redis-slow-backend1.log" || true
   docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -100 > "$D/warn-backend1.log" || true
   psql_seed -Atc "SELECT count(*) FROM coupon_issue WHERE coupon_id = $cid" > "$D/issued-db.txt"
@@ -156,6 +157,9 @@ hotrow_run() {
   psql_seed -Atc "SELECT count(*) FROM payment p JOIN orders o ON o.id = p.order_id JOIN order_item oi ON oi.order_id = o.id WHERE oi.product_id = '$HOT_PRODUCT' AND p.status = 'DONE'" > "$D/confirmed-before.txt"
   K6_SCRIPT=k6/scripts/payment-only-steps.js K6_PREPARE_SCRIPT=k6/scripts/payment-only-prepare.js FLASH_COUNT=1 DIAG_SAMPLERS=1 RAMP_S="$ramp" HOLD_S="$hold" \
     $RUN step "$rps" "$D" > "$D/run.log" 2>&1 || die "step (tail: $(tail -3 "$D/run.log" | tr '\n' ' '))"
+  # 재고를 낮추는 UPDATE 는 총 시간이 작으면 run.sh 의 pgss.tsv(총 시간 상위 20)에 들지 않는다 - 문장만 따로 읽는다(r129 flash-50-2 부터)
+  psql_seed -At -F $'\t' -c "SELECT regexp_replace(left(query, 400), '\s+', ' ', 'g'), calls, round(mean_exec_time::numeric, 3), round(total_exec_time::numeric, 1)
+    FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$SEED_DB') AND query ~* '^\s*update\s+product\s' ORDER BY total_exec_time DESC" > "$D/pgss-stock-update.tsv"
   sleep 6 # 원장 적용 배치(1 초 주기)가 남은 행을 product.stock 에 반영할 시간
   psql_seed -At -F $'\t' -c "SELECT stock FROM product WHERE id = '$HOT_PRODUCT'" > "$D/stock-after.txt"
   psql_seed -Atc "SELECT count(*) FROM stock_ledger WHERE product_id = '$HOT_PRODUCT' AND kind = 'SALE'" > "$D/ledger-sale-after.txt"

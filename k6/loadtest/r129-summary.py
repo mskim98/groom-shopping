@@ -118,7 +118,7 @@ def coupon(raw, meta):
             "answers_before_pause": d.answers_in_window(nginx, "/coupon/issue/", "1970-01-01T00:00:00Z", lo),
             "answers_after_pause": d.answers_in_window(nginx, "/coupon/issue/", hi, "2999-01-01T00:00:00Z"),
             "status_401": status_span(nginx, "401", p_end, u_start),
-            "db_fallback_log_lines": cb.count("COUPON_REDIS_UNAVAILABLE_DB_FALLBACK"),
+            "db_fallback_log_lines": intf(raw, "fallback-count.txt"),
             "window_note": "answers counted by nginx log second of the response end, window widened to whole seconds",
         }
     return s
@@ -143,7 +143,8 @@ def hotrow(raw, meta):
         "dropped_iterations": k6["dropped_iterations"], "iterations_skipped": k6["iterations_skipped"],
         "lock_wait_samples": d.lock_wait_samples(rd(raw, "pg-activity.tsv")),
         "hikari_pending_peak": d.hikari_peaks(rd(sd, "prom.tsv"))["pending_peak"],
-        "stock_update_statement": d.stock_update_stats(rd(sd, "pgss.tsv").splitlines()),
+        "stock_update_statement": d.stock_update_stats((rd(raw, "pgss-stock-update.tsv") or rd(sd, "pgss.tsv")).splitlines()),
+        "stock_update_statement_source": "pgss-stock-update.tsv" if rd(raw, "pgss-stock-update.tsv") else "pgss.tsv (top 20 by total time; absent when the statement is below it)",
         "db_connections_peak": None,
         "path_check": d.hotrow_path_check(meta["flash_sale"], led, conf, st_before, st_after),
         "path_evidence": {"ledger_sale_rows_added": led, "confirmed_payments_added": conf, "stock_before": st_before, "stock_after": st_after},
