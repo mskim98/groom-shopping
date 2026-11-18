@@ -20,6 +20,8 @@ const POLL_MAX_S = parseInt(__ENV.POLL_MAX_S || '30', 10);
 const ISSUE_PATH = __ENV.ISSUE_PATH || 'issue-async';
 const PASSWORD = __ENV.LT_PASSWORD || 'loadtest123!';
 const SUMMARY_FILE = __ENV.SUMMARY_FILE || 'coupon-summary.json';
+// AUTH=bypass: 로그인 없이 X-Lt-User-Id 헤더(반복 번호 + 1 = 시드 사용자 id)로 부른다 - 앱이 LOADTEST_AUTH_BYPASS_ENABLED=true 일 때만 통한다(r129 Redis 정지 우회 실행)
+const AUTH = __ENV.AUTH || 'token';
 const REQUESTS = RATE * DURATION_S;
 
 const accept = new Trend('coupon_accept_ms', true);
@@ -43,10 +45,15 @@ export const options = {
 };
 
 function headers(token) {
-    return {'Content-Type': 'application/json', Authorization: 'Bearer ' + token};
+    return AUTH === 'bypass' ? {'Content-Type': 'application/json', 'X-Lt-User-Id': String(token)} : {'Content-Type': 'application/json', Authorization: 'Bearer ' + token};
 }
 
 export function setup() {
+    if (AUTH === 'bypass') {
+        // 토큰 자리에 사용자 id 를 둔다(반복 i 의 사용자 = i + 1)
+        console.log('setup: logins=0 missing_token=0 auth=bypass');
+        return {tokens: Array.from({length: REQUESTS}, (_, i) => i + 1)};
+    }
     const tokens = [];
     let missing = 0;
     const batch = 50;

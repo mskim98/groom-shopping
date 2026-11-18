@@ -70,8 +70,10 @@ after_setup() { # 폴더 · k6 로그
 # ── 쿠폰 ───────────────────────────────────────────────────────────────
 coupon_run() {
   local rate="${RATE:-100}" dur="${DURATION_S:-30}" qty="${COUPON_QTY:-1000}" strategy="${STRATEGY:-stream}" fault="${FAULT:-0}" diag="${DIAG:-0}"
-  local issue_path="${ISSUE_PATH:-issue}"
+  local issue_path="${ISSUE_PATH:-issue}" auth="${AUTH:-token}"
   export COUPON_ISSUE_STRATEGY="$strategy"
+  # AUTH=bypass 면 앱에 LOADTEST_AUTH_BYPASS_ENABLED=true 를 주고 k6 는 X-Lt-User-Id 헤더로 부른다
+  if [ "$auth" = bypass ]; then export LOADTEST_AUTH_BYPASS_ENABLED=true; else export LOADTEST_AUTH_BYPASS_ENABLED=false; fi
   log "coupon rate=$rate dur=$dur qty=$qty strategy=$strategy fault=$fault"
   prep() {
     local cid
@@ -83,6 +85,10 @@ coupon_run() {
   reseed prep; boot
   local cid; cid="$(cat "$D/coupon-id.txt")"
   write_condition "$D"
+  if [ "$auth" = bypass ]; then
+    # 헤더의 사용자 id = 반복 번호 + 1 이 seed_<n>@test.com 의 id 와 같은지 확인한다(어긋나면 사용자 수가 달라진다)
+    psql_seed -At -F $'\t' -c "SELECT count(*), count(*) FILTER (WHERE id = substring(email from 'seed_([0-9]+)@')::bigint) FROM users WHERE email ~ '^seed_[0-9]+@test.com$' AND substring(email from 'seed_([0-9]+)@')::bigint <= $((rate * dur))" > "$D/bypass-user-id-check.tsv"
+  fi
   if [ "$diag" = 1 ]; then docker exec redis redis-cli CONFIG SET latency-monitor-threshold 1 > /dev/null; docker exec redis redis-cli LATENCY RESET > /dev/null; fi
   psql_seed -c "SELECT pg_stat_statements_reset()" > /dev/null
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$D/stock-before.txt"
@@ -91,7 +97,7 @@ coupon_run() {
   : > "$D/k6.log"
   start_samplers "$D"
   after_setup "$D" "$D/k6.log" & local pa=$!
-  k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
+  k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$D/k6.log" 2>&1 & local kpid=$!
   if [ "$fault" = 1 ]; then
     until grep -q 'setup:' "$D/k6.log" 2> /dev/null; do sleep 0.3; done
@@ -119,7 +125,7 @@ coupon_run() {
   psql_seed -Atc "SELECT count(*) FROM coupon_issue WHERE coupon_id = $cid" > "$D/issued-db.txt"
   psql_seed -Atc "SELECT count(*) - count(DISTINCT user_id) FROM coupon_issue WHERE coupon_id = $cid" > "$D/duplicate-rows.txt"
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$D/stock-after.txt"
-  write_meta "rate=$rate" "duration_s=$dur" "quantity=$qty" "strategy=\"$strategy\"" "issue_path=\"$issue_path\"" "fault=$fault" "diag=$diag"
+  write_meta "rate=$rate" "duration_s=$dur" "quantity=$qty" "strategy=\"$strategy\"" "issue_path=\"$issue_path\"" "fault=$fault" "diag=$diag" "auth=\"$auth\""
   summarize coupon
 }
 

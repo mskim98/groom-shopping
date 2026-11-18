@@ -54,12 +54,21 @@ def redis_usec(text):
     return {n: {"calls": int(c), "usec_per_call": float(u)} for n, c, u in re.findall(r"cmdstat_(\w+):calls=(\d+),usec=\d+,usec_per_call=([\d.]+)", text)}
 
 
+def status_span(nginx, status, p_end, u_start):
+    """쿠폰 발급 요청 중 이 상태 코드로 끝난 것의 건수와, 정지 시작 · 해제 시각 기준 첫 · 마지막 응답 시각(초, nginx 로그 시각은 초 단위)"""
+    ts = [d._utc(l.split()[0]) for l in nginx.splitlines() if len(l.split()) >= 4 and "/coupon/issue/" in l.split()[2] and l.split()[3] == status]
+    if not ts:
+        return {"count": 0}
+    return {"count": len(ts), "first_s_after_pause": round(min(ts) - p_end, 1), "last_s_after_pause": round(max(ts) - p_end, 1),
+            "last_s_after_unpause": round(max(ts) - u_start, 1)}
+
+
 def coupon(raw, meta):
     k6 = jrd(raw, "k6-summary.json")
     cond = final.condition(raw)
     s = final.coupon_summary(raw, None)
     s.update(common(meta, cond, rd(raw, "host-top.txt"), rd(raw, "prom.tsv")))
-    s.update({"run": meta["run"], "strategy": meta["strategy"], "issue_path": meta["issue_path"],
+    s.update({"run": meta["run"], "strategy": meta["strategy"], "issue_path": meta["issue_path"], "auth": meta.get("auth", "token"), "bypass_user_id_check": rd(raw, "bypass-user-id-check.tsv").strip() or None,
               "answer_ms_by_outcome": d.answer_ms_by_outcome(k6),
               "db_calls": d.db_calls(d.parse_pgss(rd(raw, "pgss-end.tsv")), k6["requests"], d.parse_pgss(rd(raw, "pgss-setup.tsv")) if rd(raw, "pgss-setup.tsv") else None),
               "redis_usec_per_call": redis_usec(rd(raw, "redis-commandstats.txt")),
@@ -84,6 +93,7 @@ def coupon(raw, meta):
             "answers_during_pause": d.answers_in_window(nginx, "/coupon/issue/", lo, hi),
             "answers_before_pause": d.answers_in_window(nginx, "/coupon/issue/", "1970-01-01T00:00:00Z", lo),
             "answers_after_pause": d.answers_in_window(nginx, "/coupon/issue/", hi, "2999-01-01T00:00:00Z"),
+            "status_401": status_span(nginx, "401", p_end, u_start),
             "db_fallback_log_lines": cb.count("COUPON_REDIS_UNAVAILABLE_DB_FALLBACK"),
             "window_note": "answers counted by nginx log second of the response end, window widened to whole seconds",
         }
