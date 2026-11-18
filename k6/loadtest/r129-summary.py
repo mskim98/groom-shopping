@@ -258,11 +258,45 @@ def comp(raw, meta):
     return s
 
 
+# 필수 원시 파일 - 없으면 요약을 만들지 않고 파일 이름을 대며 오류로 끝난다. "step/" 로 시작하는 것은 run.sh step 이 만든 <raw>/step-<n>/ 안의 파일이다
+# 선택(없으면 해당 키만 비는 것으로 문서화된 읽기): pgss-stock-update.tsv(재고 UPDATE 문장, flash 3회는 없다 - R129-12-3) · pgss-setup.tsv(준비 단계 끝 표본, 없으면 setup 제외 키 없음) ·
+#   coupon-wake.tsv(스트림 경로만) · fault.json · backend-cb.log · fallback-count.txt(정지 실행만) · redis-latency-*.txt · redis-info-stats.txt · diag-*.tsv(진단 실행만) · bypass-user-id-check.tsv ·
+#   redis-slow-backend1.log · redis-slowlog.txt · load-start.epoch(정지 실행만) · comp-wait-note.txt · outbox-status-*.tsv · republish-wait-s.txt
+STEP_BASE = ["step/condition.json", "step/host-top.txt", "step/prom.tsv", "step/k6-summary.json"]
+REQUIRED = {
+    "coupon": ["meta.json", "k6-summary.json", "condition.json", "stock-before.txt", "issued-db.txt", "duplicate-rows.txt", "pgss-end.tsv", "redis-commandstats.txt",
+               "host-top.txt", "prom.tsv", "db-connections.txt", "coupon-stages.tsv", "coupon-stages-before.tsv", "nginx.log"],
+    "hotrow": ["meta.json", "product-before.tsv", "stock-after.txt", "ledger-sale-before.txt", "ledger-sale-after.txt", "confirmed-before.txt", "confirmed-after.txt",
+               "product-count.txt", "pg-activity.tsv", "step/pgss.tsv"] + STEP_BASE,
+    "bulkhead": ["meta.json", "wiremock-requests.json"] + STEP_BASE,
+    "ratelimit": ["meta.json", "k6-summary.json", "limit-lines.txt", "nginx.log", "host-top.txt", "condition.json"],
+    "outbox": ["meta.json", "side-effects-before.json", "side-effects-after.json", "cg-before.txt", "cg-after.txt", "republished.txt", "log-counts-before.txt",
+               "log-counts-after.txt"] + STEP_BASE,
+    "comp": ["meta.json", "wiremock-requests.json", "order-states.tsv", "payment-states.tsv", "compensation-states.tsv", "trigger-count.txt"] + STEP_BASE,
+}
+
+
+def required_files(kind, raw):
+    """kind 의 필수 원시 파일의 경로 목록 - step/ 접두는 raw 아래 첫 step-* 폴더(없으면 step-* 자리표시)로 푼다"""
+    steps = sorted(n for n in os.listdir(raw) if n.startswith("step-")) if os.path.isdir(raw) else []
+    step = steps[0] if steps else "step-*"
+    return [os.path.join(raw, step, n[5:]) if n.startswith("step/") else os.path.join(raw, n) for n in REQUIRED[kind]]
+
+
+def required_missing(kind, raw):
+    return [p for p in required_files(kind, raw) if not os.path.isfile(p)]
+
+
 def main(argv):
     if len(argv) != 4 or argv[1] not in ("coupon", "hotrow", "bulkhead", "ratelimit", "outbox", "comp"):
         print(__doc__)
         return 2
     kind, raw, out = argv[1:]
+    missing = required_missing(kind, raw)
+    if missing:
+        for p in missing:
+            print("missing required raw file: %s" % p, file=sys.stderr)
+        return 2
     meta = jrd(raw, "meta.json")
     summary = {"coupon": coupon, "hotrow": hotrow, "bulkhead": bulkhead, "ratelimit": ratelimit, "outbox": outbox, "comp": comp}[kind](raw, meta)
     json.dump(summary, open(out, "w"), indent=2, ensure_ascii=False)
