@@ -17,6 +17,8 @@ x-loadtest-env: &loadtest-env
   SPRING_THREADS_VIRTUAL_ENABLED: ${SPRING_THREADS_VIRTUAL_ENABLED:-true}
   # 서버당 Hikari 풀 크기 - 기본 50 은 루트 compose 의 값 그대로이고, 풀 크기 비교 측정(호스트 환경 변수 HIKARI_POOL=25)에만 바꾼다
   SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_POOL:-50}
+  # 쿠폰 발급 방식 - stream(기본) | db-lock. 기동 때 고정되므로 호스트 환경 변수 COUPON_ISSUE_STRATEGY=db-lock 으로 스택을 다시 띄워야 바뀐다(r129)
+  COUPON_ISSUE_STRATEGY: ${COUPON_ISSUE_STRATEGY:-stream}
 
 services:
   wiremock:

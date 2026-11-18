@@ -154,6 +154,9 @@ def log_marker_counts(text, markers):
 def compensation(journal):
     """WireMock 일지에서 승인 · 취소 -> 승인 수 · 성공한 취소 수(결제 키별 한 번) · 취소 없는 승인 수 · 승인부터 첫 성공 취소까지의 시간"""
     approved, canceled, calls = {}, {}, 0
+    approved_keys = {json.loads(e["request"]["body"])["paymentKey"] for e in journal.get("requests", [])
+                     if e["request"]["url"].endswith("/v1/payments/confirm") and e["response"]["status"] == 200}
+    foreign = 0
     for e in journal.get("requests", []):
         url, at = e["request"]["url"], e["request"]["loggedDate"]
         if url.endswith("/v1/payments/confirm") and e["response"]["status"] == 200:
@@ -162,11 +165,14 @@ def compensation(journal):
         m = re.search(r"/v1/payments/([^/]+)/cancel$", url)
         if m:
             calls += 1
+            foreign += m.group(1) not in approved_keys
             if e["response"]["status"] == 200:
                 canceled[m.group(1)] = min(at, canceled.get(m.group(1), at))
-    gaps = [canceled[k] - approved[k] for k in canceled if k in approved]
-    return {"toss_approved": len(approved), "toss_canceled": len(canceled), "toss_cancel_calls": calls,
-            "money_without_order": len(approved) - len(set(approved) & set(canceled)),
+    # 시드에 남은 보상 행이 부팅 뒤에 부르는 취소처럼, 이 실행이 승인하지 않은 결제 키의 취소는 세지 않는다
+    mine = {k: v for k, v in canceled.items() if k in approved}
+    gaps = [mine[k] - approved[k] for k in mine]
+    return {"toss_approved": len(approved), "toss_canceled": len(mine), "toss_cancel_calls": calls - foreign, "foreign_cancel_calls": foreign,
+            "money_without_order": len(approved) - len(mine),
             "cancel_after_approval_ms": {"p50": pct(gaps, 50), "p95": pct(gaps, 95), "count": len(gaps)}}
 
 
