@@ -153,6 +153,26 @@ def hotrow(raw, meta):
     return s
 
 
+def bulkhead_available_min(prom):
+    v = [float(m.group(1)) for m in (re.search(r'resilience4j_bulkhead_available_concurrent_calls\{name="toss"\}\s+([\d.]+)', l) for l in prom.splitlines()) if m]
+    return int(min(v)) if v else None
+
+
+def ms_above(journal, limit):
+    ev = []
+    for e in journal.get("requests", []):
+        if e["request"]["url"].endswith("/v1/payments/confirm") and e.get("timing"):
+            a = e["request"]["loggedDate"]
+            ev += [(a, 1), (a + e["timing"]["totalTime"], -1)]
+    cur = prev = over = 0
+    for t, dlt in sorted(ev):
+        if cur > limit:
+            over += t - prev
+        cur += dlt
+        prev = t
+    return over
+
+
 def bulkhead(raw, meta):
     sd = step_dir(raw)
     k6 = jrd(sd, "k6-summary.json")
@@ -168,6 +188,9 @@ def bulkhead(raw, meta):
         "sent": k6["sent"], "orders_available": k6["orders_available"], "iterations_skipped": k6["iterations_skipped"],
         "hikari_pending_peak": d.hikari_peaks(rd(sd, "prom.tsv"))["pending_peak"],
         "bulkhead": {"max_concurrent_calls": 60, "max_wait_duration_s": 10, "error_code": "PAYMENT_PG_BUSY (503)"},
+        # 앱 쪽 근거 - 격벽 남은 자리 게이지(5 초 표본)의 최솟값, 그리고 일지 기준 동시 호출이 한도를 넘은 시간(ms · 기록 시각이 ms 단위라 생기는 겹침)
+        "bulkhead_toss_available_min": bulkhead_available_min(rd(sd, "prom.tsv")),
+        "journal_ms_above_limit": ms_above(journal, 60),
     })
     return s
 
