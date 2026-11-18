@@ -365,6 +365,21 @@ class DeriveR129Test(unittest.TestCase):
     def test_r129_lock_wait_samples_count_lock_rows_per_sample_time(self):
         self.assertEqual(self.d.lock_wait_samples(r129_text("pg-activity.tsv")), {"peak": 2, "mean": 1.0, "samples": 3})
 
+    def test_r129_connection_peak_is_the_largest_session_count_of_one_sample_inside_the_hold_window(self):
+        # 표본 시각 05:00:00.1 = 세션 2 · 05:00:01.1 = 0(빈 행) · 05:00:02.1 = 세션 3 (pid 가 있는 행만 센다 - 표본 문장이 보는 non-idle 세션)
+        c = self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T05:00:00Z", "2026-11-18T05:00:03Z")
+        self.assertEqual(c, {"peak": 3, "samples": 3})
+        self.assertEqual(self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T05:00:00Z", "2026-11-18T05:00:02Z"), {"peak": 2, "samples": 2})
+
+    def test_r129_connection_peak_without_samples_in_the_window_is_none(self):
+        self.assertEqual(self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T06:00:00Z", "2026-11-18T06:00:30Z"), {"peak": None, "samples": 0})
+
+    def test_r129_hold_window_is_the_first_timestamps_of_the_two_stage_files(self):
+        start = "2026-11-18T06:34:08Z\tbackend1\tpayment_confirm_stage_seconds_count{stage=\"x\"} 1\n"
+        end = "2026-11-18T06:34:38Z\tbackend1\tpayment_confirm_stage_seconds_count{stage=\"x\"} 9\n"
+        self.assertEqual(self.d.hold_window(start, end), ("2026-11-18T06:34:08Z", "2026-11-18T06:34:38Z"))
+        self.assertIsNone(self.d.hold_window("", end))
+
     def test_r129_host_idle_skips_the_first_top_sample(self):
         self.assertEqual(self.d.host_idle(r129_text("host-top.txt")), {"min": 20.0, "median": 60.0, "samples": 3})
 
