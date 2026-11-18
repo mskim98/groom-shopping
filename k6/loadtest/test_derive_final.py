@@ -353,6 +353,12 @@ class DeriveR129Test(unittest.TestCase):
         self.assertEqual(c["toss_cancel_calls"], 3)
         self.assertEqual(c["cancel_after_approval_ms"], {"p50": 30000, "p95": 30000, "count": 1})
 
+    def test_r129_compensation_ignores_cancels_of_payments_this_run_never_approved(self):
+        # 시드에 남은 보상 행이 부팅 뒤에 부르는 취소(pkOLD)는 이 실행의 결제가 아니다
+        c = self.d.compensation(jload(os.path.join(R129, "journal-comp-foreign.json")))
+        self.assertEqual((c["toss_approved"], c["toss_canceled"], c["money_without_order"]), (3, 1, 2))
+        self.assertEqual((c["toss_cancel_calls"], c["foreign_cancel_calls"]), (3, 1))
+
     def test_r129_hikari_peaks_from_prom_samples(self):
         self.assertEqual(self.d.hikari_peaks(r129_text("prom.tsv")), {"active_peak": 50, "pending_peak": 31, "max": 50})
 
