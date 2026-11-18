@@ -199,6 +199,26 @@ def lock_wait_samples(pg_tsv):
     return {"peak": max(v) if v else None, "mean": round(sum(v) / len(v), 3) if v else None, "samples": len(v)}
 
 
+def connection_peak(pg_tsv, start_iso, end_iso):
+    """pg-activity.tsv(1 초 표본)에서 [start, end) 안의 표본 시각마다 pid 가 있는 행 수 = 그 시각에 문장을 실행 중이거나 트랜잭션을 연 세션 수(표본 문장 자신의 연결 · 유휴 연결은 세지 않는다) -> 최댓값 · 표본 수"""
+    lo, hi = _utc(start_iso), _utc(end_iso)
+    per = {}
+    for i, line in enumerate(pg_tsv.splitlines()):
+        f = line.split("\t")
+        if not line.strip() or (i == 0 and f[0] == "sample_time"):
+            continue
+        if lo <= _utc(f[0]) < hi:
+            per[f[0]] = per.get(f[0], 0) + (1 if len(f) > 1 and f[1].strip() else 0)
+    return {"peak": max(per.values()) if per else None, "samples": len(per)}
+
+
+def hold_window(stage_start_text, stage_end_text):
+    """확정 구간 타이머 표본 두 파일(유지 구간의 시작 · 끝에 읽는다)의 첫 줄 시각 -> (시작, 끝). 한쪽이 비면 None"""
+    first = lambda t: t.split("\t", 1)[0].strip() if t.strip() else None
+    a, b = first(stage_start_text), first(stage_end_text)
+    return (a, b) if a and b else None
+
+
 def host_idle(top_text):
     """top 표본 파일의 'CPU usage' 줄에서 idle % - 첫 표본은 부팅 뒤 평균이라 건너뛴다. 표본이 하나뿐이면 그 표본을 쓴다"""
     idle = [float(x) for x in re.findall(r"CPU usage:.*?([\d.]+)% idle", top_text)]

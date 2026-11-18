@@ -124,6 +124,19 @@ def coupon(raw, meta):
     return s
 
 
+CONNECTION_DEFINITION = ("largest number of sessions with a pid in one 1 s pg_stat_activity sample inside the hold window: sessions running a statement or inside a transaction at the sampling instant "
+                         "(idle connections and the sampler's own connection are not counted; the Hikari pool size is separate, see `hikari`)")
+
+
+def db_connections(raw, sd):
+    """유지 구간(확정 구간 타이머 표본 두 파일의 시각) 안의 pg_stat_activity 표본에서 연결 최댓값 - 표본 파일이 없으면 null 과 이유"""
+    pg, window = rd(raw, "pg-activity.tsv"), d.hold_window(rd(sd, "confirm-stages-start.tsv"), rd(sd, "confirm-stages-end.tsv"))
+    if not pg or not window:
+        return {"db_connections_peak": None, "db_connections_peak_missing": "no pg-activity.tsv sample file in this run (DIAG_SAMPLERS was off)" if not pg else "no hold window timestamps (confirm-stages-*.tsv)"}
+    c = d.connection_peak(pg, *window)
+    return {"db_connections_peak": c["peak"], "db_connections_samples": c["samples"], "db_connections_window": list(window), "db_connections_peak_definition": CONNECTION_DEFINITION}
+
+
 def hotrow(raw, meta):
     sd = step_dir(raw)
     k6 = jrd(sd, "k6-summary.json")
@@ -145,7 +158,7 @@ def hotrow(raw, meta):
         "hikari_pending_peak": d.hikari_peaks(rd(sd, "prom.tsv"))["pending_peak"],
         "stock_update_statement": d.stock_update_stats((rd(raw, "pgss-stock-update.tsv") or rd(sd, "pgss.tsv")).splitlines()),
         "stock_update_statement_source": "pgss-stock-update.tsv" if rd(raw, "pgss-stock-update.tsv") else "pgss.tsv (top 20 by total time; absent when the statement is below it)",
-        "db_connections_peak": None,
+        **db_connections(raw, sd),
         "path_check": d.hotrow_path_check(meta["flash_sale"], led, conf, st_before, st_after),
         "path_evidence": {"ledger_sale_rows_added": led, "confirmed_payments_added": conf, "stock_before": st_before, "stock_after": st_after},
         "consumer_writers_on_row": "payment-events has 2 partitions, concurrency 2 per server: at most 2 consumer threads run the conditional stock UPDATE (flash_sale=false); flash_sale=true takes stock in Redis Lua and the request threads INSERT ledger rows",
@@ -187,6 +200,7 @@ def bulkhead(raw, meta):
         "confirm_ms_by_status": {c: {"count": v["count"], "p50": v["p50"], "p95": v["p95"]} for c, v in k6["by_status"].items()},
         "sent": k6["sent"], "orders_available": k6["orders_available"], "iterations_skipped": k6["iterations_skipped"],
         "hikari_pending_peak": d.hikari_peaks(rd(sd, "prom.tsv"))["pending_peak"],
+        **db_connections(raw, sd),
         "bulkhead": {"max_concurrent_calls": 60, "max_wait_duration_s": 10, "error_code": "PAYMENT_PG_BUSY (503)"},
         # 앱 쪽 근거 - 격벽 남은 자리 게이지(5 초 표본)의 최솟값, 그리고 일지 기준 동시 호출이 한도를 넘은 시간(ms · 기록 시각이 ms 단위라 생기는 겹침)
         "bulkhead_toss_available_min": bulkhead_available_min(rd(sd, "prom.tsv")),
