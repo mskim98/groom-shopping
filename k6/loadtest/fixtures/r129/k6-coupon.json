@@ -1,0 +1,1 @@
+{"requests":3000,"rate":100,"duration_s":30,"results":{"sync_200":1000,"sold_out_409":1990,"duplicate":0,"unavailable_503":10,"other":0},"answer_ms":{"issued":{"count":1000,"p50":420.5,"p95":980.1,"p99":1210.7,"max":1500},"sold_out":{"count":1990,"p50":12.1,"p95":30.4,"p99":55.0,"max":90},"other":{"count":10,"p50":2000,"p95":2100,"p99":2100,"max":2100}}}

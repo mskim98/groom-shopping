@@ -1,0 +1,7 @@
+sample_time	pid	state	wait_event_type	wait_event	xact_age_ms	query_age_ms	blocking_pids	query
+2026-11-18T05:00:00.100Z	11	active	Lock	transactionid	5	5	{12}	update product
+2026-11-18T05:00:00.100Z	12	active			9	9	{}	update product
+2026-11-18T05:00:01.100Z								
+2026-11-18T05:00:02.100Z	11	active	Lock	tuple	5	5	{12}	update product
+2026-11-18T05:00:02.100Z	13	active	Lock	transactionid	5	5	{12}	update product
+2026-11-18T05:00:02.100Z	12	active	IO	DataFileRead	5	5	{}	update product

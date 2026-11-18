@@ -1,0 +1,16 @@
+Processes: 400 total
+CPU usage: 50.0% user, 40.0% sys, 10.0% idle
+PID    %CPU COMMAND
+1 5.0 a
+Processes: 400 total
+CPU usage: 10.0% user, 10.0% sys, 80.0% idle
+PID    %CPU COMMAND
+1 5.0 a
+Processes: 400 total
+CPU usage: 40.0% user, 40.0% sys, 20.0% idle
+PID    %CPU COMMAND
+1 5.0 a
+Processes: 400 total
+CPU usage: 20.0% user, 20.0% sys, 60.0% idle
+PID    %CPU COMMAND
+1 5.0 a

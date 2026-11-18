@@ -1,0 +1,5 @@
+
+GROUP               TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG   CONSUMER-ID HOST CLIENT-ID
+payment-event-group payment-events  0          60              60              0     c1 /1 c1
+payment-event-group payment-events  1          40              40              0     c2 /1 c2
+payment-event-group other-topic     0          7               7               0     c3 /1 c3

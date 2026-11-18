@@ -1,0 +1,3 @@
+  limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=30r/s;
+  limit_req_status 429;
+      limit_req zone=api_per_ip burst=60 nodelay;

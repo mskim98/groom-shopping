@@ -1,0 +1,6 @@
+2026-11-18T05:00:00Z	backend1	hikaricp_connections_active{pool="HikariPool-1"} 7.0
+2026-11-18T05:00:00Z	backend1	hikaricp_connections_pending{pool="HikariPool-1"} 0.0
+2026-11-18T05:00:05Z	backend1	hikaricp_connections_active{pool="HikariPool-1"} 50.0
+2026-11-18T05:00:05Z	backend1	hikaricp_connections_pending{pool="HikariPool-1"} 31.0
+2026-11-18T05:00:10Z	backend1	hikaricp_connections_pending{pool="HikariPool-1"} 4.0
+2026-11-18T05:00:10Z	backend1	hikaricp_connections_max{pool="HikariPool-1"} 50.0
