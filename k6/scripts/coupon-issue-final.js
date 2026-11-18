@@ -20,10 +20,17 @@ const POLL_MAX_S = parseInt(__ENV.POLL_MAX_S || '30', 10);
 const ISSUE_PATH = __ENV.ISSUE_PATH || 'issue-async';
 const PASSWORD = __ENV.LT_PASSWORD || 'loadtest123!';
 const SUMMARY_FILE = __ENV.SUMMARY_FILE || 'coupon-summary.json';
+// AUTH=bypass: 로그인 없이 X-Lt-User-Id 헤더(반복 번호 + 1 = 시드 사용자 id)로 부른다 - 앱이 LOADTEST_AUTH_BYPASS_ENABLED=true 일 때만 통한다(r129 Redis 정지 우회 실행)
+const AUTH = __ENV.AUTH || 'token';
 const REQUESTS = RATE * DURATION_S;
 
 const accept = new Trend('coupon_accept_ms', true);
 const completion = new Trend('coupon_completion_ms', true);
+// 최종 답까지의 시간을 결과별로 따로 모은다(r129) - issued 는 200 또는 상태 조회 SUCCESS, sold_out · duplicate 는 409, 그 밖(503 · 실패 · 시간 초과 · 기타)은 other
+const answer = {};
+for (const k of ['issued', 'sold_out', 'duplicate', 'other']) {
+    answer[k] = new Trend('ans_' + k, true);
+}
 const result = {};
 for (const k of ['accepted_202', 'sync_200', 'sold_out_409', 'duplicate', 'unavailable_503', 'other', 'success', 'failed', 'timeout', 'no_token']) {
     result[k] = new Counter('r_' + k);
@@ -38,10 +45,15 @@ export const options = {
 };
 
 function headers(token) {
-    return {'Content-Type': 'application/json', Authorization: 'Bearer ' + token};
+    return AUTH === 'bypass' ? {'Content-Type': 'application/json', 'X-Lt-User-Id': String(token)} : {'Content-Type': 'application/json', Authorization: 'Bearer ' + token};
 }
 
 export function setup() {
+    if (AUTH === 'bypass') {
+        // 토큰 자리에 사용자 id 를 둔다(반복 i 의 사용자 = i + 1)
+        console.log('setup: logins=0 missing_token=0 auth=bypass');
+        return {tokens: Array.from({length: REQUESTS}, (_, i) => i + 1)};
+    }
     const tokens = [];
     let missing = 0;
     const batch = 50;
@@ -81,27 +93,34 @@ export default function (data) {
             const s = st.status === 200 ? st.json('status') : 'HTTP' + st.status;
             if (s === 'SUCCESS') {
                 completion.add(Date.now() - t0);
+                answer.issued.add(Date.now() - t0);
                 result.success.add(1);
                 return;
             }
             if (typeof s === 'string' && s.indexOf('FAILED') === 0) {
                 result.failed.add(1);
+                answer.other.add(Date.now() - t0);
                 return;
             }
             sleep(POLL_MS / 1000);
         }
         result.timeout.add(1);
+        answer.other.add(Date.now() - t0);
     } else if (res.status === 200) {
         result.sync_200.add(1);
         completion.add(res.timings.duration);
+        answer.issued.add(res.timings.duration);
     } else if (res.status === 409) {
         // 품절과 중복은 응답 본문의 코드로 가른다
         const code = String(res.body).indexOf('ALREADY_ISSUED') >= 0 ? 'duplicate' : 'sold_out_409';
         result[code].add(1);
+        answer[code === 'duplicate' ? 'duplicate' : 'sold_out'].add(res.timings.duration);
     } else if (res.status === 503) {
         result.unavailable_503.add(1);
+        answer.other.add(res.timings.duration);
     } else {
         result.other.add(1);
+        answer.other.add(res.timings.duration);
     }
 }
 
@@ -123,5 +142,10 @@ export function handleSummary(data) {
         max_vus: m.vus_max ? m.vus_max.values.max : null,
     };
     for (const k of Object.keys(result)) out.results[k] = cnt(k);
+    out.answer_ms = {};
+    for (const k of Object.keys(answer)) {
+        const v = m['ans_' + k] ? m['ans_' + k].values : null;
+        out.answer_ms[k] = v ? {count: v.count, p50: v['p(50)'], p95: v['p(95)'], p99: v['p(99)'], max: v.max} : {count: 0, p50: null, p95: null, p99: null, max: null};
+    }
     return {[SUMMARY_FILE]: JSON.stringify(out, null, 2)};
 }

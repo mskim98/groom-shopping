@@ -25,6 +25,8 @@ const CLASSES = ['2xx', '429', '503', '5xx', 'other4xx', 'fail'];
 
 // 미리 만든 주문이 모자라 확정하지 못하고 넘긴 반복 수 - 0 이어야 한다
 const skipped = new Counter('iterations_skipped');
+// 유지 구간에 202(대기 상한을 넘겨 READY 로 답함)로 끝난 확정 수 - 2xx 묶음에서 따로 센다(r129)
+const accepted202 = new Counter('st_confirm_202_only');
 
 // 응답 시간은 유지 구간(램프 뒤)에 시작한 요청만 모은다 - 램프 구간의 낮은 부하가 p95 를 낮추지 않게 한다
 const latency = {};
@@ -41,7 +43,7 @@ for (const ep of ENDPOINTS) {
 
 export const options = {
     setupTimeout: '600s',
-    summaryTrendStats: ['avg', 'p(95)', 'p(99)', 'max', 'count'],
+    summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max', 'count'],
     scenarios: {
         step: {
             executor: 'ramping-arrival-rate',
@@ -95,6 +97,7 @@ function record(ep, r, hold) {
     if (hold) {
         latency[ep].add(r.timings.duration);
         status[ep][statusClass(r)].add(1);
+        if (r.status === 202) accepted202.add(1);
     }
 }
 
@@ -136,7 +139,7 @@ export function handleSummary(data) {
         reqHold += epHold;
         for (const c of ['429', '503', '5xx']) statusTotal[c] += st[c];
         endpoints[ep] = {
-            p95: v['p(95)'] || 0, p99: v['p(99)'] || 0, avg: v.avg || 0, max: v.max || 0,
+            p50: v['p(50)'] || 0, p95: v['p(95)'] || 0, p99: v['p(99)'] || 0, avg: v.avg || 0, max: v.max || 0,
             count: epHold, count_total: count(data, 'tot_' + ep), status: st,
         };
     }
@@ -149,6 +152,7 @@ export function handleSummary(data) {
         endpoints,
         errors: {rate: reqHold > 0 ? errHold / reqHold : 1, status: statusTotal, requests_hold: reqHold},
         iterations_skipped: count(data, 'iterations_skipped'),
+        accepted_202: count(data, 'st_confirm_202_only'),
         extra_requests: {},
     };
     return {

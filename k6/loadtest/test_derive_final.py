@@ -258,3 +258,186 @@ class CouponSummaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+R129 = os.path.join(HERE, "fixtures", "r129")
+
+
+def r129_text(name):
+    with open(os.path.join(R129, name), encoding="utf-8") as f:
+        return f.read()
+
+
+class DeriveR129Test(unittest.TestCase):
+    """r129 측정 요약 키 - 원시 파일 한 줄씩을 요약 숫자로 바꾸는 순수 함수(derive_r129.py)를 작은 입력 파일로 시험한다"""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r129  # 모듈이 없을 때 이 클래스의 시험만 실패하게 여기서 불러온다
+        cls.d = derive_r129
+
+    def test_r129_answer_time_per_outcome_fills_all_four_outcomes(self):
+        a = self.d.answer_ms_by_outcome(jload(os.path.join(R129, "k6-coupon.json")))
+        self.assertEqual(list(a), ["issued", "sold_out", "duplicate", "other"])
+        self.assertEqual((a["issued"]["count"], a["issued"]["p50"], a["issued"]["p95"], a["issued"]["p99"]), (1000, 420.5, 980.1, 1210.7))
+        self.assertEqual(a["duplicate"], {"count": 0, "p50": None, "p95": None, "p99": None})
+        self.assertEqual(a["other"]["p95"], 2100)
+
+    def test_r129_db_calls_total_per_request_top_and_harness_statements_excluded(self):
+        rows = self.d.parse_pgss(r129_text("pgss-end.tsv"))
+        c = self.d.db_calls(rows, 3000)
+        # 표본 문장(pg_stat_activity) 600 건은 측정 도구의 호출이라 합계에 들지 않는다
+        self.assertEqual((c["total"], c["harness_excluded"]), (3250, 600))
+        self.assertAlmostEqual(c["per_request"], 3250 / 3000, places=4)
+        self.assertEqual([t["calls"] for t in c["top"]], [3000, 100, 50, 40, 30])
+        self.assertEqual(c["coupon_calls"], 190)
+
+    def test_r129_db_calls_excluding_setup_subtracts_the_snapshot_by_query_id(self):
+        end, setup = (self.d.parse_pgss(r129_text(n)) for n in ("pgss-end.tsv", "pgss-setup.tsv"))
+        c = self.d.db_calls(end, 3000, setup)
+        self.assertEqual(c["total_excluding_setup"], 245)
+        self.assertAlmostEqual(c["per_request_excluding_setup"], 245 / 3000, places=4)
+        self.assertEqual(c["total"], 3250)
+
+    def test_r129_hotrow_path_check_flash_needs_one_sale_row_per_confirmed_payment(self):
+        f = self.d.hotrow_path_check
+        self.assertIs(f(True, 500, 500, 10000, 10000), True)
+        self.assertIs(f(True, 499, 500, 10000, 10000), False)
+
+    def test_r129_hotrow_path_check_conditional_needs_no_ledger_and_stock_drop_equal(self):
+        f = self.d.hotrow_path_check
+        self.assertIs(f(False, 0, 500, 10000, 9500), True)
+        self.assertIs(f(False, 3, 500, 10000, 9500), False)
+        self.assertIs(f(False, 0, 500, 10000, 9501), False)
+
+    def test_r129_toss_concurrent_peak_counts_overlapping_confirm_calls_only(self):
+        j = jload(os.path.join(R129, "journal-bulkhead.json"))
+        # 호출 구간 [1000,6000) [2000,7000) [6000,11000) [7000,7100) - 끝나는 순간에 시작한 호출은 겹치지 않는다. 취소 호출은 세지 않는다
+        self.assertEqual(self.d.toss_concurrent_peak(j), 2)
+
+    def test_r129_ratelimit_counts_split_passed_429_other_and_sent(self):
+        c = self.d.ratelimit_counts({"200": 600, "204": 60, "429": 1330, "500": 2, "0": 8})
+        self.assertEqual(c, {"sent": 2000, "passed": 660, "rejected_429": 1330, "other": 10})
+
+    def test_r129_ratelimit_limit_is_read_from_the_nginx_lines(self):
+        self.assertEqual(self.d.parse_limit(r129_text("limit-lines.txt")), {"rate": "30r/s", "burst": 60, "nodelay": True})
+
+    def test_r129_ratelimit_expected_pass_follows_the_nginx_bucket(self):
+        e = self.d.expected_pass(30, 60, 100, 20)
+        self.assertTrue(650 <= e <= 670, e)
+        self.assertEqual(self.d.expected_pass(30, 60, 20, 10), 200)
+
+    def test_r129_outbox_dup_side_effects_unchanged_and_duplicated(self):
+        before = {"payments_done": 100, "orders_confirmed": 100, "ledger_rows": 100, "product_stock": 9900}
+        same = self.d.side_effect_delta(before, dict(before))
+        self.assertEqual((same["delta"], same["duplicated"]), ({k: 0 for k in before}, False))
+        after = dict(before, ledger_rows=200)
+        dup = self.d.side_effect_delta(before, after)
+        self.assertEqual((dup["delta"]["ledger_rows"], dup["duplicated"]), (100, True))
+        with self.assertRaises(ValueError):
+            self.d.side_effect_delta(before, {"payments_done": 100})
+
+    def test_r129_outbox_dup_consumed_after_republish_is_the_offset_increase_of_the_topic(self):
+        self.assertEqual(self.d.consumed_after_republish(r129_text("cg-before.txt"), r129_text("cg-after.txt")), 100)
+
+    def test_r129_outbox_dup_log_marker_counts(self):
+        text = "a [PAYMENT_EVENT_CONSUMED] x\nb [PAYMENT_APPROVED_SKIP] y\nc [PAYMENT_EVENT_CONSUMED] z\n"
+        self.assertEqual(self.d.log_marker_counts(text, ["[PAYMENT_EVENT_CONSUMED]", "[PAYMENT_APPROVED_SKIP]"]),
+                         {"[PAYMENT_EVENT_CONSUMED]": 2, "[PAYMENT_APPROVED_SKIP]": 1})
+
+    def test_r129_compensation_money_without_order_is_approvals_minus_successful_cancels(self):
+        c = self.d.compensation(jload(os.path.join(R129, "journal-comp.json")))
+        self.assertEqual((c["toss_approved"], c["toss_canceled"], c["money_without_order"]), (3, 1, 2))
+        # 같은 결제 키의 취소가 두 번 성공해도 한 번으로 센다. 500 응답 취소는 센 적 없다
+        self.assertEqual(c["toss_cancel_calls"], 3)
+        self.assertEqual(c["cancel_after_approval_ms"], {"p50": 30000, "p95": 30000, "count": 1})
+
+    def test_r129_compensation_ignores_cancels_of_payments_this_run_never_approved(self):
+        # 시드에 남은 보상 행이 부팅 뒤에 부르는 취소(pkOLD)는 이 실행의 결제가 아니다
+        c = self.d.compensation(jload(os.path.join(R129, "journal-comp-foreign.json")))
+        self.assertEqual((c["toss_approved"], c["toss_canceled"], c["money_without_order"]), (3, 1, 2))
+        self.assertEqual((c["toss_cancel_calls"], c["foreign_cancel_calls"]), (3, 1))
+
+    def test_r129_hikari_peaks_from_prom_samples(self):
+        self.assertEqual(self.d.hikari_peaks(r129_text("prom.tsv")), {"active_peak": 50, "pending_peak": 31, "max": 50})
+
+    def test_r129_lock_wait_samples_count_lock_rows_per_sample_time(self):
+        self.assertEqual(self.d.lock_wait_samples(r129_text("pg-activity.tsv")), {"peak": 2, "mean": 1.0, "samples": 3})
+
+    def test_r129_connection_peak_is_the_largest_session_count_of_one_sample_inside_the_hold_window(self):
+        # 표본 시각 05:00:00.1 = 세션 2 · 05:00:01.1 = 0(빈 행) · 05:00:02.1 = 세션 3 (pid 가 있는 행만 센다 - 표본 문장이 보는 non-idle 세션)
+        c = self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T05:00:00Z", "2026-11-18T05:00:03Z")
+        self.assertEqual(c, {"peak": 3, "samples": 3})
+        self.assertEqual(self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T05:00:00Z", "2026-11-18T05:00:02Z"), {"peak": 2, "samples": 2})
+
+    def test_r129_connection_peak_without_samples_in_the_window_is_none(self):
+        self.assertEqual(self.d.connection_peak(r129_text("pg-activity.tsv"), "2026-11-18T06:00:00Z", "2026-11-18T06:00:30Z"), {"peak": None, "samples": 0})
+
+    def test_r129_hold_window_is_the_first_timestamps_of_the_two_stage_files(self):
+        start = "2026-11-18T06:34:08Z\tbackend1\tpayment_confirm_stage_seconds_count{stage=\"x\"} 1\n"
+        end = "2026-11-18T06:34:38Z\tbackend1\tpayment_confirm_stage_seconds_count{stage=\"x\"} 9\n"
+        self.assertEqual(self.d.hold_window(start, end), ("2026-11-18T06:34:08Z", "2026-11-18T06:34:38Z"))
+        self.assertIsNone(self.d.hold_window("", end))
+
+    def test_r129_host_idle_skips_the_first_top_sample(self):
+        self.assertEqual(self.d.host_idle(r129_text("host-top.txt")), {"min": 20.0, "median": 60.0, "samples": 3})
+
+    def test_r129_breaker_transitions_are_seconds_from_the_pause_and_only_the_named_breaker(self):
+        t = self.d.breaker_transitions(r129_text("backend-cb.log"), "redis-coupon", "2026-11-18T05:00:00Z")
+        self.assertEqual([(x["from"], x["to"], x["at_s"]) for x in t],
+                         [("CLOSED", "OPEN", 4.0), ("OPEN", "HALF_OPEN", 9.5), ("HALF_OPEN", "CLOSED", 20.0)])
+
+    def test_r129_answers_in_window_counts_statuses_of_the_path_inside_the_window(self):
+        a = self.d.answers_in_window(r129_text("nginx-fault.log"), "/coupon/issue/", "2026-11-18T05:00:05Z", "2026-11-18T05:00:15Z")
+        self.assertEqual(a, {"200": 1, "409": 1, "503": 1})
+
+
+class SummaryRequiredFilesR129Test(unittest.TestCase):
+    """r129-summary.py 는 필수 원시 파일이 없으면 오류로 끝나고, 선택 파일(재고 UPDATE 문장 읽기 등)은 없어도 된다"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("r129_summary", os.path.join(HERE, "r129-summary.py"))
+        cls.m = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, HERE)
+        spec.loader.exec_module(cls.m)
+
+    def raw_with_all_required(self, kind="hotrow"):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        os.makedirs(os.path.join(raw, "step-25"))
+        for p in self.m.required_files(kind, raw):
+            open(p, "w").close()
+        return raw
+
+    def run_main(self, kind, raw):
+        return subprocess.run([sys.executable, "-B", os.path.join(HERE, "r129-summary.py"), kind, raw, os.path.join(raw, "out.json")],
+                              capture_output=True, text=True)
+
+    def test_r129_summary_required_files_include_pg_activity_but_not_the_optional_stock_update_read(self):
+        raw = self.raw_with_all_required()
+        names = [os.path.relpath(p, raw) for p in self.m.required_files("hotrow", raw)]
+        self.assertIn("pg-activity.tsv", names)
+        self.assertIn(os.path.join("step-25", "host-top.txt"), names)
+        self.assertNotIn("pgss-stock-update.tsv", names)
+
+    def test_r129_summary_all_required_present_and_optional_absent_reports_nothing_missing(self):
+        raw = self.raw_with_all_required()
+        self.assertEqual(self.m.required_missing("hotrow", raw), [])
+
+    def test_r129_summary_missing_required_raw_file_exits_non_zero_and_names_the_file(self):
+        raw = self.raw_with_all_required()
+        os.remove(os.path.join(raw, "step-25", "host-top.txt"))
+        r = self.run_main("hotrow", raw)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("host-top.txt", r.stderr)
+
+    def test_r129_summary_empty_raw_dir_names_meta_json_instead_of_failing_with_a_traceback(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        r = self.run_main("bulkhead", raw)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("meta.json", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
