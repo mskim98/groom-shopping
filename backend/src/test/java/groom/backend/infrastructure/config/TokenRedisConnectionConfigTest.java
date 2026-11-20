@@ -10,8 +10,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 // 토큰 저장소(리프레시 토큰 · 블랙리스트)가 주 Redis 와 따로 연결을 가진다
@@ -89,5 +91,27 @@ class TokenRedisConnectionConfigTest {
         assertThat(refresh.getConnectionFactory()).isSameAs(token);
         assertThat(string.getConnectionFactory()).isSameAs(token);
         assertThat(mainString.getConnectionFactory()).isSameAs(main).isNotSameAs(token);
+    }
+
+    // 기본값은 @Value 식이 정한다 - 식을 그대로 꺼내 token.redis.* 없이 해석하면 주 Redis 값이 나와야 한다
+    @Test
+    @DisplayName("token.redis.host · port 를 주지 않으면 토큰 연결은 주 Redis 의 호스트 · 포트를 쓰고 주면 그 값을 쓴다")
+    void 토큰연결_기본값은_주_Redis_주소이다() throws Exception {
+        String hostExpr = RedisConfig.class.getDeclaredField("tokenHost").getAnnotation(Value.class).value();
+        String portExpr = RedisConfig.class.getDeclaredField("tokenPort").getAnnotation(Value.class).value();
+        MockEnvironment unset = new MockEnvironment()
+                .withProperty("spring.data.redis.host", "main-redis")
+                .withProperty("spring.data.redis.port", "6390");
+
+        assertThat(unset.resolvePlaceholders(hostExpr)).isEqualTo("main-redis");
+        assertThat(unset.resolvePlaceholders(portExpr)).isEqualTo("6390");
+
+        MockEnvironment set = new MockEnvironment()
+                .withProperty("spring.data.redis.host", "main-redis")
+                .withProperty("spring.data.redis.port", "6390")
+                .withProperty("token.redis.host", "redis-token")
+                .withProperty("token.redis.port", "6380");
+        assertThat(set.resolvePlaceholders(hostExpr)).isEqualTo("redis-token");
+        assertThat(set.resolvePlaceholders(portExpr)).isEqualTo("6380");
     }
 }
