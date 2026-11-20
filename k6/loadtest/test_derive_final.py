@@ -471,6 +471,34 @@ class DeriveR131Test(unittest.TestCase):
         self.assertEqual(self.d.sold_out_db(outcomes, rows)["coupon_calls"], 5)
 
 
+class StockViewPairsR131Test(unittest.TestCase):
+    """r131 재고 노출 지연 구동기(stock-view-delay.js)가 로그에 적은 PAIR 줄을 읽는다"""
+
+    LOG = ('time="2026-11-21T01:00:00Z" level=info msg="setup: logins=60 orders=130 payments=100" source=console\n'
+           'time="2026-11-21T01:00:01Z" level=info msg="PAIR i=0 status=200 before=999 end=1000 seen=1100 seen_stock=998 polls=3" source=console\n'
+           'time="2026-11-21T01:00:02Z" level=info msg="PAIR i=1 status=200 before=998 end=2000 seen=null seen_stock=null polls=300" source=console\n'
+           'time="2026-11-21T01:00:03Z" level=info msg="PAIR i=2 status=500 before=997 end=3000 seen=null seen_stock=null polls=0" source=console\n'
+           'time="2026-11-21T01:00:04Z" level=info msg="PAIR i=3 status=200 before=null end=4000 seen=null seen_stock=null polls=0" source=console\n')
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r131
+        cls.d = derive_r131
+
+    def test_r131_parse_pairs_reads_every_pair_line_and_ignores_other_lines(self):
+        p = self.d.parse_pairs(self.LOG)
+        self.assertEqual([x["i"] for x in p], [0, 1, 2, 3])
+        self.assertEqual(p[0], {"i": 0, "status": 200, "before": 999, "end": 1000, "seen": 1100, "seen_stock": 998, "polls": 3})
+        self.assertIsNone(p[1]["seen"])
+        self.assertIsNone(p[3]["before"])
+
+    def test_r131_usable_pairs_keeps_only_confirmed_pairs_with_a_quantity_read_before_and_counts_the_rest(self):
+        pairs, excluded = self.d.usable_pairs(self.d.parse_pairs(self.LOG))
+        self.assertEqual(pairs, [(1000, 1100), (2000, None)])
+        self.assertEqual(excluded, {"confirm_not_200": 1, "no_quantity_before": 1})
+
+
 class SummaryRequiredFilesR129Test(unittest.TestCase):
     """r129-summary.py 는 필수 원시 파일이 없으면 오류로 끝나고, 선택 파일(재고 UPDATE 문장 읽기 등)은 없어도 된다"""
 
