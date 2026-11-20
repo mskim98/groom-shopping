@@ -19,7 +19,7 @@ done
 check "redis-token ping" bash -c "docker exec redis-token redis-cli ping | grep -q PONG"
 check "redis-token has no host port" bash -c "[ -z \"\$(docker port redis-token)\" ]"
 for b in $BACKENDS; do
-  check "token redis host of $b" bash -c "docker exec $b printenv TOKEN_REDIS_HOST | grep -qx redis-token"
+  check "token redis host of $b" bash -c "docker exec ${PROJECT}-$b-1 printenv TOKEN_REDIS_HOST | grep -qx redis-token"
 done
 check "nginx:80 product list" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost/api/v1/product?size=1')\" = 200 ]"
 check "wiremock confirm 200" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18089/v1/payments/confirm -H 'Content-Type: application/json' -d '{\"paymentKey\":\"k\",\"orderId\":\"o\",\"amount\":1}')\" = 200 ]"
