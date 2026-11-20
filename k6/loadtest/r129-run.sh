@@ -207,12 +207,14 @@ hotrow_run() {
   psql_seed -At -F $'\t' -c "SELECT stock FROM product WHERE id = '$HOT_PRODUCT'" > "$D/stock-after.txt"
   psql_seed -Atc "SELECT count(*) FROM stock_ledger WHERE product_id = '$HOT_PRODUCT' AND kind = 'SALE'" > "$D/ledger-sale-after.txt"
   psql_seed -Atc "SELECT count(*) FROM payment p JOIN orders o ON o.id = p.order_id JOIN order_item oi ON oi.order_id = o.id WHERE oi.product_id = '$HOT_PRODUCT' AND p.status = 'DONE'" > "$D/confirmed-after.txt"
-  psql_seed -Atc "SELECT count(DISTINCT oi.product_id) FROM order_item oi WHERE oi.order_id IN ($(order_ids "$D/step-$rps/payonly-orders.json"))" > "$D/product-count.txt"
+  # 주문 번호 목록이 길다(100/s 는 3,870건 약 158 KB) - -c 인자로 주면 컨테이너 안 execve 의 인자 한도(128 KB)를 넘어 파일이 비므로 표준 입력으로 준다(r131)
+  echo "SELECT count(DISTINCT oi.product_id) FROM order_item oi WHERE oi.order_id IN ($(order_ids "$D/step-$rps/payonly-orders.json"))" | psql_seed_stdin -At > "$D/product-count.txt" || die "product-count"
   capture_env
   write_meta "flash_sale=$flash" "rps=$rps" "ramp_s=$ramp" "hold_s=$hold" "writers=$writers"
   summarize hotrow
 }
 # payonly-orders.json 의 주문 번호를 SQL IN 목록('a','b',…)으로
+psql_seed_stdin() { docker exec -i db psql -U "$SEED_PG_USER" -d "$SEED_DB" -X -q -v ON_ERROR_STOP=1 "$@"; }
 order_ids() { python3 -c "import json,sys; print(','.join(\"'%s'\" % o['orderId'] for o in json.load(open(sys.argv[1]))['orders']))" "$1"; }
 
 # ── 재고 노출 지연 ──────────────────────────────────────────────────────
