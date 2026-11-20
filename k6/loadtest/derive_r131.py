@@ -64,3 +64,29 @@ def sold_out_db(outcomes, rows, setup_rows=None):
         before = {r[0]: r[1] for r in setup_rows}
         out["coupon_calls_excluding_setup"] = sum(max(r[1] - before.get(r[0], 0), 0) for r in own)
     return out
+
+
+_PAIR = re.compile(r"PAIR i=(\d+) status=(\d+) before=(\S+) end=(\d+) seen=(\S+) seen_stock=(\S+) polls=(\d+)")
+
+
+def _num(x):
+    return None if x == "null" else int(x)
+
+
+def parse_pairs(log_text):
+    """stock-view-delay.js 가 k6 로그에 적은 PAIR 줄 -> 반복 번호 순서대로의 dict 목록(다른 줄은 무시)"""
+    return [{"i": int(m[0]), "status": int(m[1]), "before": _num(m[2]), "end": int(m[3]), "seen": _num(m[4]), "seen_stock": _num(m[5]), "polls": int(m[6])}
+            for m in _PAIR.findall(log_text)]
+
+
+def usable_pairs(parsed):
+    """stock_view 에 넣을 (확정 응답 시각, 처음 낮게 보인 시각 | None) 쌍과 뺀 쌍의 이유별 수 - 확정이 200 이 아니거나 확정 전 수량을 읽지 못한 반복은 낮아질 근거가 없어 뺀다"""
+    pairs, excluded = [], {"confirm_not_200": 0, "no_quantity_before": 0}
+    for p in parsed:
+        if p["status"] != 200:
+            excluded["confirm_not_200"] += 1
+        elif p["before"] is None:
+            excluded["no_quantity_before"] += 1
+        else:
+            pairs.append((p["end"], p["seen"]))
+    return pairs, excluded

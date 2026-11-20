@@ -7,6 +7,8 @@
 #   ratelimit     nginx 속도 제한 - RATE(100) DURATION_S(20)
 #   outbox        outbox 중복 - N_RPS(10) HOLD_S(10) (확정 수 = N_RPS x HOLD_S)
 #   comp          후처리 실패(주문 CONFIRMED 갱신에 DB 트리거) - N_RPS(10) HOLD_S(20) COMP_MAX_WAIT_S(600)
+#   stockview     재고 노출 지연(r131) - 일반 경로 상품 하나에 결제 PAYMENTS(100)건을 차례로 확정하고 건마다 상품 상세를 POLL_MS(50) 간격으로 읽는다(한도 LIMIT_MS 15000)
+# r131: coupon 은 AUTH=token(기본)과 FAULT=1 이면 토큰 저장소 redis-token 은 두고 주 Redis 만 멈춘다 · hotrow 는 WRITERS(2) 로 결제 컨슈머 스레드 수와 payment-events 파티션 수를 함께 정한다
 # 출력 폴더: raw/ (원시 파일) · summary.json (r129-summary.py 가 만든다)
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -60,12 +62,22 @@ write_meta() { # 키=값(JSON 값) 쌍들
   python3 - "$D/meta.json" "$RUNNAME" "$@" <<'PY'
 import json, subprocess, sys
 out, run = sys.argv[1:3]
-m = {"run": run, "base_commit": "55835cb", "tooling_commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()}
+head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+# base_commit = 이 라운드의 기준(제품 코드는 R131 의 토큰 연결 · 쓰기 수 설정이 더해진 것), tooling_commit = 실행한 저장소의 HEAD
+m = {"run": run, "base_commit": "70c5f79", "tooling_commit": head}
 for kv in sys.argv[3:]:
     k, v = kv.split("=", 1)
     m[k] = json.loads(v)
 json.dump(m, open(out, "w"), indent=1)
 PY
+}
+# 백엔드가 뜬 환경(토큰 저장소 호스트 · 쓰기 수)과 payment-events 토픽 · 컨슈머 그룹 설명을 남긴다 - 요약의 token_redis · writers 가 이 파일에서 나온다
+# 토픽 설명은 이 시점의 실제 파티션 수, 그룹 설명은 파티션을 받은 컨슈머 수(스레드가 파티션보다 많으면 남는 스레드는 나오지 않는다)
+capture_env() {
+  docker exec "${PROJECT}-backend1-1" env 2> /dev/null | grep -E '^(TOKEN_REDIS_HOST|SPRING_DATA_REDIS_HOST|PAYMENT_CONSUMER_CONCURRENCY|PAYMENT_EVENTS_PARTITIONS)=' > "$D/backend-env.txt" || true
+  docker exec kafka kafka-topics --bootstrap-server localhost:9093 --describe --topic payment-events > "$D/topic-describe.txt" 2>&1 || true
+  describe_group > "$D/cg-describe.txt"
+  docker inspect -f '{{.Name}} {{.State.Status}} paused={{.State.Paused}}' redis redis-token > "$D/redis-state-end.txt" 2>&1 || true
 }
 summarize() { python3 -B "$ROOT/k6/loadtest/r129-summary.py" "$1" "$D" "$OUT/summary.json" || die "summary"; }
 
@@ -119,7 +131,10 @@ coupon_run() {
     sleep 5
     local p0 p1 u0 u1
     p0="$(epoch)"; docker pause redis > /dev/null; p1="$(epoch)"
-    sleep 10
+    sleep 9
+    # 정지 중에 두 Redis 의 상태를 읽는다 - 토큰 저장소가 running · paused=false 여야 인증이 주 Redis 와 무관하다
+    docker inspect -f '{{.Name}} {{.State.Status}} paused={{.State.Paused}}' redis redis-token > "$D/redis-state-during-pause.txt" 2>&1 || true
+    sleep 1
     u0="$(epoch)"; docker unpause redis > /dev/null; u1="$(epoch)"
     printf '{"kind":"redis-pause","pause_cmd_start":%s,"pause_cmd_end":%s,"unpause_cmd_start":%s,"unpause_cmd_end":%s}\n' "$p0" "$p1" "$u0" "$u1" > "$D/fault.json"
   fi
@@ -138,6 +153,7 @@ coupon_run() {
   docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep -c 'COUPON_REDIS_UNAVAILABLE_DB_FALLBACK' > "$D/fallback-count.txt"
   docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep 'COUPON_REDIS_SLOW' > "$D/redis-slow-backend1.log" || true
   docker logs --since "$t0" "${PROJECT}-backend1-1" 2>&1 | grep -E ' (WARN|ERROR) ' | head -100 > "$D/warn-backend1.log" || true
+  capture_env
   psql_seed -Atc "SELECT count(*) FROM coupon_issue WHERE coupon_id = $cid" > "$D/issued-db.txt"
   psql_seed -Atc "SELECT count(*) - count(DISTINCT user_id) FROM coupon_issue WHERE coupon_id = $cid" > "$D/duplicate-rows.txt"
   docker exec redis redis-cli GET "coupon:{$cid}:stock" > "$D/stock-after.txt"
@@ -147,8 +163,10 @@ coupon_run() {
 
 # ── 핫 로우 ─────────────────────────────────────────────────────────────
 hotrow_run() {
-  local flash="${FLASH:?FLASH=true|false}" rps="${RPS:?RPS}" ramp="${RAMP_S:-10}" hold="${HOLD_S:-30}"
-  log "hotrow flash=$flash rps=$rps ramp=$ramp hold=$hold"
+  local flash="${FLASH:?FLASH=true|false}" rps="${RPS:?RPS}" ramp="${RAMP_S:-10}" hold="${HOLD_S:-30}" writers="${WRITERS:-2}"
+  # 스레드 수와 파티션 수는 같은 값 하나에서 온다 - 스레드가 파티션보다 많으면 남는 스레드는 일을 받지 못한다. 토픽은 백엔드가 뜰 때 이 값으로 만들어진다(seed 가 옛 토픽을 지운다)
+  export PAYMENT_CONSUMER_CONCURRENCY="$writers" PAYMENT_EVENTS_PARTITIONS="$writers"
+  log "hotrow flash=$flash rps=$rps ramp=$ramp hold=$hold writers=$writers"
   prep() {
     psql_seed -c "UPDATE product SET stock = 1000000, flash_sale = $flash, stock_mode = 'REDIS' WHERE id = '$HOT_PRODUCT'"
     bash db/seed/load-redis.sh "$SEED_DB" > "$D/load-redis.log" 2>&1
@@ -168,11 +186,39 @@ hotrow_run() {
   psql_seed -Atc "SELECT count(*) FROM stock_ledger WHERE product_id = '$HOT_PRODUCT' AND kind = 'SALE'" > "$D/ledger-sale-after.txt"
   psql_seed -Atc "SELECT count(*) FROM payment p JOIN orders o ON o.id = p.order_id JOIN order_item oi ON oi.order_id = o.id WHERE oi.product_id = '$HOT_PRODUCT' AND p.status = 'DONE'" > "$D/confirmed-after.txt"
   psql_seed -Atc "SELECT count(DISTINCT oi.product_id) FROM order_item oi WHERE oi.order_id IN ($(order_ids "$D/step-$rps/payonly-orders.json"))" > "$D/product-count.txt"
-  write_meta "flash_sale=$flash" "rps=$rps" "ramp_s=$ramp" "hold_s=$hold"
+  capture_env
+  write_meta "flash_sale=$flash" "rps=$rps" "ramp_s=$ramp" "hold_s=$hold" "writers=$writers"
   summarize hotrow
 }
 # payonly-orders.json 의 주문 번호를 SQL IN 목록('a','b',…)으로
 order_ids() { python3 -c "import json,sys; print(','.join(\"'%s'\" % o['orderId'] for o in json.load(open(sys.argv[1]))['orders']))" "$1"; }
+
+# ── 재고 노출 지연 ──────────────────────────────────────────────────────
+# 일반 경로(flash_sale=false) 상품 하나 - 결제 확정이 커밋될 때 컨슈머가 조건부 UPDATE 로 product.stock 을 낮추고, 커밋 뒤 StockQuantityInvalidator 가 수량 캐시를 지운다
+stockview_run() {
+  local payments="${PAYMENTS:-100}" poll="${POLL_MS:-50}" limit="${LIMIT_MS:-15000}"
+  log "stockview payments=$payments poll=${poll}ms limit=${limit}ms"
+  prep() {
+    psql_seed -c "UPDATE product SET stock = 1000000, flash_sale = false, stock_mode = 'REDIS' WHERE id = '$HOT_PRODUCT'"
+    bash db/seed/load-redis.sh "$SEED_DB" > "$D/load-redis.log" 2>&1
+  }
+  reseed prep; boot
+  psql_seed -At -F $'\t' -c "SELECT flash_sale, stock, stock_mode FROM product WHERE id = '$HOT_PRODUCT'" > "$D/product-before.tsv"
+  psql_seed -Atc "SELECT count(*) FROM stock_ledger WHERE product_id = '$HOT_PRODUCT' AND kind = 'SALE'" > "$D/ledger-sale-before.txt"
+  psql_seed -Atc "SELECT count(*) FROM payment p JOIN orders o ON o.id = p.order_id JOIN order_item oi ON oi.order_id = o.id WHERE oi.product_id = '$HOT_PRODUCT' AND p.status = 'DONE'" > "$D/confirmed-before.txt"
+  # run.sh step 의 준비 단계가 만들 주문 수는 rps x (램프 + 2 x 유지) x 0.55 + 20 이다 - rps 1 · 램프 0 · 유지 = 결제 수면 약 (결제 수 x 1.1 + 20) 건
+  PAYMENTS="$payments" POLL_MS="$poll" LIMIT_MS="$limit" PRODUCT_ID="$HOT_PRODUCT" \
+    K6_SCRIPT=k6/scripts/stock-view-delay.js K6_PREPARE_SCRIPT=k6/scripts/payment-only-prepare.js FLASH_COUNT=1 DIAG_SAMPLERS=1 RAMP_S=0 HOLD_S="$payments" \
+    $RUN step 1 "$D" > "$D/run.log" 2>&1 || die "step (tail: $(tail -3 "$D/run.log" | tr '\n' ' '))"
+  sleep 6
+  psql_seed -At -F $'\t' -c "SELECT stock FROM product WHERE id = '$HOT_PRODUCT'" > "$D/stock-after.txt"
+  psql_seed -Atc "SELECT count(*) FROM stock_ledger WHERE product_id = '$HOT_PRODUCT' AND kind = 'SALE'" > "$D/ledger-sale-after.txt"
+  psql_seed -Atc "SELECT count(*) FROM payment p JOIN orders o ON o.id = p.order_id JOIN order_item oi ON oi.order_id = o.id WHERE oi.product_id = '$HOT_PRODUCT' AND p.status = 'DONE'" > "$D/confirmed-after.txt"
+  psql_seed -Atc "SELECT count(DISTINCT oi.product_id) FROM order_item oi WHERE oi.order_id IN ($(order_ids "$D/step-1/payonly-orders.json"))" > "$D/product-count.txt"
+  capture_env
+  write_meta "payments=$payments" "poll_ms=$poll" "limit_ms=$limit"
+  summarize stockview
+}
 
 # ── 격벽 ────────────────────────────────────────────────────────────────
 bulkhead_run() {
@@ -318,6 +364,7 @@ case "$RUNNAME" in
   ratelimit) ratelimit_run ;;
   outbox) outbox_run ;;
   comp) comp_run ;;
+  stockview) stockview_run ;;
   *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
 echo "== $(date -u +%T) $RUNNAME done: $OUT/summary.json"

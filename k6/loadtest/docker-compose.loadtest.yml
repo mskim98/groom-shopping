@@ -21,6 +21,11 @@ x-loadtest-env: &loadtest-env
   COUPON_ISSUE_STRATEGY: ${COUPON_ISSUE_STRATEGY:-stream}
   # 측정 전용 인증 우회(헤더 X-Lt-User-Id 를 믿는다) - 기본 false. Redis 를 멈추는 실행에서 JWT 블랙리스트 조회(Redis)를 빼려고 켠다(r129, Ruling R129-5)
   LOADTEST_AUTH_BYPASS_ENABLED: ${LOADTEST_AUTH_BYPASS_ENABLED:-false}
+  # 토큰 저장소 Redis 호스트(r131) - 기본 redis-token(주 Redis 와 다른 컨테이너). 주 Redis 를 멈추는 실행에서 인증이 살아 있으려면 둘이 달라야 한다
+  TOKEN_REDIS_HOST: ${TOKEN_REDIS_HOST:-redis-token}
+  # 결제 후처리 컨슈머 스레드 수와 payment-events 파티션 수(r131) - 기본 2 · 2. 토픽은 백엔드가 뜰 때 이 값으로 만들어지므로(seed 가 토픽을 지운다) 둘은 같은 환경 변수 하나에서 온다
+  PAYMENT_CONSUMER_CONCURRENCY: ${PAYMENT_CONSUMER_CONCURRENCY:-2}
+  PAYMENT_EVENTS_PARTITIONS: ${PAYMENT_EVENTS_PARTITIONS:-2}
 
 services:
   wiremock:
