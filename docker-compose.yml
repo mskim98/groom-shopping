@@ -40,6 +40,19 @@ services:
     networks:
       - app-network
 
+  # 토큰 저장소(리프레시 토큰 · 액세스 토큰 블랙리스트) 전용 Redis - 주 Redis(쿠폰 재고 · 스트림 · 신호)와 따로 둔다
+  # 인증 필터가 요청마다 블랙리스트를 읽고 실패하면 401 로 닫으므로, 같은 Redis 면 주 Redis 가 멈출 때 쿠폰 코드에 닿기 전에 요청이 끝난다
+  # 호스트 포트를 열지 않는다(6379~6385 는 다른 스택이 쓴다) - 백엔드는 app-network 의 redis-token:6379 로 붙는다
+  redis-token:
+    image: redis:latest
+    container_name: redis-token
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_token_data:/data
+    networks:
+      - app-network
+
   kafka:
     image: confluentinc/cp-kafka:8.0.0
     container_name: kafka
@@ -87,10 +100,12 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "50"
       SPRING_DATA_REDIS_HOST: redis
+      TOKEN_REDIS_HOST: redis-token
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9093
     depends_on:
       - db
       - redis
+      - redis-token
       - kafka
     networks:
       - app-network
@@ -158,6 +173,7 @@ services:
 
 volumes:
   db_data:
+  redis_token_data:
   kafka_kraft_data:
   backend1_streams:
   backend2_streams:
