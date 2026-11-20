@@ -23,6 +23,9 @@ const SUMMARY_FILE = __ENV.SUMMARY_FILE || 'coupon-summary.json';
 // AUTH=bypass: 로그인 없이 X-Lt-User-Id 헤더(반복 번호 + 1 = 시드 사용자 id)로 부른다 - 앱이 LOADTEST_AUTH_BYPASS_ENABLED=true 일 때만 통한다(r129 Redis 정지 우회 실행)
 const AUTH = __ENV.AUTH || 'token';
 const REQUESTS = RATE * DURATION_S;
+// CONN_REUSE=0 이면 요청마다 새 연결을 연다(k6 noConnectionReuse) - 기본(켬)은 사용자(가상 사용자)마다 연결 하나를 열어 두고 다시 쓴다
+// r131: 사용자 3,000명이 연결 3,000개를 쥐면 Docker Desktop 의 호스트 포트 전달기가 천 건쯤에서 nginx 로 가는 연결을 거절했다 - 그 원인을 가리는 스위치
+const CONN_REUSE = (__ENV.CONN_REUSE || '1') !== '0';
 
 const accept = new Trend('coupon_accept_ms', true);
 const completion = new Trend('coupon_completion_ms', true);
@@ -37,6 +40,7 @@ for (const k of ['accepted_202', 'sync_200', 'sold_out_409', 'duplicate', 'unava
 }
 
 export const options = {
+    noConnectionReuse: !CONN_REUSE,
     setupTimeout: '600s',
     summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max', 'count'],
     scenarios: {
@@ -132,6 +136,7 @@ export function handleSummary(data) {
         iterations: m.iterations ? m.iterations.values.count : 0,
         rate: RATE,
         duration_s: DURATION_S,
+        connection_reuse: CONN_REUSE,
         accept_p95_ms: m['coupon_accept_ms'].values['p(95)'],
         completion_p50_ms: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values['p(50)'] : null,
         completion_p95_ms: m['coupon_completion_ms'] ? m['coupon_completion_ms'].values['p(95)'] : null,

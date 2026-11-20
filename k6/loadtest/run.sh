@@ -3,7 +3,7 @@
 # 사용: bash k6/loadtest/run.sh <명령> [인자]
 # SERVERS 의 기본값은 3 이다 - 2대 스택에 거는 모든 명령(app · tiny · step · collect · down · check-env.sh · final-*.sh)은 SERVERS=2 를 붙여야 한다(안 붙이면 check-env 가 없는 세 번째 백엔드를 기다린다)
 #   keys                      secrets/jwt-keys.pem 이 없으면 만든다(저장소 밖 · .gitignore 의 secrets/ 대상)
-#   infra                     db redis kafka wiremock 을 띄우고 준비될 때까지 기다린다
+#   infra                     db redis redis-token kafka wiremock 을 띄우고 준비될 때까지 기다린다
 #   seed                      시드 템플릿이 없을 때만 만들고(SEED_REBUILD_TEMPLATE=1 이면 다시) shop_seed_m1 로 복제 · pg_stat_statements 확장 · Redis 적재 · 토픽 재생성
 #   app                       백엔드 이미지 빌드 후 SERVERS 대의 백엔드 · nginx 를 띄우고 건강 UP 을 기다린다
 #   tiny <out-dir>            초당 50 요청 10 초 + 램프 2 초 (<out-dir>/tiny)
@@ -49,9 +49,10 @@ cmd_keys() {
 }
 
 cmd_infra() {
-  $DC up -d db redis kafka wiremock
+  $DC up -d db redis redis-token kafka wiremock
   wait_for "postgres" 120 docker exec db pg_isready -U "$SEED_PG_USER"
   wait_for "redis" 60 docker exec redis redis-cli ping
+  wait_for "redis-token" 60 docker exec redis-token redis-cli ping
   wait_for "kafka" 120 kafka_cli kafka-topics --list
   wait_for "wiremock" 60 curl -fsS http://localhost:18089/__admin/mappings
   echo "infra up"
@@ -72,6 +73,8 @@ cmd_seed() {
   # 백엔드가 멈춘 상태의 측정용 Redis 를 비운다 - 앞 시험이 남긴 장바구니 키(cart:<사용자 id>)가 남으면 GET /cart 가 DB 에 없는 옛 항목을 보여 주고
   # 시드가 DB 에 넣어 둔 장바구니 항목은 비워지지 않아 첫 주문에 섞인다. load-redis.sh 는 자기 소유 키 패턴만 지우므로 여기서 한다
   docker exec redis redis-cli FLUSHALL > /dev/null
+  # 토큰 저장소도 비운다 - 앞 실행의 리프레시 토큰 · 블랙리스트 키가 남으면 실행마다 같은 조건으로 시작하지 못한다
+  docker exec redis-token redis-cli FLUSHALL > /dev/null
   bash db/seed/load-redis.sh "$SEED_DB"
   bash db/seed/recreate-topics.sh
   # recreate-topics.sh 는 payment-events 를 12 파티션으로 만든다 - 파티션 수는 KafkaConfig 의 NewTopic 빈(2)이 정해야 하고 Kafka 는 파티션을 줄이지 못하므로,

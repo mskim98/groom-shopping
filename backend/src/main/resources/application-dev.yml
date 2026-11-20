@@ -119,7 +119,10 @@ payment:
     stale-after-ms: 300000       # READY 로 이만큼 머문 결제만 본다. 확정 대기 상한(10초)보다 훨씬 길어 대기 중인 요청의 결제를 건드리지 않는다
     max-republish: 2             # 이벤트 재발행 상한. ③④ 는 outbox 발행 뒤 stale 기준(5분)이 지나야 하므로 READY 5분 → 재발행 1 → 5분 → 재발행 2 → 5분 → 환불, 약 15분
   consumer:
+    concurrency: ${PAYMENT_CONSUMER_CONCURRENCY:2}   # 결제 후처리 컨슈머 스레드 수. 파티션 수(payment.events.partitions)를 넘으면 남는 스레드는 일을 받지 못하고, 낮으면 파티션 몇 개를 한 스레드가 맡아 후처리가 그만큼 직렬이 된다
     circuit-check-ms: 1000       # db-ledger 회로를 보고 결제 컨슈머를 멈추거나 재개하는 확인 주기. 길면 DB 가 돌아와도 그만큼 늦게 재개하고, 짧으면 확인마다 Redis 공유 키 조회가 늘어난다
+  events:
+    partitions: ${PAYMENT_EVENTS_PARTITIONS:2}       # payment-events 토픽 파티션 수(토픽을 새로 만들 때만 적용 - Kafka 는 기존 토픽의 파티션을 줄이지 못하고 늘리는 것도 이 선언으로는 하지 않는다)
   # 결제 확정 요청이 컨슈머의 후처리 결과를 기다리는 상한과 확인 간격
   confirm:
     wait-timeout-ms: 10000       # 넘으면 READY 로 202 응답 - 클라이언트가 GET /v1/payment/{id} 로 확인. Toss 응답 한도(60초)보다 짧아야 한다
@@ -165,6 +168,13 @@ product:
     # 상품 상세 수량 L2(Redis) 만료. 재고 · 재고 모드 쓰기는 커밋 뒤에 항목을 지우므로 이 값은 지우기 전에 읽힌 옛 값이 남는 최악 시간이다(최악 지연 = 이 값 + L1 1초)
     # 너무 크면 그 경쟁이 난 상품의 수량이 그만큼 오래 틀리게 보이고, 너무 작으면 L1 만료마다 수량 SELECT 가 DB 로 돌아간다(r120: 2,000 rps 에서 15,914 회)
     quantity-l2-ttl-ms: 10000
+
+# 토큰 저장소(리프레시 토큰 · 액세스 토큰 블랙리스트)의 Redis. 비우면 주 Redis(spring.data.redis)와 같은 주소다
+# 따로 두면 주 Redis(쿠폰 재고 · 스트림 · 신호)가 멈춰도 인증 필터의 블랙리스트 조회가 살아 있어 쿠폰 발급이 DB 대체 경로까지 간다. 필터는 조회 실패 시 401 로 닫는 그대로다
+token:
+  redis:
+    host: ${TOKEN_REDIS_HOST:${spring.data.redis.host}}
+    port: ${TOKEN_REDIS_PORT:${spring.data.redis.port}}
 
 # 기동 러너(구 키 이관 · 워밍업 2종) 앞에서 Redis 가 붙을 때까지 기다리는 한도
 redis:

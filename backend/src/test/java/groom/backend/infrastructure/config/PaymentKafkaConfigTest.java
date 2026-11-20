@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import groom.backend.application.payment.event.PaymentEventParseException;
 import groom.backend.infrastructure.product.StockWarmUpRunner;
 import java.util.function.BiFunction;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -16,6 +17,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
@@ -133,5 +135,44 @@ class PaymentKafkaConfigTest {
         assertThat(factory(shared).getConsumerFactory().getConfigurationProperties())
                 .doesNotContainKey(ConsumerConfig.MAX_POLL_RECORDS_CONFIG);
         assertThat(container(shared).getCommonErrorHandler()).isNull();
+    }
+
+    // 컨텍스트를 새로 띄우지 않고 설정 클래스만 만들어 필드(@Value 가 채우는 자리)를 직접 넣는다
+    private static KafkaConfig plainConfig() {
+        KafkaConfig config = new KafkaConfig(new SimpleMeterRegistry());
+        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
+        return config;
+    }
+
+    // 컨슈머 스레드 수 · 파티션 수를 설정으로 바꿔 한 상품 행에 쓰는 스레드 수를 시험할 수 있다(기본 2 · 2)
+    @Test
+    @DisplayName("설정값 payment.consumer.concurrency 를 주면 결제 리스너 concurrency 가 그 값이 된다")
+    void 설정값_consumer_concurrency가_리스너에_쓰인다() {
+        KafkaConfig config = plainConfig();
+        ReflectionTestUtils.setField(config, "paymentConsumerConcurrency", 8);
+
+        assertThat(config.paymentApprovedKafkaListenerContainerFactory().createContainer("payment-events").getConcurrency())
+                .isEqualTo(8);
+    }
+
+    @Test
+    @DisplayName("설정값 payment.events.partitions 를 주면 payment-events 토픽의 파티션 수가 그 값이 된다")
+    void 설정값_partitions가_토픽에_쓰인다() {
+        KafkaConfig config = plainConfig();
+        ReflectionTestUtils.setField(config, "paymentEventsPartitions", 8);
+
+        assertThat(config.paymentEventsTopic().numPartitions()).isEqualTo(8);
+    }
+
+    @Test
+    @DisplayName("설정값이 없으면 concurrency 와 파티션 수 기본값은 2 이다")
+    void 설정값_기본값은_2이다() {
+        Environment environment = context.getEnvironment();
+
+        assertThat(environment.getProperty("payment.consumer.concurrency", Integer.class, 2)).isEqualTo(2);
+        assertThat(ReflectionTestUtils.getField(context.getBean(KafkaConfig.class), "paymentConsumerConcurrency"))
+                .isEqualTo(2);
+        assertThat(ReflectionTestUtils.getField(context.getBean(KafkaConfig.class), "paymentEventsPartitions"))
+                .isEqualTo(2);
     }
 }

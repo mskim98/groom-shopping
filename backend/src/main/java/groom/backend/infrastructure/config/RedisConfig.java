@@ -18,11 +18,13 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import java.nio.charset.StandardCharsets;
 import groom.backend.domain.raffle.entity.RaffleDrawingEvent;
 import groom.backend.interfaces.coupon.dto.response.CouponIssueResponse;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import io.lettuce.core.ClientOptions;
@@ -55,6 +57,15 @@ public class RedisConfig {
     @Value("${spring.data.redis.port}")
     private int port;
 
+    // 토큰 저장소(리프레시 토큰 · 블랙리스트)의 접속 정보. 안 주면 주 Redis 와 같은 주소라 설정하지 않은 배포는 지금과 같다
+    // 따로 두는 이유 - 인증 필터가 요청마다 블랙리스트를 읽고 실패하면 401 로 닫는다. 같은 Redis 면 주 Redis 가 멈출 때
+    // 쿠폰 코드에 닿기 전에 모든 요청이 401 이 되어 DB 대체 경로가 열리지 못한다
+    @Value("${token.redis.host:${spring.data.redis.host}}")
+    private String tokenHost;
+
+    @Value("${token.redis.port:${spring.data.redis.port}}")
+    private int tokenPort;
+
     // --- 쿠폰 도메인 캐시 이름 상수 ---
     public static final String COUPON_ITEM_CACHE_NAME = "coupon-item-cache";
     public static final String COUPON_LIST_CACHE_NAME = "user-coupons-list-cache";
@@ -67,9 +78,21 @@ public class RedisConfig {
     // @Bean : Redis 연결 팩토리를 빈으로 등록(Lettuce는 비동기/논블로킹 Redis 클라이언트).
     // 호스트와 포트만 받는 생성자로 만들면 spring.data.redis.timeout 을 읽지 않고
     // Boot 가 만든 ClientResources(Micrometer 명령 지연 기록기 포함)도 버린다
+    // @Primary : 연결 팩토리가 둘이라 한정자 없이 받는 쪽(쿠폰 재고 · 신호 · 캐시 · 스트림)은 주 Redis 로 간다
     @Bean
+    @Primary
     public RedisConnectionFactory redisConnectionFactory(ClientResources clientResources) {
-        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+        return new LettuceConnectionFactory(new RedisStandaloneConfiguration(host, port), clientConfig(clientResources));
+    }
+
+    // 토큰 저장소 전용 연결. 명령 타임아웃 · 끊김 거절 옵션은 주 연결과 같다(다르면 장애 때 응답 시간이 갈린다)
+    @Bean(name = "tokenRedisConnectionFactory")
+    public RedisConnectionFactory tokenRedisConnectionFactory(ClientResources clientResources) {
+        return new LettuceConnectionFactory(new RedisStandaloneConfiguration(tokenHost, tokenPort), clientConfig(clientResources));
+    }
+
+    private LettuceClientConfiguration clientConfig(ClientResources clientResources) {
+        return LettuceClientConfiguration.builder()
                 .commandTimeout(commandTimeout)
                 .clientResources(clientResources)
                 // 끊긴 동안 명령을 큐에 쌓으면 재연결 뒤 한꺼번에 실행되고 그동안 호출 스레드는 타임아웃까지 기다린다
@@ -77,7 +100,6 @@ public class RedisConfig {
                         .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
                         .build())
                 .build();
-        return new LettuceConnectionFactory(new RedisStandaloneConfiguration(host, port), clientConfig);
     }
 
     // 결제 완료 신호 · 쿠폰 발급 완료 신호 채널을 인스턴스당 구독 하나(한 컨테이너 · 한 연결)로 듣는다 - 깨울 대기자를 찾는 일만 하고 DB 는 건드리지 않는다
@@ -108,8 +130,24 @@ public class RedisConfig {
         return template;
     }
 
+    // 블랙리스트 · 사용자별 토큰 집합용 문자열 템플릿. 타입을 StringRedisTemplate 로 두지 않는 이유 - Boot 의 기본
+    // stringRedisTemplate 이 "StringRedisTemplate 빈이 없을 때" 만 만들어져 이 빈이 기본 템플릿을 밀어낸다
+    @Bean(name = "tokenStringRedisTemplate")
+    public RedisTemplate<String, String> tokenStringRedisTemplate(
+            @Qualifier("tokenRedisConnectionFactory") RedisConnectionFactory factory) {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setHashValueSerializer(new StringRedisSerializer());
+        template.afterPropertiesSet();
+        return template;
+    }
+
     @Bean(name = "tokenRedisTemplate")
-    public RedisTemplate<String, RefreshToken> tokenRedisTemplate(RedisConnectionFactory factory) {
+    public RedisTemplate<String, RefreshToken> tokenRedisTemplate(
+            @Qualifier("tokenRedisConnectionFactory") RedisConnectionFactory factory) {
 
         //GenericJackson2JsonRedisSerializer serializer = createGenericSerializer();
         Jackson2JsonRedisSerializer<RefreshToken> jacksonSerializer =

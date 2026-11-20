@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """r129 실행 하나의 원시 폴더에서 summary.json 을 만든다 - 숫자 계산은 derive_r129.py(시험이 있다), 여기는 파일을 읽어 이어 붙이는 일만 한다
 
-usage: r129-summary.py <coupon|hotrow|bulkhead|ratelimit|outbox|comp> <raw dir> <out summary.json>
+usage: r129-summary.py <coupon|hotrow|bulkhead|ratelimit|outbox|comp|stockview> <raw dir> <out summary.json>
 """
 import importlib.util
 import json
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import derive_r129 as d  # noqa: E402
+import derive_r131 as d31  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("derive_final", os.path.join(HERE, "derive-final.py"))
 final = importlib.util.module_from_spec(_spec)
@@ -97,6 +98,13 @@ def coupon(raw, meta):
               "redis_slowlog_entries": len([1 for l in rd(raw, "redis-slowlog.txt").splitlines() if re.match(r"\d+\) \(integer\) \d+$", l.strip())]),
               "dropped_iterations": k6["dropped_iterations"], "max_vus": k6["max_vus"],
               "answer_definition": "request start to the final answer: 200 response time (issued), 409 response time (sold_out / duplicate), the first SUCCESS poll for a 202; other = 503, failures, timeouts, anything else"})
+    # r131: 토큰 저장소가 주 Redis 와 다른 호스트인지(백엔드 환경에서 읽는다) · 매진 요청의 쿠폰 표 접근
+    # r131 follow-up: 부하 생성기가 요청마다 새 연결을 여는지(k6 noConnectionReuse 의 반대) - 요약 파일에 없으면(옛 실행) 재사용이 켜진 것이다
+    s["k6_connection_reuse"] = k6.get("connection_reuse", True)
+    s["token_redis"] = d31.token_redis(rd(raw, "backend-env.txt"))
+    s["token_redis"]["state_during_pause"] = rd(raw, "redis-state-during-pause.txt").strip() or None
+    s["token_redis"]["state_at_end"] = rd(raw, "redis-state-end.txt").strip() or None
+    s["sold_out_db"] = d31.sold_out_db(s["answer_ms_by_outcome"], d.parse_pgss(rd(raw, "pgss-end.tsv")), d.parse_pgss(rd(raw, "pgss-setup.tsv")) if rd(raw, "pgss-setup.tsv") else None)
     cl = rd(raw, "redis-slow-backend1.log")
     s["redis_slow_lines"] = cl.count("[COUPON_REDIS_SLOW]")
     for name in ("redis-latency-latest.txt", "redis-latency-history.txt", "redis-info-stats.txt"):
@@ -109,7 +117,7 @@ def coupon(raw, meta):
         p_end, u_start = f["pause_cmd_end"], f["unpause_cmd_start"]
         nginx = rd(raw, "nginx.log")
         cb = rd(raw, "backend-cb.log")
-        lo, hi = iso(int(p_end)), iso(int(u_start) + 1)  # nginx 로그 시각은 초 단위라 창을 바깥 초로 넓힌다(양쪽 1 초 안쪽 오차)
+        lo, hi = d31.pause_window_borders(f)  # nginx 로그 시각은 초 단위라 창을 바깥 초로 넓힌다(양쪽 1 초 안쪽 오차) - 상태별 건수와 응답 시간이 같은 경계를 쓴다
         s["fault"] = {
             "kind": f["kind"], "paused_ms": round((u_start - p_end) * 1000), "pause_start_utc": iso(p_end), "unpause_utc": iso(u_start),
             "pause_start_after_load_start_s": round(p_end - float(rd(raw, "load-start.epoch") or p_end), 2),
@@ -117,8 +125,10 @@ def coupon(raw, meta):
             "answers_during_pause": d.answers_in_window(nginx, "/coupon/issue/", lo, hi),
             "answers_before_pause": d.answers_in_window(nginx, "/coupon/issue/", "1970-01-01T00:00:00Z", lo),
             "answers_after_pause": d.answers_in_window(nginx, "/coupon/issue/", hi, "2999-01-01T00:00:00Z"),
+            "answer_ms_by_window": d31.pause_window_answer_ms(nginx, "/coupon/issue/", lo, hi),
             "status_401": status_span(nginx, "401", p_end, u_start),
             "db_fallback_log_lines": intf(raw, "fallback-count.txt"),
+            "docker_forwarder_rejects": len([l for l in rd(raw, "docker-host-rejects.txt").splitlines() if l.strip()]) if os.path.isfile(os.path.join(raw, "docker-host-rejects.txt")) else None,
             "window_note": "answers counted by nginx log second of the response end, window widened to whole seconds",
         }
     return s
@@ -161,7 +171,34 @@ def hotrow(raw, meta):
         **db_connections(raw, sd),
         "path_check": d.hotrow_path_check(meta["flash_sale"], led, conf, st_before, st_after),
         "path_evidence": {"ledger_sale_rows_added": led, "confirmed_payments_added": conf, "stock_before": st_before, "stock_after": st_after},
-        "consumer_writers_on_row": "payment-events has 2 partitions, concurrency 2 per server: at most 2 consumer threads run the conditional stock UPDATE (flash_sale=false); flash_sale=true takes stock in Redis Lua and the request threads INSERT ledger rows",
+        # r131: 쓰기 수는 백엔드 환경(스레드 수)과 토픽 설명(파티션 수)에서 읽고, 컨슈머 그룹이 실제로 파티션을 나눠 받은 모양을 따로 둔다
+        "writers": d31.writers(rd(raw, "backend-env.txt"), rd(raw, "topic-describe.txt")),
+        "writers_evidence": d31.group_members(rd(raw, "cg-describe.txt"), "payment-events"),
+        "token_redis": d31.token_redis(rd(raw, "backend-env.txt")),
+        "consumer_writers_on_row": "at most `writers.consumer_concurrency` consumer threads (one per payment-events partition, `writers.partitions`) run the conditional stock UPDATE (flash_sale=false); flash_sale=true takes stock in Redis Lua and the request threads INSERT ledger rows",
+    })
+    return s
+
+
+def stockview(raw, meta):
+    """재고 노출 지연 - 결제 PAYMENTS 건을 차례로 확정하고 상품 상세가 낮아진 수량을 처음 보인 시각까지(쌍은 k6 로그의 PAIR 줄)"""
+    sd = step_dir(raw)
+    cond = jrd(sd, "condition.json", {})
+    before = rd(raw, "product-before.tsv").strip().split("\t")
+    st_before, st_after = int(before[1]), int(rd(raw, "stock-after.txt").strip())
+    led = intf(raw, "ledger-sale-after.txt") - intf(raw, "ledger-sale-before.txt")
+    conf = intf(raw, "confirmed-after.txt") - intf(raw, "confirmed-before.txt")
+    parsed = d31.parse_pairs(rd(sd, "k6.log"))
+    pairs, excluded = d31.usable_pairs(parsed)
+    s = common(meta, cond, rd(sd, "host-top.txt"), rd(sd, "prom.tsv"))
+    s.update({
+        "run": meta["run"], "payments": meta["payments"], "poll_ms": meta["poll_ms"], "limit_ms": meta["limit_ms"], "flash_sale": False, "product_flash_sale_in_db": before[0] == "t",
+        "product_count": intf(raw, "product-count.txt"),
+        "stock_view": {**d31.stock_view(pairs), "pairs_excluded": excluded, "polls_per_pair_median": d.pct([p["polls"] for p in parsed if p["seen"] is not None], 50)},
+        "path_check": d.hotrow_path_check(False, led, conf, st_before, st_after),
+        "path_evidence": {"ledger_sale_rows_added": led, "confirmed_payments_added": conf, "stock_before": st_before, "stock_after": st_after},
+        "writers": d31.writers(rd(raw, "backend-env.txt"), rd(raw, "topic-describe.txt")), "token_redis": d31.token_redis(rd(raw, "backend-env.txt")),
+        "cache_design": "ProductDetailCache: quantity L1 1 s (Caffeine) -> L2 product:{id}:qty 10 s -> DB; StockQuantityInvalidator removes the L2 entry and this instance's L1 after the stock UPDATE commits; worst case 10 s + 1 s = 11 s",
     })
     return s
 
@@ -275,13 +312,15 @@ def comp(raw, meta):
 # 필수 원시 파일 - 없으면 요약을 만들지 않고 파일 이름을 대며 오류로 끝난다. "step/" 로 시작하는 것은 run.sh step 이 만든 <raw>/step-<n>/ 안의 파일이다
 # 선택(없으면 해당 키만 비는 것으로 문서화된 읽기): pgss-stock-update.tsv(재고 UPDATE 문장, flash 3회는 없다 - R129-12-3) · pgss-setup.tsv(준비 단계 끝 표본, 없으면 setup 제외 키 없음) ·
 #   coupon-wake.tsv(스트림 경로만) · fault.json · backend-cb.log · fallback-count.txt(정지 실행만) · redis-latency-*.txt · redis-info-stats.txt · diag-*.tsv(진단 실행만) · bypass-user-id-check.tsv ·
-#   redis-slow-backend1.log · redis-slowlog.txt · load-start.epoch(정지 실행만) · comp-wait-note.txt · outbox-status-*.tsv · republish-wait-s.txt
+#   docker-host-rejects.txt(DIAG_R131, 창 안의 Docker 호스트 로그 거절 줄) · redis-state-during-pause.txt · redis-state-end.txt(r131, 토큰 저장소 상태) · redis-slow-backend1.log · redis-slowlog.txt · load-start.epoch(정지 실행만) · comp-wait-note.txt · outbox-status-*.tsv · republish-wait-s.txt
 STEP_BASE = ["step/condition.json", "step/host-top.txt", "step/prom.tsv", "step/k6-summary.json"]
 REQUIRED = {
     "coupon": ["meta.json", "k6-summary.json", "condition.json", "stock-before.txt", "issued-db.txt", "duplicate-rows.txt", "pgss-end.tsv", "redis-commandstats.txt",
-               "host-top.txt", "prom.tsv", "db-connections.txt", "coupon-stages.tsv", "coupon-stages-before.tsv", "nginx.log"],
+               "host-top.txt", "prom.tsv", "db-connections.txt", "coupon-stages.tsv", "coupon-stages-before.tsv", "nginx.log", "backend-env.txt"],
     "hotrow": ["meta.json", "product-before.tsv", "stock-after.txt", "ledger-sale-before.txt", "ledger-sale-after.txt", "confirmed-before.txt", "confirmed-after.txt",
-               "product-count.txt", "pg-activity.tsv", "step/pgss.tsv"] + STEP_BASE,
+               "product-count.txt", "pg-activity.tsv", "step/pgss.tsv", "backend-env.txt", "topic-describe.txt", "cg-describe.txt"] + STEP_BASE,
+    "stockview": ["meta.json", "product-before.tsv", "stock-after.txt", "ledger-sale-before.txt", "ledger-sale-after.txt", "confirmed-before.txt", "confirmed-after.txt",
+                  "product-count.txt", "backend-env.txt", "topic-describe.txt", "step/k6.log"] + STEP_BASE,
     "bulkhead": ["meta.json", "wiremock-requests.json"] + STEP_BASE,
     "ratelimit": ["meta.json", "k6-summary.json", "limit-lines.txt", "nginx.log", "host-top.txt", "condition.json"],
     "outbox": ["meta.json", "side-effects-before.json", "side-effects-after.json", "cg-before.txt", "cg-after.txt", "republished.txt", "log-counts-before.txt",
@@ -302,7 +341,7 @@ def required_missing(kind, raw):
 
 
 def main(argv):
-    if len(argv) != 4 or argv[1] not in ("coupon", "hotrow", "bulkhead", "ratelimit", "outbox", "comp"):
+    if len(argv) != 4 or argv[1] not in ("coupon", "hotrow", "bulkhead", "ratelimit", "outbox", "comp", "stockview"):
         print(__doc__)
         return 2
     kind, raw, out = argv[1:]
@@ -312,7 +351,7 @@ def main(argv):
             print("missing required raw file: %s" % p, file=sys.stderr)
         return 2
     meta = jrd(raw, "meta.json")
-    summary = {"coupon": coupon, "hotrow": hotrow, "bulkhead": bulkhead, "ratelimit": ratelimit, "outbox": outbox, "comp": comp}[kind](raw, meta)
+    summary = {"coupon": coupon, "hotrow": hotrow, "bulkhead": bulkhead, "ratelimit": ratelimit, "outbox": outbox, "comp": comp, "stockview": stockview}[kind](raw, meta)
     json.dump(summary, open(out, "w"), indent=2, ensure_ascii=False)
     print("wrote %s" % out)
     return 0

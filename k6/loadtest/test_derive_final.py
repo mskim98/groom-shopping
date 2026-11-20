@@ -393,6 +393,158 @@ class DeriveR129Test(unittest.TestCase):
         self.assertEqual(a, {"200": 1, "409": 1, "503": 1})
 
 
+class DeriveR131Test(unittest.TestCase):
+    """r131 요약 키 - 토큰 저장소 연결 · 결제 컨슈머 쓰기 수 · 재고 노출 지연 · 매진 요청의 쿠폰 표 접근을 작은 입력으로 시험한다"""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r131  # 모듈이 없을 때 이 클래스의 시험만 실패하게 여기서 불러온다
+        cls.d = derive_r131
+
+    def test_r131_token_redis_is_separate_when_the_token_host_differs_from_the_main_host(self):
+        env = "PATH=/usr/bin\nTOKEN_REDIS_HOST=redis-token\nSPRING_DATA_REDIS_HOST=redis\nHOME=/root\n"
+        self.assertEqual(self.d.token_redis(env), {"host": "redis-token", "main_host": "redis", "separate": True})
+
+    def test_r131_token_redis_without_a_token_host_uses_the_main_host_and_is_not_separate(self):
+        env = "SPRING_DATA_REDIS_HOST=redis\nHOME=/root\n"
+        self.assertEqual(self.d.token_redis(env), {"host": "redis", "main_host": "redis", "separate": False})
+
+    def test_r131_token_redis_same_host_set_explicitly_is_not_separate(self):
+        env = "TOKEN_REDIS_HOST=redis\nSPRING_DATA_REDIS_HOST=redis\n"
+        self.assertFalse(self.d.token_redis(env)["separate"])
+
+    def test_r131_writers_read_concurrency_from_the_environment_and_partitions_from_the_topic_description(self):
+        env = "PAYMENT_CONSUMER_CONCURRENCY=8\nPAYMENT_EVENTS_PARTITIONS=8\n"
+        topic = ("Topic: payment-events\tTopicId: abc\tPartitionCount: 8\tReplicationFactor: 1\tConfigs: \n"
+                 "\tTopic: payment-events\tPartition: 0\tLeader: 1\tReplicas: 1\tIsr: 1\n")
+        self.assertEqual(self.d.writers(env, topic), {"consumer_concurrency": 8, "partitions": 8})
+
+    def test_r131_writers_default_to_two_when_the_environment_does_not_set_the_concurrency(self):
+        topic = "Topic: payment-events\tTopicId: abc\tPartitionCount: 2\tReplicationFactor: 1\tConfigs: \n"
+        self.assertEqual(self.d.writers("HOME=/root\n", topic), {"consumer_concurrency": 2, "partitions": 2})
+
+    def test_r131_writers_partition_count_comes_from_the_topic_not_from_the_environment(self):
+        # 환경이 8 을 말해도 토픽이 2 개면 쓰는 파티션은 2 개다 - 둘이 어긋난 실행을 요약이 드러낸다
+        topic = "Topic: payment-events\tTopicId: abc\tPartitionCount: 2\tReplicationFactor: 1\tConfigs: \n"
+        self.assertEqual(self.d.writers("PAYMENT_CONSUMER_CONCURRENCY=8\nPAYMENT_EVENTS_PARTITIONS=8\n", topic)["partitions"], 2)
+
+    def test_r131_group_members_counts_distinct_consumer_ids_and_assigned_partitions_of_the_topic(self):
+        head = "GROUP\tTOPIC\tPARTITION\tCURRENT-OFFSET\tLOG-END-OFFSET\tLAG\tCONSUMER-ID\tHOST\tCLIENT-ID\n"
+        rows = "".join("payment-event-group\tpayment-events\t%d\t10\t10\t0\tconsumer-%d-x\t/10.0.0.1\tconsumer-%d\n" % (p, p // 2, p // 2) for p in range(4))
+        other = "payment-event-group\tother-topic\t0\t1\t1\t0\tconsumer-9-x\t/10.0.0.1\tconsumer-9\n"
+        unassigned = "payment-event-group\tpayment-events\t4\t10\t10\t0\t-\t-\t-\n"
+        self.assertEqual(self.d.group_members(head + rows + other + unassigned, "payment-events"), {"members": 2, "partitions_assigned": 4, "partitions_listed": 5})
+
+    def test_r131_stock_view_delay_is_the_time_from_the_confirm_answer_to_the_first_lower_quantity(self):
+        v = self.d.stock_view([(1000, 1100), (2000, 2400), (3000, 3200), (5000, 16500)])
+        self.assertEqual((v["n"], v["seen"], v["not_seen"]), (4, 4, 0))
+        self.assertEqual(v["delay_ms"], {"p50": 200, "p95": 11500, "max": 11500})
+        self.assertEqual(v["over_11s"], 1)
+
+    def test_r131_stock_view_a_pair_that_never_showed_the_lower_quantity_is_not_in_the_percentiles(self):
+        v = self.d.stock_view([(1000, 1100), (2000, None), (3000, 3300)])
+        self.assertEqual((v["n"], v["seen"], v["not_seen"]), (3, 2, 1))
+        self.assertEqual(v["delay_ms"], {"p50": 100, "p95": 300, "max": 300})
+        self.assertEqual(v["over_11s"], 0)
+
+    def test_r131_stock_view_over_11s_counts_only_delays_above_the_bound(self):
+        v = self.d.stock_view([(0, 11000), (0, 11001), (0, 10999)])
+        self.assertEqual(v["over_11s"], 1)
+
+    def test_r131_stock_view_without_any_seen_pair_has_no_percentiles(self):
+        v = self.d.stock_view([(1000, None)])
+        self.assertEqual((v["n"], v["seen"], v["not_seen"]), (1, 0, 1))
+        self.assertEqual(v["delay_ms"], {"p50": None, "p95": None, "max": None})
+
+    def test_r131_sold_out_db_counts_coupon_statements_of_the_whole_run_and_outside_the_setup(self):
+        end, setup = (self.d.parse_pgss(r129_text(n)) for n in ("pgss-end.tsv", "pgss-setup.tsv"))
+        outcomes = {"issued": {"count": 1}, "sold_out": {"count": 999}, "duplicate": {"count": 0}, "other": {"count": 0}}
+        r = self.d.sold_out_db(outcomes, end, setup)
+        self.assertEqual((r["issued"], r["sold_out"], r["coupon_calls"]), (1, 999, 190))
+        self.assertIsInstance(r["coupon_calls_excluding_setup"], int)
+        self.assertLessEqual(r["coupon_calls_excluding_setup"], r["coupon_calls"])
+
+    def test_r131_sold_out_db_does_not_count_the_harness_statements(self):
+        rows = [("1", 5, "SELECT * FROM coupon WHERE id = $1"), ("2", 700, "SELECT count(*) FROM pg_stat_activity -- coupon sampler")]
+        outcomes = {"issued": {"count": 0}, "sold_out": {"count": 0}}
+        self.assertEqual(self.d.sold_out_db(outcomes, rows)["coupon_calls"], 5)
+
+
+class PauseWindowR131Test(unittest.TestCase):
+    """r131 follow-up: 쿠폰 발급 응답 시간을 정지 구간(전 · 중 · 후)과 상태별로 나눈다 - 구간 경계는 상태별 건수(answers_in_window)와 같은 한 초 단위 반열린 구간이다"""
+
+    LO, HI = "2026-11-20T10:00:05Z", "2026-11-20T10:00:16Z"
+    LOG = "".join(l + "\n" for l in [
+        "2026-11-20T10:00:00+00:00 POST /api/v1/coupon/issue/27 200 0.010 192.168.0.7:8080 0.010",
+        "2026-11-20T10:00:04+00:00 POST /api/v1/coupon/issue/27 200 0.030 192.168.0.7:8080 0.030",
+        "2026-11-20T10:00:05+00:00 POST /api/v1/coupon/issue/27 200 1.000 192.168.0.7:8080 1.000",   # 경계: 구간 시작은 포함
+        "2026-11-20T10:00:09+00:00 POST /api/v1/coupon/issue/27 200 2.000 192.168.0.7:8080 2.000",
+        "2026-11-20T10:00:15+00:00 POST /api/v1/coupon/issue/27 200 3.000 192.168.0.7:8080 3.000",
+        "2026-11-20T10:00:15+00:00 POST /api/v1/coupon/issue/27 409 0.007 192.168.0.7:8080 0.007",
+        "2026-11-20T10:00:10+00:00 POST /api/v1/auth/login 200 9.999 192.168.0.7:8080 9.999",       # 쿠폰 발급이 아닌 요청은 세지 않는다
+        "2026-11-20T10:00:16+00:00 POST /api/v1/coupon/issue/27 409 0.003 192.168.0.7:8080 0.003",  # 경계: 구간 끝은 제외
+        "2026-11-20T10:00:20+00:00 POST /api/v1/coupon/issue/27 409 0.005 192.168.0.7:8080 0.005",
+    ])
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r129
+        import derive_r131
+        cls.d, cls.d29 = derive_r131, derive_r129
+
+    def test_r131_pause_window_answer_ms_splits_by_window_and_status_in_ms(self):
+        w = self.d.pause_window_answer_ms(self.LOG, "/coupon/issue/", self.LO, self.HI)
+        self.assertEqual(w["before"], {"200": {"n": 2, "p50": 10, "p95": 30, "max": 30}})
+        self.assertEqual(w["during"]["200"], {"n": 3, "p50": 2000, "p95": 3000, "max": 3000})
+        self.assertEqual(w["during"]["409"], {"n": 1, "p50": 7, "p95": 7, "max": 7})
+        self.assertEqual(w["after"], {"409": {"n": 2, "p50": 3, "p95": 5, "max": 5}})
+
+    def test_r131_pause_window_n_equals_the_status_counts_of_the_summary_windows(self):
+        w = self.d.pause_window_answer_ms(self.LOG, "/coupon/issue/", self.LO, self.HI)
+        for name, lo, hi in (("before", "1970-01-01T00:00:00Z", self.LO), ("during", self.LO, self.HI), ("after", self.HI, "2999-01-01T00:00:00Z")):
+            counts = self.d29.answers_in_window(self.LOG, "/coupon/issue/", lo, hi)
+            self.assertEqual({k: v["n"] for k, v in w[name].items()}, counts, name)
+
+    def test_r131_pause_window_without_requests_in_a_window_is_an_empty_dict(self):
+        w = self.d.pause_window_answer_ms("", "/coupon/issue/", self.LO, self.HI)
+        self.assertEqual(w, {"before": {}, "during": {}, "after": {}})
+
+    def test_r131_pause_window_borders_come_from_the_fault_record_like_the_summary(self):
+        # 정지 명령이 끝난 시각의 초 · 해제 명령이 시작한 시각의 다음 초 - r129-summary.py 의 상태별 건수와 같은 식
+        lo, hi = self.d.pause_window_borders({"pause_cmd_end": 1795203460.263, "unpause_cmd_start": 1795203470.320})
+        self.assertEqual((lo, hi), ("2026-11-20T19:37:40Z", "2026-11-20T19:37:51Z"))
+
+
+class StockViewPairsR131Test(unittest.TestCase):
+    """r131 재고 노출 지연 구동기(stock-view-delay.js)가 로그에 적은 PAIR 줄을 읽는다"""
+
+    LOG = ('time="2026-11-21T01:00:00Z" level=info msg="setup: logins=60 orders=130 payments=100" source=console\n'
+           'time="2026-11-21T01:00:01Z" level=info msg="PAIR i=0 status=200 before=999 end=1000 seen=1100 seen_stock=998 polls=3" source=console\n'
+           'time="2026-11-21T01:00:02Z" level=info msg="PAIR i=1 status=200 before=998 end=2000 seen=null seen_stock=null polls=300" source=console\n'
+           'time="2026-11-21T01:00:03Z" level=info msg="PAIR i=2 status=500 before=997 end=3000 seen=null seen_stock=null polls=0" source=console\n'
+           'time="2026-11-21T01:00:04Z" level=info msg="PAIR i=3 status=200 before=null end=4000 seen=null seen_stock=null polls=0" source=console\n')
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r131
+        cls.d = derive_r131
+
+    def test_r131_parse_pairs_reads_every_pair_line_and_ignores_other_lines(self):
+        p = self.d.parse_pairs(self.LOG)
+        self.assertEqual([x["i"] for x in p], [0, 1, 2, 3])
+        self.assertEqual(p[0], {"i": 0, "status": 200, "before": 999, "end": 1000, "seen": 1100, "seen_stock": 998, "polls": 3})
+        self.assertIsNone(p[1]["seen"])
+        self.assertIsNone(p[3]["before"])
+
+    def test_r131_usable_pairs_keeps_only_confirmed_pairs_with_a_quantity_read_before_and_counts_the_rest(self):
+        pairs, excluded = self.d.usable_pairs(self.d.parse_pairs(self.LOG))
+        self.assertEqual(pairs, [(1000, 1100), (2000, None)])
+        self.assertEqual(excluded, {"confirm_not_200": 1, "no_quantity_before": 1})
+
+
 class SummaryRequiredFilesR129Test(unittest.TestCase):
     """r129-summary.py 는 필수 원시 파일이 없으면 오류로 끝나고, 선택 파일(재고 UPDATE 문장 읽기 등)은 없어도 된다"""
 

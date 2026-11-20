@@ -19,7 +19,7 @@ public class RedisRefreshTokenRepository implements RefreshTokenRepository {
     private static final String USER_TOKENS_PREFIX = "user_tokens:";
 
     public RedisRefreshTokenRepository(@Qualifier("tokenRedisTemplate") RedisTemplate<String, RefreshToken> tokenRedisTemplate,
-                                       @Qualifier("stringRedisTemplate") RedisTemplate<String, String> redisTemplate) {
+                                       @Qualifier("tokenStringRedisTemplate") RedisTemplate<String, String> redisTemplate) {
         this.tokenRedisTemplate = tokenRedisTemplate;
         this.redisTemplate = redisTemplate;
     }

@@ -15,6 +15,12 @@ for b in $BACKENDS; do
   # 백엔드 포트는 호스트에 게시하지 않는다 - 같은 네트워크의 nginx 컨테이너 안에서 부른다
   check "health $b" bash -c "docker exec nginx curl -fsS http://$b:8080/api/actuator/health | grep -q '\"status\":\"UP\"'"
 done
+# 토큰 저장소는 주 Redis 와 따로 떠 있고 호스트 포트가 없어야 한다(주 Redis 를 멈춘 실행에서 인증이 살아 있으려면 둘이 다른 컨테이너여야 한다)
+check "redis-token ping" bash -c "docker exec redis-token redis-cli ping | grep -q PONG"
+check "redis-token has no host port" bash -c "[ -z \"\$(docker port redis-token)\" ]"
+for b in $BACKENDS; do
+  check "token redis host of $b" bash -c "docker exec ${PROJECT}-$b-1 printenv TOKEN_REDIS_HOST | grep -qx redis-token"
+done
 check "nginx:80 product list" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost/api/v1/product?size=1')\" = 200 ]"
 check "wiremock confirm 200" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18089/v1/payments/confirm -H 'Content-Type: application/json' -d '{\"paymentKey\":\"k\",\"orderId\":\"o\",\"amount\":1}')\" = 200 ]"
 # 시드 검사는 템플릿(shop_seed_m1 의 복제 원본)에서 한다 - 백엔드가 뜨면 시드의 PENDING outbox · READY 결제 · 보상 행이 발행 · 재시도돼 shop_seed_m1 의 행 수가 시드 목표와 달라진다(Ruling R119-7)
