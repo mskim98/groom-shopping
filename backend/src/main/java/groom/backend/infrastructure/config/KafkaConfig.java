@@ -54,6 +54,14 @@ public class KafkaConfig {
     @Value("${payment.consumer.auto-startup:true}")
     private boolean paymentConsumerAutoStartup;
 
+    // 결제 승인 후처리 컨슈머의 스레드 수와 payment-events 토픽의 파티션 수. 기본 2 · 2 는 서버 1대가 파티션마다 스레드 하나를 두는 값이다
+    // 스레드가 파티션 수를 넘으면 남는 스레드는 일을 받지 못하므로 둘을 함께 올려야 한 상품 행에 쓰는 스레드가 늘어난다
+    @Value("${payment.consumer.concurrency:2}")
+    private int paymentConsumerConcurrency;
+
+    @Value("${payment.events.partitions:2}")
+    private int paymentEventsPartitions;
+
     // 공통 템플릿 주석
 //    /**
 //     * [공통] Producer 설정 팩토리
@@ -312,7 +320,7 @@ public class KafkaConfig {
         return monitoredConsumerFactory(configProps);
     }
 
-    // concurrency 2 : 인스턴스당 컨슈머 스레드 수. 서버 1대가 payment-events 파티션 2개를 스레드 2개로 하나씩 맡는다
+    // concurrency 기본 2(payment.consumer.concurrency) : 인스턴스당 컨슈머 스레드 수. 서버 1대가 payment-events 파티션 2개를 스레드 2개로 하나씩 맡는다
     // 레코드 하나가 컨슈머에서 5~6ms 라 목표 초당 100건은 스레드 하나로도 받지만, 재시도 백오프(1~16초)가 그 스레드를 멈추면 두 파티션이 함께 멈춘다 - 파티션마다 스레드를 하나씩 둔다
     // 키가 결제 ID 라 같은 결제는 한 스레드가 순서대로 받는다
     // 인스턴스를 늘리면 파티션 수 ÷ 대수로 다시 정한다(파티션보다 많은 스레드는 일을 받지 못한다)
@@ -323,7 +331,7 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(paymentApprovedConsumerFactory());
-        factory.setConcurrency(2);
+        factory.setConcurrency(paymentConsumerConcurrency);
         factory.setAutoStartup(paymentConsumerAutoStartup);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
 
@@ -342,11 +350,11 @@ public class KafkaConfig {
         return factory;
     }
 
-    // 파티션 2개 : 서버 1대의 컨슈머 concurrency 2 가 각자 한 파티션을 맡는다. 스레드가 2개를 넘으면 남는 스레드는 놀므로 대수 · 스레드를 늘리면 파티션도 그만큼 늘려 다시 정해야 한다
+    // 파티션 기본 2개(payment.events.partitions) : 서버 1대의 컨슈머 concurrency 2 가 각자 한 파티션을 맡는다. 스레드가 2개를 넘으면 남는 스레드는 놀므로 대수 · 스레드를 늘리면 파티션도 그만큼 늘려 다시 정해야 한다
     // 초당 25건 목표에 맞춰 12개에서 2개로 줄였다. 파티션은 줄일 수 없어서(Kafka 는 줄이기를 거절한다) 이미 있는 토픽은 삭제 뒤 다시 만들기 전까지 옛 파티션 수를 그대로 가진다
     @Bean
     public NewTopic paymentEventsTopic() {
-        return TopicBuilder.name("payment-events").partitions(2).replicas(1).build();
+        return TopicBuilder.name("payment-events").partitions(paymentEventsPartitions).replicas(1).build();
     }
 
     // 후처리 컨슈머가 재시도 끝에 포기한 레코드의 보관 토픽. 소비자는 두지 않는다(수동 조회용)

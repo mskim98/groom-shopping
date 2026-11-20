@@ -20,7 +20,7 @@ public class TokenBlacklistService {
     @Value("${jwt.access.expiration}")
     private long accessTokenExpiration;
 
-    public TokenBlacklistService(@Qualifier("stringRedisTemplate") RedisTemplate<String, String> redisTemplate) {
+    public TokenBlacklistService(@Qualifier("tokenStringRedisTemplate") RedisTemplate<String, String> redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
 
