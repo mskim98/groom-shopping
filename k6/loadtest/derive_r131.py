@@ -90,3 +90,27 @@ def usable_pairs(parsed):
         else:
             pairs.append((p["end"], p["seen"]))
     return pairs, excluded
+
+
+def pause_window_borders(fault):
+    """정지 기록(fault.json)에서 정지 구간의 한 초 단위 경계(시작 포함, 끝 제외) - r129-summary.py 의 상태별 건수와 같은 식:
+    정지 명령이 끝난 시각의 초부터 해제 명령이 시작한 시각의 다음 초까지(nginx 로그 시각이 초 단위라 창을 바깥 초로 넓힌다)"""
+    from datetime import datetime, timezone
+    iso = lambda e: datetime.fromtimestamp(float(e), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso(int(fault["pause_cmd_end"])), iso(int(fault["unpause_cmd_start"]) + 1)
+
+
+def pause_window_answer_ms(nginx_log, uri_part, lo_iso, hi_iso):
+    """nginx 로그(<시각> <메서드> <uri> <상태> <request_time 초> …)의 uri_part 요청을 정지 구간 전(< lo) · 중([lo, hi)) · 후(>= hi)와 상태별로 나눠 {n, p50, p95, max}(ms)
+    구간 경계는 derive_r129.answers_in_window 와 같은 반열린 구간이라 구간별 n 이 상태별 건수와 같다"""
+    from derive_r129 import _utc
+    lo, hi = _utc(lo_iso), _utc(hi_iso)
+    ms = {"before": {}, "during": {}, "after": {}}
+    for line in nginx_log.splitlines():
+        f = line.split()
+        if len(f) < 5 or uri_part not in f[2]:
+            continue
+        t = _utc(f[0])
+        window = "before" if t < lo else "during" if t < hi else "after"
+        ms[window].setdefault(f[3], []).append(round(float(f[4]) * 1000))
+    return {w: {st: {"n": len(v), "p50": pct(v, 50), "p95": pct(v, 95), "max": max(v)} for st, v in by.items()} for w, by in ms.items()}

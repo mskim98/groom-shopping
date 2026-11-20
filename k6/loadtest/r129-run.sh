@@ -8,6 +8,7 @@
 #   outbox        outbox 중복 - N_RPS(10) HOLD_S(10) (확정 수 = N_RPS x HOLD_S)
 #   comp          후처리 실패(주문 CONFIRMED 갱신에 DB 트리거) - N_RPS(10) HOLD_S(20) COMP_MAX_WAIT_S(600)
 #   stockview     재고 노출 지연(r131) - 일반 경로 상품 하나에 결제 PAYMENTS(100)건을 차례로 확정하고 건마다 상품 상세를 POLL_MS(50) 간격으로 읽는다(한도 LIMIT_MS 15000)
+# r131 follow-up: coupon 은 CONN_REUSE=0 이면 k6 가 요청마다 새 연결을 연다(기본 1 = 지금과 같다) · DIAG_R131=1 이면 끊김 진단 표본(호스트 건강 확인 · docker 이벤트 · 요청 카운터 · Docker 호스트 로그 거절 줄)을 남긴다
 # r131: coupon 은 AUTH=token(기본)과 FAULT=1 이면 토큰 저장소 redis-token 은 두고 주 Redis 만 멈춘다 · hotrow 는 WRITERS(2) 로 결제 컨슈머 스레드 수와 payment-events 파티션 수를 함께 정한다
 # 출력 폴더: raw/ (원시 파일) · summary.json (r129-summary.py 가 만든다)
 set -uo pipefail
@@ -109,6 +110,9 @@ capture_r131_diag() { # 폴더 · 시작 시각
   scrape_metric '^http_server_requests_seconds_count[{].*coupon' "$1/http-requests-after.tsv"
   docker logs --since "$2" nginx > "$1/nginx-docker-logs.txt" 2>&1 || true
   docker logs --timestamps --since "$2" "${PROJECT}-backend1-1" > "$1/backend1-full.log" 2>&1 || true
+  # Docker Desktop 호스트 로그에서 이 실행 창(시작 ~ 지금)의 포트 전달기 거절 줄 - 한 줄이 끊긴 연결 한 건이다(로그 시각은 UTC, 문자열 비교로 창을 자른다)
+  grep -h "guest-connect dial to .* rejected" "$HOME"/Library/Containers/com.docker.docker/Data/log/host/com.docker.backend.log* 2> /dev/null \
+    | awk -F'[][]' -v a="$2" -v b="$(date -u +%FT%T.999Z)" '$2 >= a && $2 <= b' > "$1/docker-host-rejects.txt" || true
   docker inspect -f '{{.Name}} status={{.State.Status}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} restarts={{.RestartCount}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' nginx "${PROJECT}-backend1-1" > "$1/container-state-end.txt" 2>&1 || true
 }
 
@@ -144,7 +148,7 @@ coupon_run() {
   [ "$diag" = 1 ] && start_diag "$D"
   [ "${DIAG_R131:-0}" = 1 ] && start_r131_diag "$D" "$t0"
   after_setup "$D" "$D/k6.log" & local pa=$!
-  k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
+  k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e CONN_REUSE="${CONN_REUSE:-1}" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$D/k6.log" 2>&1 & local kpid=$!
   if [ "$fault" = 1 ]; then
     local fw=0
