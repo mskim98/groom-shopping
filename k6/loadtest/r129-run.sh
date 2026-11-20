@@ -92,6 +92,26 @@ after_setup() { # 폴더 · k6 로그
   scrape_metric '^coupon_stage_seconds_(count|sum)[{]' "$1/coupon-stages-before.tsv"
 }
 
+# 진단 표본(DIAG_R131=1, r131 코디네이터 요청) - 정지 뒤 요청이 끊긴 단계를 가리는 증거: 호스트에서 1 초마다 nginx 경유 건강 확인(응답 코드 또는 curl 오류) · docker 이벤트 ·
+# 쿠폰 발급 URI 의 백엔드 요청 카운터(Tomcat 까지 온 요청 수)를 부하 전 · 후에 읽는다. 실행 끝에서 nginx · 백엔드 로그와 컨테이너 상태를 남긴다
+start_r131_diag() { # 폴더 · 시작 시각
+  : > "$1/host-health.tsv"
+  ( while :; do
+      local e c; e="$(epoch)"
+      c="$(curl -s -o /dev/null --max-time 2 -w '%{http_code} %{time_total}' http://localhost/api/actuator/health 2> /dev/null; echo " curl_exit=$?")"
+      printf '%s\t%s\n' "$e" "$c" >> "$1/host-health.tsv"
+      sleep 1
+    done ) & SAMPLER_PIDS="$SAMPLER_PIDS $!"
+  docker events --since "$2" --format '{{.Time}} {{.Type}} {{.Action}} {{.Actor.Attributes.name}}' > "$1/docker-events.log" 2>&1 & SAMPLER_PIDS="$SAMPLER_PIDS $!"
+  scrape_metric '^http_server_requests_seconds_count[{].*coupon' "$1/http-requests-before.tsv"
+}
+capture_r131_diag() { # 폴더 · 시작 시각
+  scrape_metric '^http_server_requests_seconds_count[{].*coupon' "$1/http-requests-after.tsv"
+  docker logs --since "$2" nginx > "$1/nginx-docker-logs.txt" 2>&1 || true
+  docker logs --timestamps --since "$2" "${PROJECT}-backend1-1" > "$1/backend1-full.log" 2>&1 || true
+  docker inspect -f '{{.Name}} status={{.State.Status}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} restarts={{.RestartCount}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' nginx "${PROJECT}-backend1-1" > "$1/container-state-end.txt" 2>&1 || true
+}
+
 # ── 쿠폰 ───────────────────────────────────────────────────────────────
 coupon_run() {
   local rate="${RATE:-100}" dur="${DURATION_S:-30}" qty="${COUPON_QTY:-1000}" strategy="${STRATEGY:-stream}" fault="${FAULT:-0}" diag="${DIAG:-0}"
@@ -122,6 +142,7 @@ coupon_run() {
   : > "$D/k6.log"
   start_samplers "$D"
   [ "$diag" = 1 ] && start_diag "$D"
+  [ "${DIAG_R131:-0}" = 1 ] && start_r131_diag "$D" "$t0"
   after_setup "$D" "$D/k6.log" & local pa=$!
   k6 run -q --no-usage-report -e COUPON_ID="$cid" -e ISSUE_PATH="$issue_path" -e RATE="$rate" -e DURATION_S="$dur" -e AUTH="$auth" -e BASE_URL=http://localhost/api/v1 -e SUMMARY_FILE="$D/k6-summary.json" \
     k6/scripts/coupon-issue-final.js > "$D/k6.log" 2>&1 & local kpid=$!
@@ -141,6 +162,7 @@ coupon_run() {
   wait "$kpid" || echo "k6 exit $?" >> "$D/k6.log"
   wait "$pa" || { kill "$kpid" 2> /dev/null; die "k6 setup line not seen within 120 s ($D/k6.log)"; }
   sleep 5
+  [ "${DIAG_R131:-0}" = 1 ] && capture_r131_diag "$D" "$t0"
   stop_samplers
   pgss_snapshot "$D/pgss-end.tsv"
   scrape_metric '^coupon_issue_wake_total[{]' "$D/coupon-wake.tsv"
