@@ -30,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -139,5 +140,23 @@ class JwtAuthenticationFilterNoDbTest {
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verifyNoInteractions(userRepository);
+    }
+
+    // 토큰 저장소를 따로 둔 뒤에도 인증 필터는 열리지 않는다 - 블랙리스트를 읽지 못하면 요청을 통과시키지 않고 401 로 끝낸다
+    @Test
+    @DisplayName("블랙리스트조회실패 - 조회가 예외를 던지면 401 이고 체인은 호출되지 않는다")
+    void doFilter_블랙리스트조회실패_401이고_체인을_부르지_않는다() throws Exception {
+        String token = provider.createAccessToken(42L, "claims@t.com", Role.ROLE_USER);
+        when(blacklist.isBlacklisted(token)).thenThrow(new RedisConnectionFailureException("redis down"));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/cart");
+        request.addHeader("Authorization", "Bearer " + token);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(chain.getRequest()).as("체인이 불리면 요청이 인증 없이 통과한 것").isNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 }
