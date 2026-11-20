@@ -471,6 +471,52 @@ class DeriveR131Test(unittest.TestCase):
         self.assertEqual(self.d.sold_out_db(outcomes, rows)["coupon_calls"], 5)
 
 
+class PauseWindowR131Test(unittest.TestCase):
+    """r131 follow-up: 쿠폰 발급 응답 시간을 정지 구간(전 · 중 · 후)과 상태별로 나눈다 - 구간 경계는 상태별 건수(answers_in_window)와 같은 한 초 단위 반열린 구간이다"""
+
+    LO, HI = "2026-11-20T10:00:05Z", "2026-11-20T10:00:16Z"
+    LOG = "".join(l + "\n" for l in [
+        "2026-11-20T10:00:00+00:00 POST /api/v1/coupon/issue/27 200 0.010 192.168.0.7:8080 0.010",
+        "2026-11-20T10:00:04+00:00 POST /api/v1/coupon/issue/27 200 0.030 192.168.0.7:8080 0.030",
+        "2026-11-20T10:00:05+00:00 POST /api/v1/coupon/issue/27 200 1.000 192.168.0.7:8080 1.000",   # 경계: 구간 시작은 포함
+        "2026-11-20T10:00:09+00:00 POST /api/v1/coupon/issue/27 200 2.000 192.168.0.7:8080 2.000",
+        "2026-11-20T10:00:15+00:00 POST /api/v1/coupon/issue/27 200 3.000 192.168.0.7:8080 3.000",
+        "2026-11-20T10:00:15+00:00 POST /api/v1/coupon/issue/27 409 0.007 192.168.0.7:8080 0.007",
+        "2026-11-20T10:00:10+00:00 POST /api/v1/auth/login 200 9.999 192.168.0.7:8080 9.999",       # 쿠폰 발급이 아닌 요청은 세지 않는다
+        "2026-11-20T10:00:16+00:00 POST /api/v1/coupon/issue/27 409 0.003 192.168.0.7:8080 0.003",  # 경계: 구간 끝은 제외
+        "2026-11-20T10:00:20+00:00 POST /api/v1/coupon/issue/27 409 0.005 192.168.0.7:8080 0.005",
+    ])
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import derive_r129
+        import derive_r131
+        cls.d, cls.d29 = derive_r131, derive_r129
+
+    def test_r131_pause_window_answer_ms_splits_by_window_and_status_in_ms(self):
+        w = self.d.pause_window_answer_ms(self.LOG, "/coupon/issue/", self.LO, self.HI)
+        self.assertEqual(w["before"], {"200": {"n": 2, "p50": 10, "p95": 30, "max": 30}})
+        self.assertEqual(w["during"]["200"], {"n": 3, "p50": 2000, "p95": 3000, "max": 3000})
+        self.assertEqual(w["during"]["409"], {"n": 1, "p50": 7, "p95": 7, "max": 7})
+        self.assertEqual(w["after"], {"409": {"n": 2, "p50": 3, "p95": 5, "max": 5}})
+
+    def test_r131_pause_window_n_equals_the_status_counts_of_the_summary_windows(self):
+        w = self.d.pause_window_answer_ms(self.LOG, "/coupon/issue/", self.LO, self.HI)
+        for name, lo, hi in (("before", "1970-01-01T00:00:00Z", self.LO), ("during", self.LO, self.HI), ("after", self.HI, "2999-01-01T00:00:00Z")):
+            counts = self.d29.answers_in_window(self.LOG, "/coupon/issue/", lo, hi)
+            self.assertEqual({k: v["n"] for k, v in w[name].items()}, counts, name)
+
+    def test_r131_pause_window_without_requests_in_a_window_is_an_empty_dict(self):
+        w = self.d.pause_window_answer_ms("", "/coupon/issue/", self.LO, self.HI)
+        self.assertEqual(w, {"before": {}, "during": {}, "after": {}})
+
+    def test_r131_pause_window_borders_come_from_the_fault_record_like_the_summary(self):
+        # 정지 명령이 끝난 시각의 초 · 해제 명령이 시작한 시각의 다음 초 - r129-summary.py 의 상태별 건수와 같은 식
+        lo, hi = self.d.pause_window_borders({"pause_cmd_end": 1795203460.263, "unpause_cmd_start": 1795203470.320})
+        self.assertEqual((lo, hi), ("2026-11-20T19:37:40Z", "2026-11-20T19:37:51Z"))
+
+
 class StockViewPairsR131Test(unittest.TestCase):
     """r131 재고 노출 지연 구동기(stock-view-delay.js)가 로그에 적은 PAIR 줄을 읽는다"""
 
